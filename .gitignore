@@ -1,0 +1,8 @@
+# Bỏ qua các file sinh ra khi chạy/build Go
+backend/backup-dashboard-backend
+backend.exe
+
+# Bỏ qua cấu hình của Editor/OS
+.vscode/
+.DS_Store
+Thumbs.db
