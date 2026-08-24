@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -102,6 +103,8 @@ func main() {
 			"status":  "success",
 			"message": "Đã lưu bản ghi backup thành công!",
 		})
+
+		go sendDiscordAlert(newData.FileName, newData.Status)
 	})
 
 	// API Lấy danh sách toàn bộ lịch sử Backup (Dành cho giao diện React)
@@ -118,6 +121,8 @@ func main() {
 		json.NewEncoder(w).Encode(backups)
 	})
 
+	
+
 	// Khởi chạy Server
 	port := ":8080"
 	fmt.Println("🚀 Backend Go đang chạy tại địa chỉ: http://localhost" + port)
@@ -126,4 +131,28 @@ func main() {
 	if err != nil {
 		fmt.Println("Lỗi khi khởi chạy server:", err)
 	}
+}
+
+func sendDiscordAlert(fileName string, status string) {
+	
+	webhookURL := "https://discord.com/api/webhooks/1541550464473112676/IfDOcdWwMraqIiXaNFeSCa2W4p1ehYypH4dp7681A2VVLl6yeOiV-m5AouDAqv-RmQZp"
+
+	var message string
+
+	// Tự động chọn câu chữ dựa vào trạng thái
+	if status == "Success" {
+		message = fmt.Sprintf("✅ **THÔNG BÁO:** Quá trình backup file `%s` đã **THÀNH CÔNG**! Dữ liệu đã an toàn trên mây.", fileName)
+	} else {
+		message = fmt.Sprintf("🚨 **CẢNH BÁO:** Quá trình backup file `%s` đã **THẤT BẠI**. Vui lòng kiểm tra máy chủ ngay!", fileName)
+	}
+
+	payload := map[string]string{"content": message}
+	jsonPayload, _ := json.Marshal(payload)
+
+	resp, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		fmt.Println("Lỗi khi gửi Discord:", err)
+		return
+	}
+	defer resp.Body.Close()
 }
