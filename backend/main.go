@@ -121,7 +121,35 @@ func main() {
 		json.NewEncoder(w).Encode(backups)
 	})
 
-	
+	// API Xóa một bản ghi Backup dựa vào ID
+	http.HandleFunc("/api/delete", func(w http.ResponseWriter, r *http.Request) {
+		// Cấp quyền CORS cho React gọi sang
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "DELETE, OPTIONS")
+
+		// Xử lý preflight request của trình duyệt
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Lấy ID từ đường dẫn URL (ví dụ: /api/delete?id=5)
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			http.Error(w, "Thiếu ID bản ghi", http.StatusBadRequest)
+			return
+		}
+
+		// Lệnh GORM xóa bản ghi trong PostgreSQL (Giả sử struct của bạn tên là BackupRecord)
+		DB.Delete(&BackupRecord{}, id)
+
+		// Trả về thông báo thành công
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "success",
+			"message": "Đã xóa bản ghi thành công!",
+		})
+	})
 
 	// Khởi chạy Server
 	port := ":8080"
