@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
+	"backup-dashboard-backend/middleware"
+
+	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -28,8 +32,13 @@ var DB *gorm.DB
 
 // 2. HÀM KẾT NỐI DATABASE
 func connectDatabase() {
-	// Chuỗi cấu hình kết nối (thay đổi theo thông tin bạn đã tạo ở Bước 5)
-	dsn := "host=localhost user=db_admin password=2212427 dbname=backup_monitor port=5432 sslmode=disable"
+	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
+		os.Getenv("DB_HOST"),
+		os.Getenv("DB_USER"),
+		os.Getenv("DB_PASSWORD"),
+		os.Getenv("DB_NAME"),
+		os.Getenv("DB_PORT"),
+	)
 	
 	var err error
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
@@ -45,34 +54,25 @@ func connectDatabase() {
 }
 
 func main() {
+	// Load file .env (nếu không tìm thấy thì bỏ qua, dùng env của hệ thống)
+	if err := godotenv.Load(); err != nil {
+		log.Println("⚠️ Không tìm thấy file .env, sử dụng biến môi trường hệ thống")
+	}
+
 	// Gọi hàm kết nối DB ngay khi chương trình khởi chạy
 	connectDatabase()
 
-	// API Kiểm tra trạng thái
-	http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+	// API Kiểm tra trạng thái (không cần auth)
+	http.HandleFunc("/api/health", middleware.Logging(middleware.CORS(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-
 		json.NewEncoder(w).Encode(map[string]string{
 			"status":  "success",
 			"message": "Backend kết nối Database ổn định!",
 		})
-	})
+	})))
 
-	// API Nhận dữ liệu từ các máy chủ Backup gửi về
-	http.HandleFunc("/api/backup", func(w http.ResponseWriter, r *http.Request) {
-		// Cho phép gọi từ Frontend khác port
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-		// Bỏ qua request OPTIONS (trình duyệt tự gửi trước khi gọi POST)
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
+	// API Nhận dữ liệu từ các máy chủ Backup gửi về (cần auth)
+	http.HandleFunc("/api/backup", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
 		// Chỉ nhận phương thức POST
 		if r.Method != http.MethodPost {
 			http.Error(w, "Chỉ hỗ trợ phương thức POST", http.StatusMethodNotAllowed)
@@ -105,34 +105,19 @@ func main() {
 		})
 
 		go sendDiscordAlert(newData.FileName, newData.Status)
-	})
+	}))))
 
-	// API Lấy danh sách toàn bộ lịch sử Backup (Dành cho giao diện React)
-	http.HandleFunc("/api/backups", func(w http.ResponseWriter, r *http.Request) {
-		// Cho phép gọi từ Frontend
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-
+	// API Lấy danh sách toàn bộ lịch sử Backup (cần auth)
+	http.HandleFunc("/api/backups", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
 		var backups []BackupRecord
-		// Lấy toàn bộ dữ liệu từ Database, sắp xếp từ mới nhất đến cũ nhất
 		DB.Order("created_at desc").Find(&backups)
 
-		// Trả dữ liệu về cho React dưới dạng JSON
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(backups)
-	})
+	}))))
 
-	// API Xóa một bản ghi Backup dựa vào ID
-	http.HandleFunc("/api/delete", func(w http.ResponseWriter, r *http.Request) {
-		// Cấp quyền CORS cho React gọi sang
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "DELETE, OPTIONS")
-
-		// Xử lý preflight request của trình duyệt
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
+	// API Xóa một bản ghi Backup (cần auth)
+	http.HandleFunc("/api/delete", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
 		// Lấy ID từ đường dẫn URL (ví dụ: /api/delete?id=5)
 		id := r.URL.Query().Get("id")
 		if id == "" {
@@ -140,22 +125,104 @@ func main() {
 			return
 		}
 
-		// Lệnh GORM xóa bản ghi trong PostgreSQL (Giả sử struct của bạn tên là BackupRecord)
 		DB.Delete(&BackupRecord{}, id)
 
-		// Trả về thông báo thành công
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
 			"status":  "success",
 			"message": "Đã xóa bản ghi thành công!",
 		})
-	})
+	}))))
 
-	// Khởi chạy Server
-	port := ":8080"
-	fmt.Println("🚀 Backend Go đang chạy tại địa chỉ: http://localhost" + port)
+	// API Reset lại ID (re-index tất cả bản ghi từ 1)
+	http.HandleFunc("/api/reset-ids", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Chỉ hỗ trợ phương thức POST", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Lấy tất cả bản ghi, sắp xếp theo thời gian tạo
+		var records []BackupRecord
+		DB.Order("created_at asc").Find(&records)
+
+		if len(records) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{
+				"status":  "success",
+				"message": "Không có bản ghi nào để reset!",
+			})
+			return
+		}
+
+		// Bắt đầu transaction
+		tx := DB.Begin()
+
+		// Xóa tất cả bản ghi cũ
+		tx.Exec("DELETE FROM backup_records")
+
+		// Reset sequence về 1
+		tx.Exec("ALTER SEQUENCE backup_records_id_seq RESTART WITH 1")
+
+		// Gán lại ID từ 1 và chèn lại
+		for i := range records {
+			records[i].ID = uint(i + 1)
+		}
+		tx.CreateInBatches(records, 100)
+
+		if tx.Error != nil {
+			tx.Rollback()
+			http.Error(w, "Lỗi khi reset ID", http.StatusInternalServerError)
+			return
+		}
+
+		tx.Commit()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "success",
+			"message": "Đã reset ID thành công!",
+			"count":   len(records),
+		})
+	}))))
+
+	// API Xóa toàn bộ bản ghi Backup (cần auth)
+	http.HandleFunc("/api/clear-all", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Chỉ hỗ trợ phương thức POST", http.StatusMethodNotAllowed)
+			return
+		}
+
+		tx := DB.Begin()
+
+		// Xóa tất cả bản ghi
+		tx.Exec("DELETE FROM backup_records")
+
+		// Reset sequence về 1
+		tx.Exec("ALTER SEQUENCE backup_records_id_seq RESTART WITH 1")
+
+		if tx.Error != nil {
+			tx.Rollback()
+			http.Error(w, "Lỗi khi xóa toàn bộ dữ liệu", http.StatusInternalServerError)
+			return
+		}
+
+		tx.Commit()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "success",
+			"message": "Đã xóa toàn bộ dữ liệu thành công!",
+		})
+	}))))
+
+	// API Khởi chạy Server
+	port := os.Getenv("SERVER_PORT")
+	if port == "" {
+		port = "8080"
+	}
+	fmt.Println("🚀 Backend Go đang chạy tại địa chỉ: http://localhost:" + port)
 	
-	err := http.ListenAndServe(port, nil)
+	err := http.ListenAndServe(":"+port, nil)
 	if err != nil {
 		fmt.Println("Lỗi khi khởi chạy server:", err)
 	}
@@ -163,7 +230,7 @@ func main() {
 
 func sendDiscordAlert(fileName string, status string) {
 	
-	webhookURL := "https://discord.com/api/webhooks/1541550464473112676/IfDOcdWwMraqIiXaNFeSCa2W4p1ehYypH4dp7681A2VVLl6yeOiV-m5AouDAqv-RmQZp"
+	webhookURL := os.Getenv("DISCORD_WEBHOOK_URL")
 
 	var message string
 

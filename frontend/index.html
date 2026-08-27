@@ -1,10 +1,23 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    <meta name="description" content="BackupOps - Giám sát và quản lý hoạt động sao lưu" />
+    <meta name="theme-color" content="#f8fafc" />
+    <title>BackupOps - Giám sát sao lưu</title>
+    <script>
+      (function() {
+        var saved = localStorage.getItem('darkMode');
+        var dark = saved === null
+          ? window.matchMedia('(prefers-color-scheme: dark)').matches
+          : saved === 'true';
+        if (dark) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -2,6 +2,7 @@
 SOURCE_DIR="/var/www/html" 
 BACKUP_DIR="/tmp/backups"
 API_URL="http://localhost:8080/api/backup"
+API_KEY="289a8aa74862ceea693776199597abf5c9736528770f1917920bda69545c3ba6"
 
 DATE=$(date +%Y%m%d_%H%M%S)
 FILE_NAME="web_code_$DATE.tar.gz"
@@ -25,6 +26,7 @@ fi
 
 curl -s -X POST $API_URL \
 -H "Content-Type: application/json" \
+-H "X-API-Key: $API_KEY" \
 -d "{
   \"source\": \"Server Web LAMP\",
   \"file_name\": \"$FILE_NAME\",
