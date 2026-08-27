@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -104,7 +103,7 @@ func main() {
 			"message": "Đã lưu bản ghi backup thành công!",
 		})
 
-		go sendDiscordAlert(newData.FileName, newData.Status)
+		go sendNotifications(newData.FileName, newData.Status)
 	}))))
 
 	// API Lấy danh sách toàn bộ lịch sử Backup (cần auth)
@@ -215,6 +214,53 @@ func main() {
 		})
 	}))))
 
+	// API Lấy cấu hình thông báo (cần auth)
+	http.HandleFunc("/api/config", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodGet {
+			json.NewEncoder(w).Encode(loadNotificationConfig())
+			return
+		}
+
+		if r.Method == http.MethodPost {
+			var cfg NotificationConfig
+			if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+				http.Error(w, "Dữ liệu JSON không hợp lệ", http.StatusBadRequest)
+				return
+			}
+			if err := saveNotificationConfig(cfg); err != nil {
+				http.Error(w, "Lỗi khi lưu cấu hình", http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{
+				"status":  "success",
+				"message": "Đã lưu cấu hình thành công!",
+			})
+			return
+		}
+
+		http.Error(w, "Phương thức không được hỗ trợ", http.StatusMethodNotAllowed)
+	}))))
+
+	// API Gửi thông báo thử nghiệm (cần auth) - nhận config từ body để thử ngay không cần lưu
+	http.HandleFunc("/api/test-notify", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Chỉ hỗ trợ phương thức POST", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var cfg NotificationConfig
+		json.NewDecoder(r.Body).Decode(&cfg)
+		sendTestNotifications(cfg)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "success",
+			"message": "Đã gửi thông báo thử nghiệm!",
+		})
+	}))))
+
 	// API Khởi chạy Server
 	port := os.Getenv("SERVER_PORT")
 	if port == "" {
@@ -226,28 +272,4 @@ func main() {
 	if err != nil {
 		fmt.Println("Lỗi khi khởi chạy server:", err)
 	}
-}
-
-func sendDiscordAlert(fileName string, status string) {
-	
-	webhookURL := os.Getenv("DISCORD_WEBHOOK_URL")
-
-	var message string
-
-	// Tự động chọn câu chữ dựa vào trạng thái
-	if status == "Success" {
-		message = fmt.Sprintf("✅ **THÔNG BÁO:** Quá trình backup file `%s` đã **THÀNH CÔNG**! Dữ liệu đã an toàn trên mây.", fileName)
-	} else {
-		message = fmt.Sprintf("🚨 **CẢNH BÁO:** Quá trình backup file `%s` đã **THẤT BẠI**. Vui lòng kiểm tra máy chủ ngay!", fileName)
-	}
-
-	payload := map[string]string{"content": message}
-	jsonPayload, _ := json.Marshal(payload)
-
-	resp, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(jsonPayload))
-	if err != nil {
-		fmt.Println("Lỗi khi gửi Discord:", err)
-		return
-	}
-	defer resp.Body.Close()
 }
