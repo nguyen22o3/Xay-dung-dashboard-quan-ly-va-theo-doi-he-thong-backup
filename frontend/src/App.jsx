@@ -1,13 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import './App.css'
 
-const API_KEY = import.meta.env.VITE_API_KEY
-
-const apiHeaders = {
-  'Content-Type': 'application/json',
-  'X-API-Key': API_KEY,
-}
-
 function formatSize(mb) {
   if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB'
   return mb.toFixed(1) + ' MB'
@@ -32,13 +25,22 @@ function getInitialDarkMode() {
 }
 
 function App() {
+  const [token, setToken] = useState(() => sessionStorage.getItem('token') || null)
+  const [loginError, setLoginError] = useState('')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [backups, setBackups] = useState([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [autoRefresh, setAutoRefresh] = useState(false)
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
   const [filterSource, setFilterSource] = useState('all')
+  const [filterDestination, setFilterDestination] = useState('all')
+  const [pageNum, setPageNum] = useState(1)
+  const [perPage, setPerPage] = useState(10)
   const [darkMode, setDarkMode] = useState(getInitialDarkMode)
+  const [backendOnline, setBackendOnline] = useState(null)
   const [page, setPage] = useState('dashboard')
   const [toast, setToast] = useState(null)
   const [config, setConfig] = useState({
@@ -54,6 +56,63 @@ function App() {
     telegram_chat_id: '',
     telegram_enabled: false,
   })
+  const [schedules, setSchedules] = useState([])
+  const [scheduleForm, setScheduleForm] = useState({
+    id: null,
+    source: '',
+    source_key: '',
+    cron_expr: '0 2 * * *',
+    enabled: true,
+    grace_minutes: 30,
+  })
+  const [createOpen, setCreateOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [createForm, setCreateForm] = useState({
+    source_path: '',
+    destinations: ['server'],
+    dest_path: '',
+    source_name: '',
+    empty_folder: '',
+  })
+  const [uploadFiles, setUploadFiles] = useState([])
+  const [emptyPick, setEmptyPick] = useState(false)
+  const [sourceModalOpen, setSourceModalOpen] = useState(false)
+  const [folderOpen, setFolderOpen] = useState(false)
+  const [currentFolderPath, setCurrentFolderPath] = useState('/')
+  const [currentFolders, setCurrentFolders] = useState([])
+  const [folderLoading, setFolderLoading] = useState(false)
+
+  const ah = useCallback(() => {
+    const h = { 'Content-Type': 'application/json' }
+    if (token) h['Authorization'] = 'Bearer ' + token
+    return h
+  }, [token])
+
+  const handleLogin = async (e) => {
+    e.preventDefault()
+    setLoginError('')
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.status !== 'success') {
+        setLoginError(data.message || 'Đăng nhập thất bại')
+        return
+      }
+      sessionStorage.setItem('token', data.token)
+      setToken(data.token)
+    } catch {
+      setLoginError('Không kết nối được tới backend')
+    }
+  }
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('token')
+    setToken(null)
+  }
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode)
@@ -61,9 +120,31 @@ function App() {
   }, [darkMode])
 
   useEffect(() => {
+    let cancelled = false
+
+    const checkHealth = async () => {
+      try {
+        const res = await fetch('/api/health')
+        if (!cancelled) setBackendOnline(res.ok)
+      } catch {
+        if (!cancelled) setBackendOnline(false)
+      }
+    }
+
+    checkHealth()
+    const id = setInterval(checkHealth, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!token) return
     const loadConfig = async () => {
       try {
-        const res = await fetch('/api/config', { headers: apiHeaders })
+        const res = await fetch('/api/config', { headers: ah() })
+        if (!res.ok) return
         const data = await res.json()
         setConfig(prev => ({ ...prev, ...data }))
       } catch (e) {
@@ -71,7 +152,7 @@ function App() {
       }
     }
     loadConfig()
-  }, [])
+  }, [ah, token])
 
   const toggleDarkMode = () => setDarkMode(prev => !prev)
 
@@ -89,7 +170,7 @@ function App() {
     try {
       const res = await fetch('/api/config', {
         method: 'POST',
-        headers: apiHeaders,
+        headers: ah(),
         body: JSON.stringify(config),
       })
       if (res.ok) {
@@ -107,7 +188,7 @@ function App() {
     try {
       const res = await fetch('/api/test-notify', {
         method: 'POST',
-        headers: apiHeaders,
+        headers: ah(),
         body: JSON.stringify(config),
       })
       if (res.ok) {
@@ -115,26 +196,126 @@ function App() {
       } else {
         showToast('Gửi thông báo thử thất bại', 'error')
       }
-    } catch (e) {
+    } catch {
       showToast('Gửi thông báo thử thất bại', 'error')
     }
   }
 
-  const fetchBackups = useCallback(async () => {
+  const loadSchedules = useCallback(async () => {
+    if (!token) return
     try {
-      const res = await fetch('/api/backups', { headers: apiHeaders })
+      const res = await fetch('/api/schedules', { headers: ah() })
+      if (!res.ok) {
+        if (res.status === 401) handleLogout()
+        return
+      }
+      const data = await res.json()
+      setSchedules(data || [])
+    } catch (e) {
+      console.error('Lỗi khi tải lịch backup:', e)
+    }
+  }, [ah, token])
+
+  const handleScheduleForm = (field, value) => {
+    setScheduleForm(prev => ({ ...prev, [field]: value }))
+  }
+
+  const saveSchedule = async (e) => {
+    e.preventDefault()
+    try {
+      const method = scheduleForm.id ? 'PUT' : 'POST'
+      const payload = { ...scheduleForm }
+      if (!payload.id) delete payload.id
+      const res = await fetch('/api/schedules', {
+        method,
+        headers: ah(),
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        const errText = await res.text()
+        showToast('Lưu lịch backup thất bại' + (errText ? `: ${errText}` : ''), 'error')
+        return
+      }
+      showToast(scheduleForm.id ? 'Đã cập nhật lịch backup' : 'Đã thêm lịch backup')
+      setScheduleForm({
+        id: null,
+        source: '',
+        source_key: '',
+        cron_expr: '0 2 * * *',
+        enabled: true,
+        grace_minutes: 30,
+      })
+      await loadSchedules()
+    } catch {
+      showToast('Lưu lịch backup thất bại', 'error')
+    }
+  }
+
+  const editSchedule = (s) => {
+    setScheduleForm({
+      id: s.id,
+      source: s.source,
+      source_key: s.source_key,
+      cron_expr: s.cron_expr,
+      enabled: s.enabled,
+      grace_minutes: s.grace_minutes,
+    })
+    setPage('settings')
+  }
+
+  const deleteSchedule = async (id) => {
+    if (!window.confirm('Xóa lịch backup này?')) return
+    try {
+      const res = await fetch(`/api/schedules?id=${id}`, {
+        method: 'DELETE',
+        headers: ah(),
+      })
+      if (!res.ok) {
+        showToast('Xóa lịch backup thất bại', 'error')
+        return
+      }
+      showToast('Đã xóa lịch backup')
+      await loadSchedules()
+    } catch {
+      showToast('Xóa lịch backup thất bại', 'error')
+    }
+  }
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    fetch('/api/schedules', { headers: ah() })
+      .then(res => {
+        if (res.status === 401) {
+          handleLogout()
+          throw new Error('Unauthorized')
+        }
+        if (!res.ok) throw new Error('Tải lịch backup thất bại')
+        return res.json()
+      })
+      .then(data => {
+        if (!cancelled) setSchedules(data || [])
+      })
+      .catch(err => {
+        if (!cancelled) console.error('Lỗi khi tải lịch backup:', err)
+      })
+    return () => { cancelled = true }
+  }, [ah, token])
+
+  const fetchBackups = useCallback(async () => {
+    if (!token) return
+    try {
+      const res = await fetch('/api/backups', { headers: ah() })
+      if (!res.ok) {
+        if (res.status === 401) handleLogout()
+        return
+      }
       const data = await res.json()
       setBackups(data || [])
     } catch (e) {
       console.error('Lỗi khi tải dữ liệu:', e)
     }
-  }, [])
-
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    await fetchBackups()
-    setLoading(false)
-  }, [fetchBackups])
+  }, [ah, token])
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true)
@@ -143,35 +324,186 @@ function App() {
   }, [fetchBackups])
 
   useEffect(() => {
-    loadData()
-  }, [loadData])
+    if (!autoRefresh) return
+    const id = setInterval(() => {
+      fetchBackups()
+    }, 10000)
+    return () => clearInterval(id)
+  }, [autoRefresh, fetchBackups])
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    fetch('/api/backups', { headers: ah() })
+      .then(res => {
+        if (res.status === 401) {
+          handleLogout()
+          throw new Error('Unauthorized')
+        }
+        if (!res.ok) throw new Error('Tải dữ liệu thất bại')
+        return res.json()
+      })
+      .then(data => {
+        if (!cancelled) {
+          setBackups(data || [])
+          setLoading(false)
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          console.error('Lỗi khi tải dữ liệu:', err)
+          setLoading(false)
+        }
+      })
+    return () => { cancelled = true }
+  }, [ah, token])
 
   const resetIds = async () => {
     try {
       await fetch('/api/reset-ids', {
         method: 'POST',
-        headers: apiHeaders,
+        headers: ah(),
       })
     } catch (e) {
       console.error('Lỗi khi reset ID:', e)
     }
   }
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Bạn có chắc chắn muốn xóa bản ghi này?')) return
+  const handleDelete = async (id, destination) => {
+    const where = destination ? ` tại ${destination}` : ''
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa bản sao lưu này${where}? File sẽ bị xóa khỏi nơi cất giữ tương ứng.`)) return
     try {
       const res = await fetch(`/api/delete?id=${id}`, {
         method: 'DELETE',
-        headers: apiHeaders,
+        headers: ah(),
       })
-      if (res.ok) {
-        await fetchBackups()
-        await resetIds()
-        await fetchBackups()
+      if (!res.ok) {
+        const errText = await res.text()
+        showToast('Xóa bản sao lưu thất bại' + (errText ? `: ${errText}` : ''), 'error')
+        return
       }
+      await resetIds()
+      await fetchBackups()
+      showToast('Đã xóa bản sao lưu')
     } catch (e) {
       console.error('Lỗi khi xóa:', e)
+      showToast('Xóa bản sao lưu thất bại', 'error')
     }
+  }
+
+  const handleCreateField = (field, value) => {
+    setCreateForm(prev => ({ ...prev, [field]: value }))
+  }
+
+  const createBackup = async (e) => {
+    e.preventDefault()
+    const hasUploadFiles = uploadFiles && uploadFiles.length > 0
+    const hasEmptyFolder = createForm.empty_folder && createForm.empty_folder.trim()
+    const hasSourcePath = createForm.source_path && createForm.source_path.trim()
+    if (!hasUploadFiles && !hasEmptyFolder && !hasSourcePath) {
+      showToast('Vui lòng chọn nguồn dữ liệu (chọn bên nút + ở ô "Nguồn dữ liệu")', 'error')
+      return
+    }
+    if (!createForm.destinations || createForm.destinations.length === 0) {
+      showToast('Vui lòng chọn ít nhất một nơi cất giữ', 'error')
+      return
+    }
+    setCreating(true)
+    try {
+      let res
+      if (hasUploadFiles || hasEmptyFolder) {
+        const fd = new FormData()
+        for (const f of uploadFiles) fd.append('files', f)
+        fd.append('destinations', JSON.stringify(createForm.destinations))
+        fd.append('dest_path', createForm.dest_path)
+        fd.append('source_name', createForm.source_name)
+        fd.append('empty_folder', (createForm.empty_folder || '').trim())
+        fd.append('source_path', (createForm.source_path || '').trim())
+        res = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + token },
+          body: fd,
+        })
+      } else {
+        res = await fetch('/api/backup', {
+          method: 'POST',
+          headers: ah(),
+          body: JSON.stringify(createForm),
+        })
+      }
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        showToast('Tạo bản backup thất bại' + (data.message ? `: ${data.message}` : ''), 'error')
+        return
+      }
+      showToast(data.message || 'Đã tạo bản backup thành công')
+      setCreateOpen(false)
+      setCreateForm({ source_path: '', destinations: ['server'], dest_path: '', source_name: '', empty_folder: '' })
+      setUploadFiles([])
+      setEmptyPick(false)
+      await fetchBackups()
+    } catch (err) {
+      console.error('Lỗi khi tạo backup:', err)
+      showToast('Tạo bản backup thất bại', 'error')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const toggleDestination = (value) => {
+    setCreateForm(prev => {
+      const cur = prev.destinations || []
+      const has = cur.includes(value)
+      const next = has ? cur.filter(d => d !== value) : [...cur, value]
+      return { ...prev, destinations: next }
+    })
+  }
+
+  const handleFileChange = (e) => {
+    const files = Array.from(e.target.files || [])
+    setUploadFiles(files)
+    if (files.length === 0) {
+      setEmptyPick(true)
+    }
+  }
+
+  const closeCreateModal = () => {
+    setCreateOpen(false)
+    setEmptyPick(false)
+    setSourceModalOpen(false)
+    setFolderOpen(false)
+  }
+
+  const hasUpload = uploadFiles && uploadFiles.length > 0
+  const hasEmptyFolder = !!createForm.empty_folder && createForm.empty_folder.trim() !== ''
+  const hasSourcePath = !!createForm.source_path && createForm.source_path.trim() !== ''
+
+  const sourceTags = []
+  if (hasUpload) sourceTags.push({ key: 'upload', label: 'Từ máy', cls: 'dest-tag--server' })
+  if (hasEmptyFolder) sourceTags.push({ key: 'empty', label: `Thư mục rỗng: ${createForm.empty_folder.trim()}`, cls: 'dest-tag--nas' })
+  if (hasSourcePath) sourceTags.push({ key: 'path', label: `Đường dẫn: ${createForm.source_path.trim()}`, cls: 'dest-tag--google-drive' })
+
+  const loadFolder = async (path) => {
+    setFolderLoading(true)
+    try {
+      const res = await fetch(`/api/folders?path=${encodeURIComponent(path)}`, { headers: ah() })
+      if (!res.ok) {
+        showToast('Không đọc được thư mục', 'error')
+        return
+      }
+      const data = await res.json()
+      setCurrentFolderPath(data.path)
+      setCurrentFolders(data.folders || [])
+    } catch {
+      showToast('Không đọc được thư mục', 'error')
+    } finally {
+      setFolderLoading(false)
+    }
+  }
+
+  const openFolderPicker = async (initialPath) => {
+    setFolderOpen(true)
+    await loadFolder(initialPath || '/')
   }
 
   const sources = useMemo(() => {
@@ -179,20 +511,31 @@ function App() {
     return ['all', ...Array.from(set)]
   }, [backups])
 
+  const destinations = useMemo(() => {
+    const set = new Set(backups.map(b => b.destination).filter(Boolean))
+    return ['all', ...Array.from(set)]
+  }, [backups])
+
   const filtered = useMemo(() => {
     return backups.filter(item => {
       if (filterStatus !== 'all' && item.status !== filterStatus) return false
       if (filterSource !== 'all' && item.source !== filterSource) return false
+      if (filterDestination !== 'all' && item.destination !== filterDestination) return false
       if (search) {
         const q = search.toLowerCase()
         return (
           item.file_name.toLowerCase().includes(q) ||
-          item.source.toLowerCase().includes(q)
+          item.source.toLowerCase().includes(q) ||
+          (item.destination || '').toLowerCase().includes(q)
         )
       }
       return true
     })
-  }, [backups, search, filterStatus, filterSource])
+  }, [backups, search, filterStatus, filterSource, filterDestination])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage))
+  const safePage = Math.min(pageNum, totalPages)
+  const paginated = filtered.slice((safePage - 1) * perPage, safePage * perPage)
 
   const stats = useMemo(() => {
     const total = backups.length
@@ -209,7 +552,7 @@ function App() {
     try {
       const res = await fetch('/api/clear-all', {
         method: 'POST',
-        headers: apiHeaders,
+        headers: ah(),
       })
       if (res.ok) {
         await fetchBackups()
@@ -228,6 +571,32 @@ function App() {
   }
 
   const current = pageTitles[page] || pageTitles.dashboard
+
+  if (!token) {
+    return (
+      <div className="login-page">
+        <form className="login-card" onSubmit={handleLogin}>
+          <h1>Backup Dashboard</h1>
+          <p className="login-sub">Đăng nhập để tiếp tục</p>
+          <input
+            type="text"
+            placeholder="Tên đăng nhập"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoFocus
+          />
+          <input
+            type="password"
+            placeholder="Mật khẩu"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          {loginError && <div className="login-error">{loginError}</div>}
+          <button type="submit" className="btn btn-primary login-btn">Đăng nhập</button>
+        </form>
+      </div>
+    )
+  }
 
   return (
     <div className="layout">
@@ -291,9 +660,23 @@ function App() {
             )}
             <span>{darkMode ? 'Chế độ sáng' : 'Chế độ tối'}</span>
           </button>
-          <div className="system-status">
+          <button className="theme-toggle" onClick={handleLogout} title="Đăng xuất">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            <span>Đăng xuất</span>
+          </button>
+          <div className={`system-status ${backendOnline === false ? 'is-offline' : ''}`}>
             <span className="status-dot" />
-            <span className="status-label">Hệ thống hoạt động</span>
+            <span className="status-label">
+              {backendOnline === null
+                ? 'Đang kiểm tra...'
+                : backendOnline
+                  ? 'Hệ thống hoạt động'
+                  : 'Máy chủ ngoại tuyến'}
+            </span>
           </div>
         </div>
       </aside>
@@ -314,6 +697,20 @@ function App() {
                   </svg>
                   <span>Cập nhật: {stats.lastBackup ? formatTime(stats.lastBackup) : 'Chưa có'}</span>
                 </div>
+                <button className="btn-create" onClick={() => setCreateOpen(true)} title="Tạo bản backup mới">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  <span>Tạo bản backup</span>
+                </button>
+                <button className={`btn-auto ${autoRefresh ? 'active' : ''}`} onClick={() => setAutoRefresh(prev => !prev)} title="Tự động làm mới mỗi 10 giây">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 12a9 9 0 1 1-2.636-6.364" />
+                    <polyline points="21 3 21 9 15 9" />
+                  </svg>
+                  <span>{autoRefresh ? 'Tự động' : 'Thủ công'}</span>
+                </button>
                 <button className="btn-refresh" onClick={handleRefresh} disabled={refreshing} title="Làm mới dữ liệu">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={refreshing ? 'spin' : ''}>
                     <polyline points="23 4 23 10 17 10" />
@@ -355,7 +752,8 @@ function App() {
                   {config.discord_enabled && (
                     <div className="settings-row">
                       <label className="settings-label">Webhook URL</label>
-                      <input className="settings-input" type="text" placeholder="https://discord.com/api/webhooks/..." value={config.discord_webhook_url} onChange={e => setConfigField('discord_webhook_url', e.target.value)} />
+                      <input className="settings-input" type="password" placeholder={config.discord_webhook_url === '••••••••' ? '•••••••• (đã lưu, nhập để thay đổi)' : 'https://discord.com/api/webhooks/...'} value={config.discord_webhook_url === '••••••••' ? '' : config.discord_webhook_url} onChange={e => setConfigField('discord_webhook_url', e.target.value)} />
+                      <p className="settings-hint">Webhook Discord để nhận thông báo. Giá trị lưu được che đi cho an toàn</p>
                     </div>
                   )}
                 </div>
@@ -388,7 +786,7 @@ function App() {
                       </div>
                       <div className="settings-row">
                         <label className="settings-label">Mật khẩu ứng dụng (App Password)</label>
-                        <input className="settings-input" type="password" placeholder="16 ký tự app password" value={config.gmail_app_password} onChange={e => setConfigField('gmail_app_password', e.target.value)} />
+                        <input className="settings-input" type="password" placeholder={config.gmail_app_password === '••••••••' ? '•••••••• (đã lưu, nhập để thay đổi)' : '16 ký tự app password'} value={config.gmail_app_password === '••••••••' ? '' : config.gmail_app_password} onChange={e => setConfigField('gmail_app_password', e.target.value)} />
                         <p className="settings-hint">Bật 2FA và tạo App Password trong tài khoản Google</p>
                       </div>
                       <div className="settings-row">
@@ -433,7 +831,7 @@ function App() {
                     <>
                       <div className="settings-row">
                         <label className="settings-label">Bot Token</label>
-                        <input className="settings-input" type="password" placeholder="123456:ABC-DEF... từ @BotFather" value={config.telegram_bot_token} onChange={e => setConfigField('telegram_bot_token', e.target.value)} />
+                        <input className="settings-input" type="password" placeholder={config.telegram_bot_token === '••••••••' ? '•••••••• (đã lưu, nhập để thay đổi)' : '123456:ABC-DEF... từ @BotFather'} value={config.telegram_bot_token === '••••••••' ? '' : config.telegram_bot_token} onChange={e => setConfigField('telegram_bot_token', e.target.value)} />
                       </div>
                       <div className="settings-row">
                         <label className="settings-label">Chat / Channel ID</label>
@@ -472,6 +870,93 @@ function App() {
 
             <section className="settings-section">
               <div className="settings-header">
+                <h2>Lịch backup kỳ vọng</h2>
+                <p>Cấu hình lịch để cảnh báo khi backup quá hạn (không thấy file mới)</p>
+              </div>
+              <div className="settings-card">
+                <form className="schedule-form" onSubmit={saveSchedule}>
+                  <div className="settings-row settings-row--split">
+                    <div className="settings-row">
+                      <label className="settings-label">Nguồn (tên hiển thị)</label>
+                      <input className="settings-input" type="text" placeholder="Ví dụ: Server Web LAMP" value={scheduleForm.source} onChange={e => handleScheduleForm('source', e.target.value)} required />
+                    </div>
+                    <div className="settings-row">
+                      <label className="settings-label">Prefix tên file (source_key)</label>
+                      <input className="settings-input" type="text" placeholder="Ví dụ: web_code_" value={scheduleForm.source_key} onChange={e => handleScheduleForm('source_key', e.target.value)} required />
+                    </div>
+                  </div>
+                  <div className="settings-row settings-row--split">
+                    <div className="settings-row">
+                      <label className="settings-label">Biểu thức Cron</label>
+                      <input className="settings-input" type="text" placeholder="0 2 * * *" value={scheduleForm.cron_expr} onChange={e => handleScheduleForm('cron_expr', e.target.value)} required />
+                      <p className="settings-hint">Định dạng 5 trường: phút giờ ngày tháng tuần. VD: <code>0 2 * * *</code> = 2h sáng hằng ngày</p>
+                    </div>
+                    <div className="settings-row">
+                      <label className="settings-label">Ân hạn (phút)</label>
+                      <input className="settings-input" type="number" min="0" value={scheduleForm.grace_minutes} onChange={e => handleScheduleForm('grace_minutes', Number(e.target.value))} />
+                    </div>
+                  </div>
+                  <div className="settings-row settings-row--between">
+                    <div>
+                      <div className="settings-label">Bật theo dõi</div>
+                      <p className="settings-hint" style={{ margin: '4px 0 0' }}>Bật để backend cảnh báo khi quá hạn</p>
+                    </div>
+                    <button type="button" className={`switch ${scheduleForm.enabled ? 'switch--on' : ''}`} role="switch" aria-checked={scheduleForm.enabled} onClick={() => handleScheduleForm('enabled', !scheduleForm.enabled)}>
+                      <span className="switch-thumb" />
+                    </button>
+                  </div>
+                  <div className="settings-actions">
+                    <button className="btn-primary" type="submit">{scheduleForm.id ? 'Cập nhật lịch' : 'Thêm lịch'}</button>
+                    {scheduleForm.id && (
+                      <button className="btn-secondary" type="button" onClick={() => setScheduleForm({ id: null, source: '', source_key: '', cron_expr: '0 2 * * *', enabled: true, grace_minutes: 30 })}>Hủy</button>
+                    )}
+                  </div>
+                </form>
+
+                {schedules.length > 0 ? (
+                  <div className="schedule-list">
+                    <table className="schedule-table">
+                      <thead>
+                        <tr>
+                          <th>Nguồn</th>
+                          <th>Prefix</th>
+                          <th>Cron</th>
+                          <th>Ân hạn</th>
+                          <th>Trạng thái</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {schedules.map(s => (
+                          <tr key={s.id}>
+                            <td>{s.source}</td>
+                            <td><code>{s.source_key}</code></td>
+                            <td><code>{s.cron_expr}</code></td>
+                            <td>{s.grace_minutes} phút</td>
+                            <td>
+                              <span className={`tag ${s.enabled ? 'tag--success' : ''}`}>
+                                {s.enabled ? 'Bật' : 'Tắt'}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="table-actions">
+                                <button className="btn-secondary btn-sm" type="button" onClick={() => editSchedule(s)}>Sửa</button>
+                                <button className="btn-danger btn-sm" type="button" onClick={() => deleteSchedule(s.id)}>Xóa</button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="settings-hint" style={{ padding: '8px 2px 0' }}>Chưa có lịch backup nào. Thêm lịch để bắt đầu theo dõi.</p>
+                )}
+              </div>
+            </section>
+
+            <section className="settings-section">
+              <div className="settings-header">
                 <h2>Thông tin hệ thống</h2>
                 <p>Trạng thái hoạt động của hệ thống</p>
               </div>
@@ -481,7 +966,13 @@ function App() {
                     <div className="settings-label">Trạng thái backend</div>
                     <p className="settings-hint" style={{ margin: '4px 0 0' }}>Kết nối máy chủ</p>
                   </div>
-                  <span className="tag tag--success">Hoạt động</span>
+                  <span className={`tag ${backendOnline === false ? 'tag--danger' : 'tag--success'}`}>
+                    {backendOnline === null
+                      ? 'Đang kiểm tra...'
+                      : backendOnline
+                        ? 'Hoạt động'
+                        : 'Ngoại tuyến'}
+                  </span>
                 </div>
                 <div className="settings-divider" />
                 <div className="settings-row settings-row--between">
@@ -610,18 +1101,23 @@ function App() {
                         className="search-input"
                         placeholder="Tìm theo tên file hoặc nguồn..."
                         value={search}
-                        onChange={e => setSearch(e.target.value)}
+                        onChange={e => { setSearch(e.target.value); setPageNum(1) }}
                       />
                     </div>
                     <div className="filter-row">
-                      <select className="filter-select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                      <select className="filter-select" value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPageNum(1) }}>
                         <option value="all">Tất cả trạng thái</option>
                         <option value="Success">Thành công</option>
                         <option value="Failed">Thất bại</option>
                       </select>
-                      <select className="filter-select" value={filterSource} onChange={e => setFilterSource(e.target.value)}>
+                      <select className="filter-select" value={filterSource} onChange={e => { setFilterSource(e.target.value); setPageNum(1) }}>
                         {sources.map(s => (
                           <option key={s} value={s}>{s === 'all' ? 'Tất cả nguồn' : s}</option>
+                        ))}
+                      </select>
+                      <select className="filter-select" value={filterDestination} onChange={e => { setFilterDestination(e.target.value); setPageNum(1) }}>
+                        {destinations.map(d => (
+                          <option key={d} value={d}>{d === 'all' ? 'Tất cả nơi cất giữ' : d}</option>
                         ))}
                       </select>
                     </div>
@@ -633,6 +1129,7 @@ function App() {
                         <tr>
                           <th style={{ width: 64 }}>ID</th>
                           <th>Nguồn lưu trữ</th>
+                          <th>Nơi cất giữ</th>
                           <th>Tên file</th>
                           <th>Dung lượng</th>
                           <th>Trạng thái</th>
@@ -641,10 +1138,15 @@ function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {filtered.map(item => (
+                        {paginated.map(item => (
                           <tr key={item.id}>
                             <td className="cell-id"># {item.id}</td>
                             <td className="cell-source">{item.source}</td>
+                            <td>
+                              <span className={`dest-tag dest-tag--${(item.destination || '').toLowerCase().replace(/\s+/g, '-')}`}>
+                                {item.destination || '--'}
+                              </span>
+                            </td>
                             <td className="cell-filename" title={item.file_name}>{item.file_name}</td>
                             <td className="cell-mono">{formatSize(item.size_mb)}</td>
                             <td>
@@ -654,7 +1156,7 @@ function App() {
                             </td>
                             <td className="cell-time">{formatTime(item.created_at)}</td>
                             <td style={{ textAlign: 'center' }}>
-                              <button className="btn-icon btn-icon--danger" onClick={() => handleDelete(item.id)} title="Xóa bản ghi">
+                              <button className="btn-icon btn-icon--danger" onClick={() => handleDelete(item.id, item.destination)} title="Xóa bản sao lưu tại nơi cất giữ">
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                   <polyline points="3 6 5 6 21 6" />
                                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -665,7 +1167,7 @@ function App() {
                         ))}
                         {filtered.length === 0 && (
                           <tr>
-                            <td colSpan="7">
+                            <td colSpan="8">
                               <div className="empty">
                                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.3 }}>
                                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -682,7 +1184,33 @@ function App() {
                   </div>
 
                   <div className="card-footer">
-                    <span>Hiển thị <strong>{filtered.length}</strong> / {backups.length} bản ghi</span>
+                    <span>{filtered.length === 0 ? 'Không có bản ghi' : `Hiển thị ${(safePage - 1) * perPage + 1}–${Math.min(safePage * perPage, filtered.length)} / ${filtered.length} bản ghi`}</span>
+                    <div className="pagination">
+                      <select
+                        className="filter-select per-page"
+                        value={perPage}
+                        onChange={e => { setPerPage(Number(e.target.value)); setPageNum(1) }}
+                        aria-label="Số bản ghi mỗi trang"
+                      >
+                        <option value={10}>10 / trang</option>
+                        <option value={25}>25 / trang</option>
+                        <option value={50}>50 / trang</option>
+                        <option value={100}>100 / trang</option>
+                      </select>
+                      <button
+                        className="pagination-btn"
+                        onClick={() => setPageNum(safePage - 1)}
+                        disabled={safePage <= 1}
+                        aria-label="Trang trước"
+                      >‹</button>
+                      <span className="pagination-info">{safePage} / {totalPages}</span>
+                      <button
+                        className="pagination-btn"
+                        onClick={() => setPageNum(safePage + 1)}
+                        disabled={safePage >= totalPages}
+                        aria-label="Trang sau"
+                      >›</button>
+                    </div>
                   </div>
                 </section>
               </>
@@ -690,6 +1218,218 @@ function App() {
           </>
         )}
       </main>
+
+      {createOpen && (
+        <div className="modal-overlay" onClick={closeCreateModal}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Tạo bản backup</h2>
+              <button className="modal-close" onClick={closeCreateModal} aria-label="Đóng">×</button>
+            </div>
+            <form onSubmit={createBackup}>
+              <div className="modal-body">
+                <div className="settings-row">
+                  <label className="settings-label">Nguồn dữ liệu</label>
+                  <div className="path-pick">
+                    <input className="settings-input path-input" type="text" placeholder="VD: /var/www/html hoặc /home/user/file.txt" value={createForm.source_path} onChange={e => handleCreateField('source_path', e.target.value)} />
+                    <button type="button" className="btn-secondary btn-sm path-btn" onClick={() => setSourceModalOpen(true)} title="Chọn file hoặc thư mục từ máy">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                    </button>
+                  </div>
+                  <p className="settings-hint">Nhập đường dẫn trên server, hoặc bấm + để chọn file/thư mục từ máy.</p>
+                  {uploadFiles.length > 0 && (
+                    <div className="upload-list">
+                      {uploadFiles.length === 1
+                        ? `Đã chọn từ máy: ${uploadFiles[0].name}`
+                        : `Đã chọn từ máy ${uploadFiles.length} file/folder`}
+                      <ul>
+                        {uploadFiles.slice(0, 5).map((f, i) => (
+                          <li key={i}>{f.webkitRelativePath || f.name}</li>
+                        ))}
+                        {uploadFiles.length > 5 && <li>... và {uploadFiles.length - 5} mục khác</li>}
+                      </ul>
+                      <button type="button" className="btn-secondary btn-sm" style={{ marginTop: 6 }} onClick={() => { setUploadFiles([]); setEmptyPick(false) }}>Bỏ chọn</button>
+                    </div>
+                  )}
+                  {emptyPick && (
+                    <div className="settings-row">
+                      <label className="settings-label">Thư mục rỗng (từ máy) — nhập tên để tạo</label>
+                      <input className="settings-input" type="text" placeholder="VD: Test (trình duyệt không tự gửi tên thư mục rỗng)" value={createForm.empty_folder} onChange={e => handleCreateField('empty_folder', e.target.value)} />
+                    </div>
+                  )}
+                </div>
+
+                <div className="settings-row">
+                  <label className="settings-label">Nguồn hiển thị (tùy chọn)</label>
+                  <input className="settings-input" type="text" placeholder="VD: Server Web LAMP" value={createForm.source_name} onChange={e => handleCreateField('source_name', e.target.value)} />
+                </div>
+
+                <div className="settings-row">
+                  <label className="settings-label">Nơi cất giữ (chọn 1 hoặc nhiều)</label>
+                  <div className="dest-check-row">
+                    <label className={`dest-check ${(createForm.destinations || []).includes('server') ? 'dest-check--active' : ''}`}>
+                      <input type="checkbox" checked={(createForm.destinations || []).includes('server')} onChange={() => toggleDestination('server')} />
+                      <span className="dest-check-box"><span className="dot dot--server" /></span>
+                      <span>Server</span>
+                    </label>
+                    <label className={`dest-check ${(createForm.destinations || []).includes('drive') ? 'dest-check--active' : ''}`}>
+                      <input type="checkbox" checked={(createForm.destinations || []).includes('drive')} onChange={() => toggleDestination('drive')} />
+                      <span className="dest-check-box"><span className="dot dot--drive" /></span>
+                      <span>Google Drive</span>
+                    </label>
+                    <label className={`dest-check ${(createForm.destinations || []).includes('nas') ? 'dest-check--active' : ''}`}>
+                      <input type="checkbox" checked={(createForm.destinations || []).includes('nas')} onChange={() => toggleDestination('nas')} />
+                      <span className="dest-check-box"><span className="dot dot--nas" /></span>
+                      <span>NAS</span>
+                    </label>
+                  </div>
+                </div>
+
+                {(createForm.destinations || []).includes('server') && (
+                  <div className="settings-row">
+                    <label className="settings-label">Đường dẫn lưu trên Server</label>
+                    <div className="path-pick">
+                      <input className="settings-input path-input" type="text" placeholder="VD: /opt/backups (mặc định /var/backups)" value={createForm.dest_path} onChange={e => handleCreateField('dest_path', e.target.value)} />
+                      <button type="button" className="btn-secondary btn-sm path-btn" onClick={() => openFolderPicker(createForm.dest_path)} title="Chọn thư mục lưu trên server">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                      </button>
+                    </div>
+                    <p className="settings-hint">Nhập đường dẫn hoặc bấm + để chọn thư mục lưu trên server. Trống = mặc định /var/backups.</p>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn-secondary" onClick={closeCreateModal}>Hủy</button>
+                <button type="submit" className="btn-primary" disabled={creating}>
+                  {creating ? 'Đang tạo...' : 'Tạo backup'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {sourceModalOpen && (
+        <div className="modal-overlay" onClick={() => setSourceModalOpen(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Chọn nguồn dữ liệu</h2>
+              <button className="modal-close" onClick={() => setSourceModalOpen(false)} aria-label="Đóng">×</button>
+            </div>
+            <div className="modal-body">
+                <div className="settings-row">
+                  <label className="settings-label">Chọn nguồn từ máy</label>
+                  <div className="source-btns file-picker-btns">
+                    <div className="file-picker">
+                      <input type="file" id="upload-files" className="file-input" multiple onChange={handleFileChange} style={{ display: 'none' }} />
+                      <label htmlFor="upload-files" className="file-btn">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6, marginRight: 8 }}>
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="17 8 12 3 7 8" />
+                          <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                        <span><strong>Chọn file</strong><br /><small>Tất cả định dạng: hình, video, tài liệu...</small></span>
+                      </label>
+                    </div>
+                    <div className="file-picker">
+                      <input type="file" id="upload-dir" className="file-input" multiple webkitdirectory="" onChange={handleFileChange} style={{ display: 'none' }} />
+                      <label htmlFor="upload-dir" className="file-btn">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6, marginRight: 8 }}>
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                        </svg>
+                        <span><strong>Chọn thư mục</strong><br /><small>Lấy toàn bộ file bên trong, kể cả thư mục rỗng</small></span>
+                      </label>
+                    </div>
+                  </div>
+                  {emptyPick && (
+                    <div className="empty-pick-note">
+                      <strong>Đã chọn thư mục rỗng.</strong> Trình duyệt không gửi được tên thư mục rỗng, hãy gõ tên vào ô <em>"Tạo thư mục rỗng"</em> bên dưới.
+                    </div>
+                  )}
+                  {uploadFiles.length > 0 && (
+                    <div className="upload-list">
+                      {uploadFiles.length === 1
+                        ? `Đã chọn: ${uploadFiles[0].name}`
+                        : `Đã chọn ${uploadFiles.length} file/folder`}
+                      <ul>
+                        {uploadFiles.slice(0, 5).map((f, i) => (
+                          <li key={i}>{f.webkitRelativePath || f.name}</li>
+                        ))}
+                        {uploadFiles.length > 5 && <li>... và {uploadFiles.length - 5} mục khác</li>}
+                      </ul>
+                      <button type="button" className="btn-secondary btn-sm" style={{ marginTop: 6 }} onClick={() => { setUploadFiles([]); setEmptyPick(false) }}>Bỏ chọn</button>
+                    </div>
+                  )}
+                </div>
+              <div className="settings-divider" />
+              <div className="settings-row">
+                <label className="settings-label">Tạo thư mục rỗng (tùy chọn)</label>
+                <input className="settings-input" type="text" placeholder="VD: Test (trình duyệt không tự gửi thư mục rỗng)" value={createForm.empty_folder} onChange={e => handleCreateField('empty_folder', e.target.value)} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn-secondary" onClick={() => setSourceModalOpen(false)}>Đóng</button>
+              <button type="button" className="btn-primary" onClick={() => setSourceModalOpen(false)}>Xong</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {folderOpen && (
+        <div className="modal-overlay" onClick={() => setFolderOpen(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Chọn thư mục trên Server</h2>
+              <button className="modal-close" onClick={() => setFolderOpen(false)} aria-label="Đóng">×</button>
+            </div>
+            <div className="modal-body">
+              <div className="folder-crumb">
+                <button type="button" className="crumb-btn" onClick={() => loadFolder('/')}>/</button>
+                {currentFolderPath.split('/').filter(Boolean).map((seg, i) => {
+                  const upTo = '/' + currentFolderPath.split('/').filter(Boolean).slice(0, i + 1).join('/')
+                  return (
+                    <span key={i}>
+                      <span className="crumb-sep">/</span>
+                      <button type="button" className="crumb-btn" onClick={() => loadFolder(upTo)}>{seg}</button>
+                    </span>
+                  )
+                })}
+              </div>
+              {folderLoading ? (
+                <p className="settings-hint">Đang tải...</p>
+              ) : currentFolders.length === 0 ? (
+                <p className="settings-hint">Thư mục trống hoặc không có thư mục con.</p>
+              ) : (
+                <div className="folder-list">
+                  {currentFolders.map(f => (
+                    <div key={f.path} className={`folder-item ${f.write ? '' : 'folder-item--noread'}`}>
+                      <button type="button" className="folder-name" onClick={() => loadFolder(f.path)}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.6 }}>
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                        </svg>
+                        <span>{f.name}</span>
+                      </button>
+                      <div className="folder-actions">
+                        {!f.write && <span className="folder-note">không ghi được</span>}
+                        <button type="button" className="btn-secondary btn-sm" onClick={() => { handleCreateField('dest_path', f.path); setFolderOpen(false) }}>Chọn</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className={currentFolderPath === '/' ? 'btn-primary' : 'btn-secondary'}
+                onClick={() => { handleCreateField('dest_path', currentFolderPath); setFolderOpen(false) }}
+              >
+                Sử dụng thư mục hiện tại: {currentFolderPath}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div className={`toast toast--${toast.type}`}>

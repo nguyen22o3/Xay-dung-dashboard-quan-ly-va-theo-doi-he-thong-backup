@@ -18,12 +18,14 @@ import (
 // 1. ĐỊNH NGHĨA CẤU TRÚC BẢNG DỮ LIỆU
 // GORM sẽ dựa vào struct này để tự động tạo bảng 'backup_records' trong PostgreSQL
 type BackupRecord struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Source    string    `json:"source"`    // Nguồn backup (vd: Server, NAS, Google Drive)
-	FileName  string    `json:"file_name"` // Tên file backup
-	Status    string    `json:"status"`    // Trạng thái: "Success" hoặc "Failed"
-	SizeMB    float64   `json:"size_mb"`   // Dung lượng file (Megabyte)
-	CreatedAt time.Time `json:"created_at"` // Thời gian lưu dữ liệu
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Source      string    `json:"source"`      // Nguồn backup (vd: Server Web LAMP)
+	Destination string    `json:"destination"` // Nơi cất giữ (vd: "Server", "Google Drive", "NAS")
+	FileName    string    `json:"file_name"`   // Tên file backup
+	FilePath    string    `json:"file_path"`   // Đường dẫn đầy đủ (remote hoặc local) để xóa
+	Status      string    `json:"status"`      // Trạng thái: "Success" hoặc "Failed"
+	SizeMB      float64   `json:"size_mb"`     // Dung lượng file (Megabyte)
+	CreatedAt   time.Time `json:"created_at"`  // Thời gian lưu dữ liệu
 }
 
 // Biến toàn cục để lưu trữ kết nối Database
@@ -38,7 +40,7 @@ func connectDatabase() {
 		os.Getenv("DB_NAME"),
 		os.Getenv("DB_PORT"),
 	)
-	
+
 	var err error
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
@@ -48,7 +50,7 @@ func connectDatabase() {
 	fmt.Println("✅ Kết nối PostgreSQL thành công!")
 
 	// Tự động tạo bảng dựa trên struct BackupRecord (nếu bảng chưa tồn tại)
-	DB.AutoMigrate(&BackupRecord{})
+	DB.AutoMigrate(&BackupRecord{}, &BackupSchedule{})
 	fmt.Println("✅ Đã tự động đồng bộ cấu trúc bảng (AutoMigrate)!")
 }
 
@@ -61,6 +63,12 @@ func main() {
 	// Gọi hàm kết nối DB ngay khi chương trình khởi chạy
 	connectDatabase()
 
+	// Khởi động quét Google Drive định kỳ (mô hình push: backend đọc Drive)
+	startDriveSyncRunner()
+
+	// Khởi động kiểm tra lịch backup kỳ vọng & cảnh báo quá hạn
+	startScheduleChecker()
+
 	// API Kiểm tra trạng thái (không cần auth)
 	http.HandleFunc("/api/health", middleware.Logging(middleware.CORS(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -70,44 +78,11 @@ func main() {
 		})
 	})))
 
-	// API Nhận dữ liệu từ các máy chủ Backup gửi về (cần auth)
-	http.HandleFunc("/api/backup", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
-		// Chỉ nhận phương thức POST
-		if r.Method != http.MethodPost {
-			http.Error(w, "Chỉ hỗ trợ phương thức POST", http.StatusMethodNotAllowed)
-			return
-		}
+	// API Đăng nhập Admin (không cần auth) — cấp JWT token
+	http.HandleFunc("/api/login", middleware.Logging(middleware.CORS(handleLogin)))
 
-		// Đọc dữ liệu JSON gửi lên
-		var newData BackupRecord
-		err := json.NewDecoder(r.Body).Decode(&newData)
-		if err != nil {
-			http.Error(w, "Dữ liệu JSON không hợp lệ", http.StatusBadRequest)
-			return
-		}
-
-		// Thiết lập thời gian hiện tại
-		newData.CreatedAt = time.Now()
-
-		// Lưu thẳng vào PostgreSQL thông qua GORM
-		result := DB.Create(&newData)
-		if result.Error != nil {
-			http.Error(w, "Lỗi khi lưu vào Database", http.StatusInternalServerError)
-			return
-		}
-
-		// Trả về thông báo thành công
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"status":  "success",
-			"message": "Đã lưu bản ghi backup thành công!",
-		})
-
-		go sendNotifications(newData.FileName, newData.Status)
-	}))))
-
-	// API Lấy danh sách toàn bộ lịch sử Backup (cần auth)
-	http.HandleFunc("/api/backups", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
+	// API Lấy danh sách toàn bộ lịch sử Backup (cần JWT)
+	http.HandleFunc("/api/backups", middleware.Logging(middleware.CORS(middleware.JWT(func(w http.ResponseWriter, r *http.Request) {
 		var backups []BackupRecord
 		DB.Order("created_at desc").Find(&backups)
 
@@ -115,26 +90,23 @@ func main() {
 		json.NewEncoder(w).Encode(backups)
 	}))))
 
-	// API Xóa một bản ghi Backup (cần auth)
-	http.HandleFunc("/api/delete", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
-		// Lấy ID từ đường dẫn URL (ví dụ: /api/delete?id=5)
-		id := r.URL.Query().Get("id")
-		if id == "" {
-			http.Error(w, "Thiếu ID bản ghi", http.StatusBadRequest)
-			return
-		}
+	// API Quản lý lịch backup kỳ vọng (cần JWT) — GET/POST/PUT/DELETE
+	http.HandleFunc("/api/schedules", middleware.Logging(middleware.CORS(middleware.JWT(handleSchedules))))
 
-		DB.Delete(&BackupRecord{}, id)
+	// API Tạo bản backup thủ công (cần JWT)
+	http.HandleFunc("/api/backup", middleware.Logging(middleware.CORS(middleware.JWT(createBackupHandler))))
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"status":  "success",
-			"message": "Đã xóa bản ghi thành công!",
-		})
-	}))))
+	// API Upload file/thư mục từ trình duyệt để tạo backup (cần JWT)
+	http.HandleFunc("/api/upload", middleware.Logging(middleware.CORS(middleware.JWT(uploadBackupHandler))))
+
+	// API Liệt kê thư mục trên server (cần JWT) — dùng cho hộp thoại chọn nơi lưu
+	http.HandleFunc("/api/folders", middleware.Logging(middleware.CORS(middleware.JWT(folderPickHandler))))
+
+	// API Xóa backup tại đúng nơi cất giữ (cần JWT)
+	http.HandleFunc("/api/delete", middleware.Logging(middleware.CORS(middleware.JWT(deleteBackupHandler))))
 
 	// API Reset lại ID (re-index tất cả bản ghi từ 1)
-	http.HandleFunc("/api/reset-ids", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/api/reset-ids", middleware.Logging(middleware.CORS(middleware.JWT(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Chỉ hỗ trợ phương thức POST", http.StatusMethodNotAllowed)
 			return
@@ -159,8 +131,8 @@ func main() {
 		// Xóa tất cả bản ghi cũ
 		tx.Exec("DELETE FROM backup_records")
 
-		// Reset sequence về 1
-		tx.Exec("ALTER SEQUENCE backup_records_id_seq RESTART WITH 1")
+		// Reset identity/sequence về 1 (không cần biết tên sequence cụ thể)
+		tx.Exec("ALTER TABLE backup_records ALTER COLUMN id RESTART WITH 1")
 
 		// Gán lại ID từ 1 và chèn lại
 		for i := range records {
@@ -185,7 +157,7 @@ func main() {
 	}))))
 
 	// API Xóa toàn bộ bản ghi Backup (cần auth)
-	http.HandleFunc("/api/clear-all", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/api/clear-all", middleware.Logging(middleware.CORS(middleware.JWT(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Chỉ hỗ trợ phương thức POST", http.StatusMethodNotAllowed)
 			return
@@ -196,8 +168,8 @@ func main() {
 		// Xóa tất cả bản ghi
 		tx.Exec("DELETE FROM backup_records")
 
-		// Reset sequence về 1
-		tx.Exec("ALTER SEQUENCE backup_records_id_seq RESTART WITH 1")
+		// Reset identity/sequence về 1 (không cần biết tên sequence cụ thể)
+		tx.Exec("ALTER TABLE backup_records ALTER COLUMN id RESTART WITH 1")
 
 		if tx.Error != nil {
 			tx.Rollback()
@@ -215,11 +187,11 @@ func main() {
 	}))))
 
 	// API Lấy cấu hình thông báo (cần auth)
-	http.HandleFunc("/api/config", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/api/config", middleware.Logging(middleware.CORS(middleware.JWT(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(loadNotificationConfig())
+			json.NewEncoder(w).Encode(maskedNotificationConfig(loadNotificationConfig()))
 			return
 		}
 
@@ -244,7 +216,7 @@ func main() {
 	}))))
 
 	// API Gửi thông báo thử nghiệm (cần auth) - nhận config từ body để thử ngay không cần lưu
-	http.HandleFunc("/api/test-notify", middleware.Logging(middleware.CORS(middleware.APIKey(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/api/test-notify", middleware.Logging(middleware.CORS(middleware.JWT(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Chỉ hỗ trợ phương thức POST", http.StatusMethodNotAllowed)
 			return
@@ -267,7 +239,7 @@ func main() {
 		port = "8080"
 	}
 	fmt.Println("🚀 Backend Go đang chạy tại địa chỉ: http://localhost:" + port)
-	
+
 	err := http.ListenAndServe(":"+port, nil)
 	if err != nil {
 		fmt.Println("Lỗi khi khởi chạy server:", err)

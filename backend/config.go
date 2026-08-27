@@ -24,21 +24,7 @@ type NotificationConfig struct {
 	TelegramEnabled  bool   `json:"telegram_enabled"`
 }
 
-// envKeys maps config keys to .env variable names
-var envKeys = map[string]string{
-	"discord_webhook_url":  "DISCORD_WEBHOOK_URL",
-	"discord_enabled":      "DISCORD_ENABLED",
-	"gmail_smtp_host":      "GMAIL_SMTP_HOST",
-	"gmail_smtp_port":      "GMAIL_SMTP_PORT",
-	"gmail_email":          "GMAIL_EMAIL",
-	"gmail_app_password":   "GMAIL_APP_PASSWORD",
-	"gmail_to":             "GMAIL_TO",
-	"gmail_enabled":        "GMAIL_ENABLED",
-	"telegram_bot_token":   "TELEGRAM_BOT_TOKEN",
-	"telegram_chat_id":     "TELEGRAM_CHAT_ID",
-	"telegram_enabled":     "TELEGRAM_ENABLED",
-}
-
+// var appEnvPath chuỗi cấu hình file .env
 var appEnvPath = ".env"
 
 // loadNotificationConfig reads notification settings from environment variables
@@ -60,21 +46,47 @@ func loadNotificationConfig() NotificationConfig {
 	}
 }
 
+// maskSecret replaces a non-empty secret with a masked placeholder, so secrets never
+// leak to the frontend (browser).
+func maskSecret(s string) string {
+	if s == "" {
+		return ""
+	}
+	return "••••••••"
+}
+
+// isMasked reports whether a value is a masked placeholder that should be
+// treated as "keep the existing value" when saving.
+func isMasked(s string) bool {
+	return s == "••••••••"
+}
+
+// maskedNotificationConfig returns a copy of the config with sensitive fields masked.
+func maskedNotificationConfig(cfg NotificationConfig) NotificationConfig {
+	cfg.DiscordWebhookURL = maskSecret(cfg.DiscordWebhookURL)
+	cfg.GmailAppPassword = maskSecret(cfg.GmailAppPassword)
+	cfg.TelegramBotToken = maskSecret(cfg.TelegramBotToken)
+	return cfg
+}
+
 // saveNotificationConfig writes notification settings into the .env file
 func saveNotificationConfig(cfg NotificationConfig) error {
 	lines := make(map[string]string)
-	for _, v := range []string{"discord", "gmail", "telegram"} {
-		_ = v
+	if !isMasked(cfg.DiscordWebhookURL) {
+		lines["DISCORD_WEBHOOK_URL"] = cfg.DiscordWebhookURL
 	}
-	lines["DISCORD_WEBHOOK_URL"] = cfg.DiscordWebhookURL
 	lines["DISCORD_ENABLED"] = fmt.Sprintf("%v", cfg.DiscordEnabled)
 	lines["GMAIL_SMTP_HOST"] = cfg.GmailSMTPHost
 	lines["GMAIL_SMTP_PORT"] = cfg.GmailSMTPPort
 	lines["GMAIL_EMAIL"] = cfg.GmailEmail
-	lines["GMAIL_APP_PASSWORD"] = cfg.GmailAppPassword
+	if !isMasked(cfg.GmailAppPassword) {
+		lines["GMAIL_APP_PASSWORD"] = cfg.GmailAppPassword
+	}
 	lines["GMAIL_TO"] = cfg.GmailTo
 	lines["GMAIL_ENABLED"] = fmt.Sprintf("%v", cfg.GmailEnabled)
-	lines["TELEGRAM_BOT_TOKEN"] = cfg.TelegramBotToken
+	if !isMasked(cfg.TelegramBotToken) {
+		lines["TELEGRAM_BOT_TOKEN"] = cfg.TelegramBotToken
+	}
 	lines["TELEGRAM_CHAT_ID"] = cfg.TelegramChatID
 	lines["TELEGRAM_ENABLED"] = fmt.Sprintf("%v", cfg.TelegramEnabled)
 

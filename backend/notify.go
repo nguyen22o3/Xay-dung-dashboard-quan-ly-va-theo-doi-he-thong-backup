@@ -30,10 +30,17 @@ func sendTestNotifications(cfg NotificationConfig) {
 
 // buildMessage returns platform-agnostic text for an alert
 func buildMessage(fileName string, status string) string {
-	if status == "Success" {
+	if isSuccessStatus(status) {
 		return fmt.Sprintf("✅ Backup THÀNH CÔNG: file %s đã được sao lưu an toàn.", fileName)
 	}
 	return fmt.Sprintf("🚨 Backup THẤT BẠI: file %s không thể sao lưu. Vui lòng kiểm tra ngay!", fileName)
+}
+
+// isSuccessStatus đánh giá một status có phải là thành công hay không.
+// Status có thể kèm ghi chú (vd "Success (tạo thủ công: xxx)") nên dùng prefix.
+func isSuccessStatus(status string) bool {
+	s := strings.TrimSpace(status)
+	return s == "Success" || strings.HasPrefix(s, "Success")
 }
 
 // ---------- Discord ----------
@@ -46,7 +53,7 @@ func sendDiscord(fileName string, status string, cfg NotificationConfig) {
 	}
 
 	color := 16711680 // red default
-	if status == "Success" {
+	if isSuccessStatus(status) {
 		color = 65280 // green
 	}
 
