@@ -46,7 +46,7 @@ func driveRemote() string {
 
 // listDriveFiles runs `rclone lsjson` on the backup folder and returns non-dir files.
 func listDriveFiles() ([]drivelFileItem, error) {
-	cmd := exec.Command("rclone", "lsjson", "--recursive", driveRemote())
+	cmd := exec.Command("rclone", "lsjson", "--log-level", "ERROR", "--recursive", driveRemote())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("rclone lsjson thất bại: %v (%s)", err, strings.TrimSpace(string(out)))

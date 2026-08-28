@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"backup-dashboard-backend/middleware"
@@ -129,24 +130,42 @@ func main() {
 		tx := DB.Begin()
 
 		// Xóa tất cả bản ghi cũ
-		tx.Exec("DELETE FROM backup_records")
+		if err := tx.Exec("DELETE FROM backup_records").Error; err != nil {
+			tx.Rollback()
+			http.Error(w, "Lỗi khi reset ID: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 
-		// Reset identity/sequence về 1 (không cần biết tên sequence cụ thể)
-		tx.Exec("ALTER TABLE backup_records ALTER COLUMN id RESTART WITH 1")
+		// Reset sequence về 1 - dùng ALTER SEQUENCE cho SERIAL, fallback setval
+		if err := tx.Exec("ALTER SEQUENCE backup_records_id_seq RESTART WITH 1").Error; err != nil {
+			// Fallback cho trường hợp tên sequence khác hoặc Postgres cũ
+			if err2 := tx.Exec("SELECT setval(pg_get_serial_sequence('backup_records','id'), 1, false)").Error; err2 != nil {
+				tx.Rollback()
+				http.Error(w, "Lỗi khi reset sequence: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
 
 		// Gán lại ID từ 1 và chèn lại
 		for i := range records {
 			records[i].ID = uint(i + 1)
 		}
-		tx.CreateInBatches(records, 100)
-
-		if tx.Error != nil {
+		if err := tx.CreateInBatches(records, 100).Error; err != nil {
 			tx.Rollback()
-			http.Error(w, "Lỗi khi reset ID", http.StatusInternalServerError)
+			http.Error(w, "Lỗi khi reset ID: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		tx.Commit()
+		// Cập nhật sequence để lần insert tiếp theo không trùng ID
+		if err := tx.Exec("SELECT setval('backup_records_id_seq', (SELECT COALESCE(MAX(id), 1) FROM backup_records))").Error; err != nil {
+			// Fallback generic
+			tx.Exec("SELECT setval(pg_get_serial_sequence('backup_records','id'), (SELECT COALESCE(MAX(id), 1) FROM backup_records))")
+		}
+
+		if err := tx.Commit().Error; err != nil {
+			http.Error(w, "Lỗi khi reset ID: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -156,28 +175,77 @@ func main() {
 		})
 	}))))
 
-	// API Xóa toàn bộ bản ghi Backup (cần auth)
+	// API Xóa toàn bộ bản ghi Backup (cần auth) - xóa cả file thực tế trên Server/Drive/NAS
 	http.HandleFunc("/api/clear-all", middleware.Logging(middleware.CORS(middleware.JWT(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Chỉ hỗ trợ phương thức POST", http.StatusMethodNotAllowed)
 			return
 		}
 
+		// Lấy tất cả bản ghi để xóa file thực tế trước khi xóa DB
+		var records []BackupRecord
+		DB.Find(&records)
+		log.Printf("Clear-all: tìm thấy %d bản ghi, bắt đầu xóa file thực tế...", len(records))
+
+		deletedFiles := 0
+		failedFiles := 0
+		for _, rec := range records {
+			log.Printf("Clear-all: đang xóa %s (%s) -> %s", rec.FileName, rec.Destination, rec.FilePath)
+			if rec.FilePath == "" || rec.Destination == "Missed" {
+				continue
+			}
+			var err error
+			switch rec.Destination {
+			case "Google Drive":
+				err = deleteFromDrive(rec.FilePath)
+			case "NAS":
+				err = deleteFromNas(rec.FilePath)
+			case "Server":
+				err = os.Remove(rec.FilePath)
+				if err != nil && os.IsNotExist(err) {
+					err = nil // File đã không tồn tại, bỏ qua
+				}
+			default:
+				continue
+			}
+			if err != nil {
+				lower := strings.ToLower(err.Error())
+				if strings.Contains(lower, "not found") || strings.Contains(lower, "no such") || strings.Contains(lower, "doesn't exist") || strings.Contains(lower, "not exist") {
+					log.Printf("File không tồn tại khi xóa tất cả, bỏ qua: %s", rec.FilePath)
+				} else {
+					log.Printf("Lỗi xóa file %s (%s): %v", rec.FilePath, rec.Destination, err)
+					failedFiles++
+					continue
+				}
+			} else {
+				log.Printf("Clear-all: đã xóa file %s", rec.FilePath)
+			}
+			deletedFiles++
+		}
+		log.Printf("Clear-all: xóa file xong: %d thành công, %d lỗi", deletedFiles, failedFiles)
+
 		tx := DB.Begin()
 
 		// Xóa tất cả bản ghi
-		tx.Exec("DELETE FROM backup_records")
-
-		// Reset identity/sequence về 1 (không cần biết tên sequence cụ thể)
-		tx.Exec("ALTER TABLE backup_records ALTER COLUMN id RESTART WITH 1")
-
-		if tx.Error != nil {
+		if err := tx.Exec("DELETE FROM backup_records").Error; err != nil {
 			tx.Rollback()
-			http.Error(w, "Lỗi khi xóa toàn bộ dữ liệu", http.StatusInternalServerError)
+			http.Error(w, "Lỗi khi xóa toàn bộ dữ liệu: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		tx.Commit()
+		// Reset sequence về 1 - dùng ALTER SEQUENCE cho SERIAL, fallback setval
+		if err := tx.Exec("ALTER SEQUENCE backup_records_id_seq RESTART WITH 1").Error; err != nil {
+			if err2 := tx.Exec("SELECT setval(pg_get_serial_sequence('backup_records','id'), 1, false)").Error; err2 != nil {
+				tx.Rollback()
+				http.Error(w, "Lỗi khi reset sequence: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		if err := tx.Commit().Error; err != nil {
+			http.Error(w, "Lỗi khi xóa toàn bộ dữ liệu: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
@@ -215,16 +283,14 @@ func main() {
 		http.Error(w, "Phương thức không được hỗ trợ", http.StatusMethodNotAllowed)
 	}))))
 
-	// API Gửi thông báo thử nghiệm (cần auth) - nhận config từ body để thử ngay không cần lưu
+	// API Gửi thông báo thử nghiệm (cần auth) - dùng config thực từ .env, bỏ qua body
 	http.HandleFunc("/api/test-notify", middleware.Logging(middleware.CORS(middleware.JWT(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Chỉ hỗ trợ phương thức POST", http.StatusMethodNotAllowed)
 			return
 		}
 
-		var cfg NotificationConfig
-		json.NewDecoder(r.Body).Decode(&cfg)
-		sendTestNotifications(cfg)
+		sendTestNotifications(loadNotificationConfig())
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{

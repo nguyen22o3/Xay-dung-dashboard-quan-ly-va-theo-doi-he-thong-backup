@@ -2,8 +2,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import './App.css'
 
 function formatSize(mb) {
+  if (mb == null || isNaN(mb)) return '--'
   if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB'
-  return mb.toFixed(1) + ' MB'
+  if (mb >= 1) return mb.toFixed(1) + ' MB'
+  if (mb > 0) return (mb * 1024).toFixed(1) + ' KB'
+  return '0.0 MB'
 }
 
 function formatTime(dateStr) {
@@ -72,10 +75,8 @@ function App() {
     destinations: ['server'],
     dest_path: '',
     source_name: '',
-    empty_folder: '',
   })
   const [uploadFiles, setUploadFiles] = useState([])
-  const [emptyPick, setEmptyPick] = useState(false)
   const [sourceModalOpen, setSourceModalOpen] = useState(false)
   const [folderOpen, setFolderOpen] = useState(false)
   const [currentFolderPath, setCurrentFolderPath] = useState('/')
@@ -398,9 +399,8 @@ function App() {
   const createBackup = async (e) => {
     e.preventDefault()
     const hasUploadFiles = uploadFiles && uploadFiles.length > 0
-    const hasEmptyFolder = createForm.empty_folder && createForm.empty_folder.trim()
     const hasSourcePath = createForm.source_path && createForm.source_path.trim()
-    if (!hasUploadFiles && !hasEmptyFolder && !hasSourcePath) {
+    if (!hasUploadFiles && !hasSourcePath) {
       showToast('Vui lòng chọn nguồn dữ liệu (chọn bên nút + ở ô "Nguồn dữ liệu")', 'error')
       return
     }
@@ -408,16 +408,19 @@ function App() {
       showToast('Vui lòng chọn ít nhất một nơi cất giữ', 'error')
       return
     }
+    if ((createForm.destinations || []).includes('server') && !createForm.dest_path?.trim()) {
+      showToast('Vui lòng chọn chỗ lưu trên Server (bấm + để chọn tự do, không có mặc định)', 'error')
+      return
+    }
     setCreating(true)
     try {
       let res
-      if (hasUploadFiles || hasEmptyFolder) {
+      if (hasUploadFiles) {
         const fd = new FormData()
-        for (const f of uploadFiles) fd.append('files', f)
+        for (const f of uploadFiles) fd.append('files', f, f.webkitRelativePath || f.name)
         fd.append('destinations', JSON.stringify(createForm.destinations))
         fd.append('dest_path', createForm.dest_path)
         fd.append('source_name', createForm.source_name)
-        fd.append('empty_folder', (createForm.empty_folder || '').trim())
         fd.append('source_path', (createForm.source_path || '').trim())
         res = await fetch('/api/upload', {
           method: 'POST',
@@ -438,9 +441,8 @@ function App() {
       }
       showToast(data.message || 'Đã tạo bản backup thành công')
       setCreateOpen(false)
-      setCreateForm({ source_path: '', destinations: ['server'], dest_path: '', source_name: '', empty_folder: '' })
+      setCreateForm({ source_path: '', destinations: ['server'], dest_path: '', source_name: '' })
       setUploadFiles([])
-      setEmptyPick(false)
       await fetchBackups()
     } catch (err) {
       console.error('Lỗi khi tạo backup:', err)
@@ -461,26 +463,65 @@ function App() {
 
   const handleFileChange = (e) => {
     const files = Array.from(e.target.files || [])
-    setUploadFiles(files)
-    if (files.length === 0) {
-      setEmptyPick(true)
+    if (files.length === 0) return
+    // Gộp file mới vào danh sách cũ để cho phép chọn file + thư mục nhiều lần
+    setUploadFiles(prev => {
+      const merged = [...prev, ...files]
+      // Loại trùng theo name + size + lastModified + webkitRelativePath
+      const seen = new Set()
+      return merged.filter(f => {
+        const key = `${f.webkitRelativePath || f.name}-${f.size}-${f.lastModified}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    })
+    // Reset input để chọn lại cùng file vẫn trigger onChange
+    e.target.value = ''
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    const items = e.dataTransfer?.items
+    const files = []
+    if (items) {
+      for (const item of items) {
+        const file = item.getAsFile?.()
+        if (file) files.push(file)
+      }
+    } else {
+      files.push(...Array.from(e.dataTransfer?.files || []))
+    }
+    if (files.length > 0) {
+      setUploadFiles(prev => {
+        const merged = [...prev, ...files]
+        const seen = new Set()
+        return merged.filter(f => {
+          const key = `${f.webkitRelativePath || f.name}-${f.size}-${f.lastModified}`
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+      })
     }
   }
 
   const closeCreateModal = () => {
     setCreateOpen(false)
-    setEmptyPick(false)
     setSourceModalOpen(false)
     setFolderOpen(false)
   }
 
+  // Debug: log khi dest_path thay đổi
+  useEffect(() => {
+    console.log('DEBUG dest_path changed:', createForm.dest_path)
+  }, [createForm.dest_path])
+
   const hasUpload = uploadFiles && uploadFiles.length > 0
-  const hasEmptyFolder = !!createForm.empty_folder && createForm.empty_folder.trim() !== ''
   const hasSourcePath = !!createForm.source_path && createForm.source_path.trim() !== ''
 
   const sourceTags = []
   if (hasUpload) sourceTags.push({ key: 'upload', label: 'Từ máy', cls: 'dest-tag--server' })
-  if (hasEmptyFolder) sourceTags.push({ key: 'empty', label: `Thư mục rỗng: ${createForm.empty_folder.trim()}`, cls: 'dest-tag--nas' })
   if (hasSourcePath) sourceTags.push({ key: 'path', label: `Đường dẫn: ${createForm.source_path.trim()}`, cls: 'dest-tag--google-drive' })
 
   const loadFolder = async (path) => {
@@ -504,6 +545,39 @@ function App() {
   const openFolderPicker = async (initialPath) => {
     setFolderOpen(true)
     await loadFolder(initialPath || '/')
+  }
+
+  const handleDestFolderChange = (e) => {
+    console.log('handleDestFolderChange triggered', e.target.files)
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
+    // Lấy tên thư mục gốc từ webkitRelativePath (vd "MyBackups/file.txt" -> "MyBackups")
+    const rel = files[0]?.webkitRelativePath || files[0]?.name || ''
+    const topFolder = rel.split('/')[0] || 'backup'
+    // Gợi ý tự do, user có thể sửa tay bất kỳ chỗ nào
+    const suggested = `/home/ddnguyen/backups/${topFolder}`
+    console.log('handleDestFolderChange -> dest_path', suggested)
+    handleCreateField('dest_path', suggested)
+    showToast(`Đã chọn thư mục "${topFolder}" -> gợi ý ${suggested} (tự do sửa)`)
+    e.target.value = ''
+  }
+
+  const handleDestPickClick = async () => {
+    // Ưu tiên File System Access API (Chrome/Edge) cho popup native thực sự
+    if (window.showDirectoryPicker) {
+      try {
+        const handle = await window.showDirectoryPicker()
+        const suggested = `/home/ddnguyen/backups/${handle.name}`
+        handleCreateField('dest_path', suggested)
+        showToast(`Đã chọn thư mục "${handle.name}" -> lưu tại ${suggested}`)
+        return
+      } catch (err) {
+        if (err?.name === 'AbortError') return // user hủy
+        // fallback sang input webkitdirectory
+      }
+    }
+    // Fallback: input webkitdirectory ẩn
+    document.getElementById('dest-folder-picker')?.click()
   }
 
   const sources = useMemo(() => {
@@ -1248,13 +1322,7 @@ function App() {
                         ))}
                         {uploadFiles.length > 5 && <li>... và {uploadFiles.length - 5} mục khác</li>}
                       </ul>
-                      <button type="button" className="btn-secondary btn-sm" style={{ marginTop: 6 }} onClick={() => { setUploadFiles([]); setEmptyPick(false) }}>Bỏ chọn</button>
-                    </div>
-                  )}
-                  {emptyPick && (
-                    <div className="settings-row">
-                      <label className="settings-label">Thư mục rỗng (từ máy) — nhập tên để tạo</label>
-                      <input className="settings-input" type="text" placeholder="VD: Test (trình duyệt không tự gửi tên thư mục rỗng)" value={createForm.empty_folder} onChange={e => handleCreateField('empty_folder', e.target.value)} />
+                      <button type="button" className="btn-secondary btn-sm" style={{ marginTop: 6 }} onClick={() => { setUploadFiles([]) }}>Bỏ chọn</button>
                     </div>
                   )}
                 </div>
@@ -1287,14 +1355,17 @@ function App() {
 
                 {(createForm.destinations || []).includes('server') && (
                   <div className="settings-row">
-                    <label className="settings-label">Đường dẫn lưu trên Server</label>
+                    <label className="settings-label">Đường dẫn lưu trên Server <span style={{ color: 'var(--danger)', fontWeight: 400 }}>* tự do chọn</span></label>
+                    <input type="file" id="dest-folder-picker" webkitdirectory="" directory="" multiple style={{ display: 'none' }} onChange={handleDestFolderChange} />
                     <div className="path-pick">
-                      <input className="settings-input path-input" type="text" placeholder="VD: /opt/backups (mặc định /var/backups)" value={createForm.dest_path} onChange={e => handleCreateField('dest_path', e.target.value)} />
-                      <button type="button" className="btn-secondary btn-sm path-btn" onClick={() => openFolderPicker(createForm.dest_path)} title="Chọn thư mục lưu trên server">
+                      <input className="settings-input path-input" type="text" placeholder="Bắt buộc: tự do chọn, vd /home/ddnguyen/backups hoặc /tmp/backups" value={createForm.dest_path} onChange={e => handleCreateField('dest_path', e.target.value)} required />
+                      <button type="button" className="btn-secondary btn-sm path-btn" onClick={handleDestPickClick} title="Chọn thư mục lưu - popup hệ thống (tự do)">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
                       </button>
                     </div>
-                    <p className="settings-hint">Nhập đường dẫn hoặc bấm + để chọn thư mục lưu trên server. Trống = mặc định /var/backups.</p>
+                    <p className="settings-hint">
+                      Tự do chọn bất kỳ thư mục nào, bấm <strong>+</strong> để mở popup hệ thống (gợi ý <code>/home/&lt;user&gt;/backups/&lt;tên&gt;</code>). <button type="button" className="btn-link" style={{ fontSize: 12, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)' }} onClick={() => openFolderPicker(createForm.dest_path)}>Hoặc duyệt cây thư mục server</button>. Không có thư mục mặc định.
+                    </p>
                   </div>
                 )}
               </div>
@@ -1319,33 +1390,26 @@ function App() {
             <div className="modal-body">
                 <div className="settings-row">
                   <label className="settings-label">Chọn nguồn từ máy</label>
-                  <div className="source-btns file-picker-btns">
-                    <div className="file-picker">
-                      <input type="file" id="upload-files" className="file-input" multiple onChange={handleFileChange} style={{ display: 'none' }} />
-                      <label htmlFor="upload-files" className="file-btn">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6, marginRight: 8 }}>
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                          <polyline points="17 8 12 3 7 8" />
-                          <line x1="12" y1="3" x2="12" y2="15" />
-                        </svg>
-                        <span><strong>Chọn file</strong><br /><small>Tất cả định dạng: hình, video, tài liệu...</small></span>
-                      </label>
+                  <div className="file-picker file-picker--unified" onDragOver={e => e.preventDefault()} onDrop={handleDrop} style={{ border: '1.5px dashed var(--border)', borderRadius: 12, padding: 16, background: 'var(--bg-subtle)' }}>
+                    <input type="file" id="upload-files" className="file-input" multiple onChange={handleFileChange} style={{ display: 'none' }} />
+                    <input type="file" id="upload-dir" className="file-input" multiple webkitdirectory="" onChange={handleFileChange} style={{ display: 'none' }} />
+                    <div className="file-btn file-btn--unified" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6 }}>
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                      <div>
+                        <strong>Chọn file / thư mục</strong>
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>Hỗ trợ chọn nhiều file và cả thư mục (giữ cấu trúc) - có thể chọn nhiều lần, kéo thả vào đây</div>
+                      </div>
                     </div>
-                    <div className="file-picker">
-                      <input type="file" id="upload-dir" className="file-input" multiple webkitdirectory="" onChange={handleFileChange} style={{ display: 'none' }} />
-                      <label htmlFor="upload-dir" className="file-btn">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6, marginRight: 8 }}>
-                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                        </svg>
-                        <span><strong>Chọn thư mục</strong><br /><small>Lấy toàn bộ file bên trong, kể cả thư mục rỗng</small></span>
-                      </label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <label htmlFor="upload-files" className="btn-secondary btn-sm" style={{ cursor: 'pointer' }}>Chọn file</label>
+                      <label htmlFor="upload-dir" className="btn-secondary btn-sm" style={{ cursor: 'pointer' }}>Chọn thư mục</label>
+                      <span style={{ fontSize: 12, opacity: 0.6, alignSelf: 'center' }}>hoặc kéo thả file/thư mục vào khung</span>
                     </div>
                   </div>
-                  {emptyPick && (
-                    <div className="empty-pick-note">
-                      <strong>Đã chọn thư mục rỗng.</strong> Trình duyệt không gửi được tên thư mục rỗng, hãy gõ tên vào ô <em>"Tạo thư mục rỗng"</em> bên dưới.
-                    </div>
-                  )}
                   {uploadFiles.length > 0 && (
                     <div className="upload-list">
                       {uploadFiles.length === 1
@@ -1357,15 +1421,10 @@ function App() {
                         ))}
                         {uploadFiles.length > 5 && <li>... và {uploadFiles.length - 5} mục khác</li>}
                       </ul>
-                      <button type="button" className="btn-secondary btn-sm" style={{ marginTop: 6 }} onClick={() => { setUploadFiles([]); setEmptyPick(false) }}>Bỏ chọn</button>
+                      <button type="button" className="btn-secondary btn-sm" style={{ marginTop: 6 }} onClick={() => { setUploadFiles([]) }}>Bỏ chọn</button>
                     </div>
                   )}
                 </div>
-              <div className="settings-divider" />
-              <div className="settings-row">
-                <label className="settings-label">Tạo thư mục rỗng (tùy chọn)</label>
-                <input className="settings-input" type="text" placeholder="VD: Test (trình duyệt không tự gửi thư mục rỗng)" value={createForm.empty_folder} onChange={e => handleCreateField('empty_folder', e.target.value)} />
-              </div>
             </div>
             <div className="modal-footer">
               <button type="button" className="btn-secondary" onClick={() => setSourceModalOpen(false)}>Đóng</button>
@@ -1383,49 +1442,59 @@ function App() {
               <button className="modal-close" onClick={() => setFolderOpen(false)} aria-label="Đóng">×</button>
             </div>
             <div className="modal-body">
-              <div className="folder-crumb">
-                <button type="button" className="crumb-btn" onClick={() => loadFolder('/')}>/</button>
-                {currentFolderPath.split('/').filter(Boolean).map((seg, i) => {
-                  const upTo = '/' + currentFolderPath.split('/').filter(Boolean).slice(0, i + 1).join('/')
-                  return (
-                    <span key={i}>
-                      <span className="crumb-sep">/</span>
-                      <button type="button" className="crumb-btn" onClick={() => loadFolder(upTo)}>{seg}</button>
-                    </span>
-                  )
-                })}
-              </div>
-              {folderLoading ? (
-                <p className="settings-hint">Đang tải...</p>
-              ) : currentFolders.length === 0 ? (
-                <p className="settings-hint">Thư mục trống hoặc không có thư mục con.</p>
-              ) : (
-                <div className="folder-list">
-                  {currentFolders.map(f => (
-                    <div key={f.path} className={`folder-item ${f.write ? '' : 'folder-item--noread'}`}>
-                      <button type="button" className="folder-name" onClick={() => loadFolder(f.path)}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.6 }}>
-                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                        </svg>
-                        <span>{f.name}</span>
-                      </button>
-                      <div className="folder-actions">
-                        {!f.write && <span className="folder-note">không ghi được</span>}
-                        <button type="button" className="btn-secondary btn-sm" onClick={() => { handleCreateField('dest_path', f.path); setFolderOpen(false) }}>Chọn</button>
-                      </div>
-                    </div>
-                  ))}
+              <div className="settings-row">
+                <label className="settings-label">Đường dẫn hiện tại</label>
+                <div className="folder-crumb" style={{ background: 'var(--bg-subtle)', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)' }}>
+                  <button type="button" className="crumb-btn" onClick={() => loadFolder('/')}>/</button>
+                  {currentFolderPath.split('/').filter(Boolean).map((seg, i) => {
+                    const upTo = '/' + currentFolderPath.split('/').filter(Boolean).slice(0, i + 1).join('/')
+                    return (
+                      <span key={i}>
+                        <span className="crumb-sep">/</span>
+                        <button type="button" className="crumb-btn" onClick={() => loadFolder(upTo)}>{seg}</button>
+                      </span>
+                    )
+                  })}
                 </div>
-              )}
+              </div>
+              <div className="file-picker file-picker--unified" style={{ border: '1.5px dashed var(--border)', borderRadius: 12, padding: 16, background: 'var(--bg-subtle)', marginTop: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6 }}>
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                  </svg>
+                  <div>
+                    <strong>Chọn thư mục lưu trên Server</strong>
+                    <div style={{ fontSize: 12, opacity: 0.7 }}>Bấm vào tên thư mục để mở, bấm “Chọn” để lưu backup vào đó</div>
+                  </div>
+                </div>
+                {folderLoading ? (
+                  <p className="settings-hint">Đang tải...</p>
+                ) : currentFolders.length === 0 ? (
+                  <p className="settings-hint">Thư mục trống hoặc không có thư mục con.</p>
+                ) : (
+                  <div className="folder-list">
+                    {currentFolders.map(f => (
+                      <div key={f.path} className={`folder-item ${f.write ? '' : 'folder-item--noread'}`}>
+                        <button type="button" className="folder-name" onClick={() => loadFolder(f.path)}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.6 }}>
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                          </svg>
+                          <span>{f.name}</span>
+                        </button>
+                        <div className="folder-actions">
+                          {!f.write && <span className="folder-note">không ghi được</span>}
+                          <button type="button" className="btn-secondary btn-sm" onClick={() => { console.log('Chọn folder', f.path); handleCreateField('dest_path', f.path); setFolderOpen(false) }}>Chọn</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <p className="settings-hint" style={{ marginTop: 8 }}>Đường dẫn sẽ lưu: <code>{currentFolderPath}</code> (tự do chọn, không mặc định)</p>
             </div>
             <div className="modal-footer">
-              <button
-                type="button"
-                className={currentFolderPath === '/' ? 'btn-primary' : 'btn-secondary'}
-                onClick={() => { handleCreateField('dest_path', currentFolderPath); setFolderOpen(false) }}
-              >
-                Sử dụng thư mục hiện tại: {currentFolderPath}
-              </button>
+              <button type="button" className="btn-secondary" onClick={() => setFolderOpen(false)}>Đóng</button>
+              <button type="button" className="btn-primary" onClick={() => { console.log('Chọn thư mục hiện tại', currentFolderPath); handleCreateField('dest_path', currentFolderPath); setFolderOpen(false) }}>Chọn thư mục hiện tại</button>
             </div>
           </div>
         </div>

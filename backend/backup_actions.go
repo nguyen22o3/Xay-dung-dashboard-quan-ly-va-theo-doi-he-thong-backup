@@ -94,17 +94,53 @@ func createBackupToDests(sourcePath string, destinations []string, destPath, sou
 	tmp.Close()
 	os.Remove(tmpPath)
 
-	// 1. Nén nguồn thành tar.gz (chỉ nén một lần).
-	if err := createTarball(sourcePath, tmpPath); err != nil {
-		return "", nil, fmt.Errorf("Nén backup thất bại: %v", err)
-	}
-
 	if strings.TrimSpace(sourceName) == "" {
 		sourceName = "Manual"
 	}
 
+	// 1. Nén nguồn thành tar.gz (chỉ nén một lần).
+	if err := createTarball(sourcePath, tmpPath); err != nil {
+		os.Remove(tmpPath)
+		// Lưu bản ghi Failed và gửi thông báo để user không bị im lặng
+		recFail := BackupRecord{
+			Source:    sourceName,
+			FileName:  fileName,
+			Status:    "Failed",
+			SizeMB:    0,
+			CreatedAt: time.Now(),
+		}
+		// Gán destination chung nếu có thể
+		if len(dests) == 1 {
+			switch dests[0] {
+			case "drive":
+				recFail.Destination = "Google Drive"
+				recFail.FilePath = driveRemoteFolder() + "/" + fileName
+			case "nas":
+				recFail.Destination = "NAS"
+				recFail.FilePath = nasRemoteFolder() + "/" + fileName
+			default:
+				recFail.Destination = "Server"
+				if strings.TrimSpace(destPath) == "" {
+					recFail.FilePath = fileName
+				} else {
+					cleaned := sanitizeServerPath(destPath, "")
+					if cleaned == "" {
+						cleaned = destPath
+					}
+					recFail.FilePath = filepath.Join(cleaned, fileName)
+				}
+			}
+		} else {
+			recFail.Destination = strings.Join(dests, ",")
+		}
+		DB.Create(&recFail)
+		go sendNotifications(sourceName, "Failed (nén: "+fileName+" - "+err.Error()+")")
+		return "", nil, fmt.Errorf("Nén backup thất bại: %v", err)
+	}
+
 	// 2. Copy tới từng đích và ghi mỗi record tương ứng.
 	okDests := []string{}
+	failedDests := []string{}
 	for _, dest := range dests {
 		var displayDest, fileRef string
 		switch dest {
@@ -112,6 +148,18 @@ func createBackupToDests(sourcePath string, destinations []string, destPath, sou
 			remote := driveRemoteFolder() + "/" + fileName
 			if err := copyToDrive(tmpPath, remote); err != nil {
 				log.Printf("Upload Google Drive thất bại: %v", err)
+				recFail := BackupRecord{
+					Source:    sourceName,
+					Destination: "Google Drive",
+					FileName:  fileName,
+					FilePath:  remote,
+					Status:    "Failed",
+					SizeMB:    0,
+					CreatedAt: time.Now(),
+				}
+				DB.Create(&recFail)
+				failedDests = append(failedDests, "Google Drive")
+				go sendNotifications(sourceName, "Failed (Google Drive: "+fileName+" - "+err.Error()+")")
 				continue
 			}
 			displayDest = "Google Drive"
@@ -120,20 +168,94 @@ func createBackupToDests(sourcePath string, destinations []string, destPath, sou
 			remote := nasRemoteFolder() + "/" + fileName
 			if err := copyToNas(tmpPath, remote); err != nil {
 				log.Printf("Upload NAS thất bại: %v", err)
+				recFail := BackupRecord{
+					Source:    sourceName,
+					Destination: "NAS",
+					FileName:  fileName,
+					FilePath:  remote,
+					Status:    "Failed",
+					SizeMB:    0,
+					CreatedAt: time.Now(),
+				}
+				DB.Create(&recFail)
+				failedDests = append(failedDests, "NAS")
+				go sendNotifications(sourceName, "Failed (NAS: "+fileName+" - "+err.Error()+")")
 				continue
 			}
 			displayDest = "NAS"
 			fileRef = remote
 		default: // server
-			destDir := sanitizeServerPath(destPath, "/var/backups")
+			// Không dùng thư mục mặc định - yêu cầu user tự chọn chỗ lưu
+			trimmedDest := strings.TrimSpace(destPath)
+			if trimmedDest == "" {
+				log.Printf("Thiếu đường dẫn lưu trên Server: user chưa chọn chỗ lưu")
+				recFail := BackupRecord{
+					Source:    sourceName,
+					Destination: "Server",
+					FileName:  fileName,
+					FilePath:  fileName,
+					Status:    "Failed",
+					SizeMB:    0,
+					CreatedAt: time.Now(),
+				}
+				DB.Create(&recFail)
+				failedDests = append(failedDests, "Server")
+				go sendNotifications(sourceName, "Failed (Server: chưa chọn chỗ lưu - vui lòng chọn đường dẫn)")
+				continue
+			}
+			destDir := sanitizeServerPath(trimmedDest, "")
+			if destDir == "" {
+				log.Printf("Đường dẫn lưu không hợp lệ sau khi chuẩn hóa: %q", destPath)
+				recFail := BackupRecord{
+					Source:    sourceName,
+					Destination: "Server",
+					FileName:  fileName,
+					FilePath:  fileName,
+					Status:    "Failed",
+					SizeMB:    0,
+					CreatedAt: time.Now(),
+				}
+				DB.Create(&recFail)
+				failedDests = append(failedDests, "Server")
+				go sendNotifications(sourceName, "Failed (Server: đường dẫn không hợp lệ)")
+				continue
+			}
 			if err := os.MkdirAll(destDir, 0755); err != nil {
 				log.Printf("Không tạo được thư mục đích: %v", err)
+				// Lưu bản ghi Failed để user thấy và nhận thông báo
+				recFail := BackupRecord{
+					Source:    sourceName,
+					Destination: "Server",
+					FileName:  fileName,
+					FilePath:  filepath.Join(destDir, fileName),
+					Status:    "Failed",
+					SizeMB:    0,
+					CreatedAt: time.Now(),
+				}
+				if err2 := DB.Create(&recFail).Error; err2 != nil {
+					log.Printf("Lỗi tạo bản ghi Failed Server Mkdir: %v", err2)
+				} else {
+					log.Printf("Đã tạo bản ghi Failed cho Server Mkdir: %s", fileName)
+				}
+				failedDests = append(failedDests, "Server")
+				go sendNotifications(sourceName, "Failed (Server Mkdir: "+fileName+" - "+err.Error()+")")
 				continue
 			}
 			fullPath := filepath.Join(destDir, fileName)
 			if err := copyLocal(tmpPath, fullPath); err != nil {
-				os.Remove(tmpPath)
 				log.Printf("Lưu file trên server thất bại: %v", err)
+				recFail := BackupRecord{
+					Source:    sourceName,
+					Destination: "Server",
+					FileName:  fileName,
+					FilePath:  fullPath,
+					Status:    "Failed",
+					SizeMB:    0,
+					CreatedAt: time.Now(),
+				}
+				DB.Create(&recFail)
+				failedDests = append(failedDests, "Server")
+				go sendNotifications(sourceName, "Failed (Server: "+fileName+" - "+err.Error()+")")
 				continue
 			}
 			displayDest = "Server"
@@ -141,7 +263,12 @@ func createBackupToDests(sourcePath string, destinations []string, destPath, sou
 		}
 
 		var sizeBytes int64
-		if st, e := os.Stat(fileRef); e == nil {
+		// Lấy dung lượng từ file tạm đã nén (áp dụng cho cả Server/Drive/NAS)
+		// thay vì os.Stat(fileRef) vì fileRef với Drive/NAS là remote path (gdrive:...) không stat được -> luôn 0.
+		if st, e := os.Stat(tmpPath); e == nil {
+			sizeBytes = st.Size()
+		} else if st, e := os.Stat(fileRef); e == nil {
+			// Fallback cho Server nếu tmp đã xóa
 			sizeBytes = st.Size()
 		}
 
@@ -164,8 +291,25 @@ func createBackupToDests(sourcePath string, destinations []string, destPath, sou
 	os.Remove(tmpPath)
 
 	if len(okDests) == 0 {
-		return "", nil, fmt.Errorf("Tạo bản backup thất bại cho mọi nơi cất giữ đã chọn")
+		// Đã gửi Failed cho từng dest ở trên, gửi thêm tổng hợp nếu chưa có
+		if len(failedDests) == 0 {
+			go sendNotifications(sourceName, "Failed (tạo thủ công: "+fileName+")")
+		} else {
+			// Đã gửi cho từng dest, không gửi trùng nếu chỉ 1 dest (tránh spam)
+			if len(failedDests) > 1 {
+				go sendNotifications(sourceName, "Failed (tạo thủ công: "+fileName+" - thất bại tại "+strings.Join(failedDests, ", ")+")")
+			}
+		}
+		return "", failedDests, fmt.Errorf("Tạo bản backup thất bại cho mọi nơi cất giữ đã chọn (%s)", strings.Join(failedDests, ", "))
 	}
+
+	// Có một phần thất bại, thông báo thêm để user biết
+	if len(failedDests) > 0 {
+		go sendNotifications(sourceName, "Failed (tạo thủ công một phần: "+fileName+" - thất bại tại "+strings.Join(failedDests, ", ")+", thành công tại "+strings.Join(okDests, ", ")+")")
+	}
+
+	// Kiểm tra và cập nhật schedule nếu backup thủ công thỏa mãn lịch kỳ vọng
+	CheckAndAdvanceSchedulesForBackup(sourceName, fileName)
 
 	go sendNotifications(sourceName, "Success (tạo thủ công: "+fileName+")")
 
@@ -203,13 +347,31 @@ func deleteBackupHandler(w http.ResponseWriter, r *http.Request) {
 	case "Server":
 		if rec.FilePath != "" {
 			err = os.Remove(rec.FilePath)
+			// Nếu file đã không tồn tại (vd lưu ở /tmp bị xóa khi reboot),
+			// vẫn cho phép xóa bản ghi DB thay vì báo lỗi.
+			if err != nil && os.IsNotExist(err) {
+				log.Printf("File không tồn tại, vẫn xóa bản ghi DB: %s", rec.FilePath)
+				err = nil
+			}
 		}
 	default:
-		err = fmt.Errorf("không hỗ trợ xóa cho nơi cất giữ %q", rec.Destination)
+		// Với bản ghi "Missed" hoặc nơi cất giữ không xác định, chỉ xóa bản ghi DB.
+		if rec.FilePath == "" || rec.Destination == "Missed" {
+			err = nil
+		} else {
+			err = fmt.Errorf("không hỗ trợ xóa cho nơi cất giữ %q", rec.Destination)
+		}
 	}
 	if err != nil {
-		http.Error(w, "Xóa file thất bại: "+err.Error(), http.StatusInternalServerError)
-		return
+		// Với Drive/NAS, nếu file không tồn tại trên remote (rclone báo lỗi),
+		// vẫn cho phép xóa bản ghi DB.
+		lower := strings.ToLower(err.Error())
+		if strings.Contains(lower, "not found") || strings.Contains(lower, "no such") || strings.Contains(lower, "doesn't exist") || strings.Contains(lower, "not exist") {
+			log.Printf("File remote không tồn tại, vẫn xóa bản ghi DB: %s (%v)", rec.FilePath, err)
+		} else {
+			http.Error(w, "Xóa file thất bại: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	DB.Delete(&rec)
@@ -236,13 +398,12 @@ func uploadBackupHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Đọc các field đi kèm.
 	var destinations []string
-	var destPath, sourceName, emptyFolder, serverPath string
+	var destPath, sourceName, serverPath string
 	if v := r.FormValue("destinations"); v != "" {
 		_ = json.Unmarshal([]byte(v), &destinations)
 	}
 	destPath = strings.TrimSpace(r.FormValue("dest_path"))
 	sourceName = strings.TrimSpace(r.FormValue("source_name"))
-	emptyFolder = strings.Trim(strings.ReplaceAll(r.FormValue("empty_folder"), "\\", "/"), "/")
 	serverPath = strings.TrimSpace(r.FormValue("source_path"))
 
 	// Tạo thư mục tạm.
@@ -283,8 +444,16 @@ func uploadBackupHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Lưu từng file upload vào thư mục tạm, giữ cấu trúc thư mục.
 	for _, fh := range files {
-		rel := strings.TrimPrefix(fh.Filename, "/")
+		// Go's fh.Filename strips directory for security, so extract raw filename with path from header
+		rawName := fh.Filename
+		if cd := fh.Header.Get("Content-Disposition"); cd != "" {
+			if extracted := extractFilename(cd); extracted != "" {
+				rawName = extracted
+			}
+		}
+		rel := strings.TrimPrefix(rawName, "/")
 		rel = strings.ReplaceAll(rel, "\\", "/")
+		log.Printf("📥 fh.Filename=%q rawName=%q rel=%q", fh.Filename, rawName, rel)
 		dst := filepath.Join(tmpRoot, rel)
 		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 			http.Error(w, "Lỗi tạo thư mục tạm: "+err.Error(), http.StatusInternalServerError)
@@ -311,26 +480,28 @@ func uploadBackupHandler(w http.ResponseWriter, r *http.Request) {
 		out.Close()
 	}
 
-	// Nếu người dùng yêu cầu tạo một thư mục rỗng, tạo nó trong vùng tạm
-	// để vẫn backup được cấu trúc.
-	if emptyFolder != "" {
-		if err := os.MkdirAll(filepath.Join(tmpRoot, emptyFolder), 0755); err != nil {
-			http.Error(w, "Lỗi tạo thư mục rỗng: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-
-	// Nếu không có bất kỳ nguồn nào (file upload, thư mục rỗng, hay đường dẫn server) -> lỗi.
-	if len(files) == 0 && emptyFolder == "" && serverPath == "" {
-		http.Error(w, "Chưa có nguồn dữ liệu nào được chọn (file/thư mục, đường dẫn server, hoặc thư mục rỗng cần tạo).", http.StatusBadRequest)
+	// Nếu không có bất kỳ nguồn nào (file upload hay đường dẫn server) -> lỗi.
+	if len(files) == 0 && serverPath == "" {
+		http.Error(w, "Chưa có nguồn dữ liệu nào được chọn (file/thư mục hoặc đường dẫn server).", http.StatusBadRequest)
 		return
 	}
 
-	// Chọn nguồn nén: chỉ 1 file & không có gì khác thì nén file đó,
-	// còn lại nén cả thư mục (nhiều file, có thư mục rỗng, hoặc có nguồn server).
+	// Chọn nguồn nén: ưu tiên nén cả thư mục nếu chọn thư mục.
+	// Nếu tmpRoot chỉ chứa 1 thư mục con duy nhất (trường hợp chọn 1 thư mục qua webkitdirectory
+	// hoặc serverPath là thư mục) thì nén chính thư mục đó để giữ tên thư mục gốc,
+	// thay vì nén tmpRoot ngẫu nhiên (manual_upload_bkup_...).
 	var sourcePath string
-	if len(files) == 1 && emptyFolder == "" && serverPath == "" {
-		rel := strings.TrimPrefix(files[0].Filename, "/")
+	if entries, err := os.ReadDir(tmpRoot); err == nil && len(entries) == 1 && entries[0].IsDir() {
+		// Chỉ có 1 thư mục gốc -> nén cả thư mục đó
+		sourcePath = filepath.Join(tmpRoot, entries[0].Name())
+	} else if len(files) == 1 && serverPath == "" {
+		rawName := files[0].Filename
+		if cd := files[0].Header.Get("Content-Disposition"); cd != "" {
+			if extracted := extractFilename(cd); extracted != "" {
+				rawName = extracted
+			}
+		}
+		rel := strings.TrimPrefix(rawName, "/")
 		rel = strings.ReplaceAll(rel, "\\", "/")
 		sourcePath = filepath.Join(tmpRoot, rel)
 	} else {
@@ -404,6 +575,23 @@ func sanitizeServerPath(raw, fallback string) string {
 		cleaned = "/" + cleaned
 	}
 	return cleaned
+}
+
+// getDefaultServerBackupDir trả về thư mục mặc định có thể ghi được cho Server
+// Ưu tiên /var/backups, fallback /tmp/backups hoặc ~/backups
+func getDefaultServerBackupDir() string {
+	if unixWritable("/var/backups") {
+		return "/var/backups"
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		cand := filepath.Join(home, "backups")
+		if err := os.MkdirAll(cand, 0755); err == nil && unixWritable(cand) {
+			return cand
+		}
+	}
+	dir := "/tmp/backups"
+	_ = os.MkdirAll(dir, 0755)
+	return dir
 }
 
 // folderEntry mô tả một thư mục con trong danh sách dễ duyệt.
@@ -515,7 +703,7 @@ func createTarball(src, out string) error {
 }
 
 func copyToDrive(src, remote string) error {
-	cmd := exec.Command("rclone", "copyto", src, remote)
+	cmd := exec.Command("rclone", "copyto", "--log-level", "ERROR", src, remote)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v (%s)", err, strings.TrimSpace(string(output)))
@@ -524,9 +712,19 @@ func copyToDrive(src, remote string) error {
 }
 
 func deleteFromDrive(remote string) error {
-	cmd := exec.Command("rclone", "delete", remote)
+	// Dùng deletefile cho file đơn lẻ (chính xác hơn delete)
+	cmd := exec.Command("rclone", "deletefile", "--log-level", "ERROR", remote)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		// Fallback: thử delete nếu deletefile không hỗ trợ (bản rclone cũ)
+		if strings.Contains(strings.ToLower(string(output)), "unknown") {
+			cmd2 := exec.Command("rclone", "delete", "--log-level", "ERROR", remote)
+			output2, err2 := cmd2.CombinedOutput()
+			if err2 != nil {
+				return fmt.Errorf("%v (%s)", err2, strings.TrimSpace(string(output2)))
+			}
+			return nil
+		}
 		return fmt.Errorf("%v (%s)", err, strings.TrimSpace(string(output)))
 	}
 	return nil
@@ -556,7 +754,7 @@ func nasConfigured() bool {
 }
 
 func copyToNas(src, remote string) error {
-	cmd := exec.Command("rclone", "copyto", src, remote)
+	cmd := exec.Command("rclone", "copyto", "--log-level", "ERROR", src, remote)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v (%s)", err, strings.TrimSpace(string(output)))
@@ -565,10 +763,44 @@ func copyToNas(src, remote string) error {
 }
 
 func deleteFromNas(remote string) error {
-	cmd := exec.Command("rclone", "delete", remote)
+	cmd := exec.Command("rclone", "deletefile", "--log-level", "ERROR", remote)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if strings.Contains(strings.ToLower(string(output)), "unknown") {
+			cmd2 := exec.Command("rclone", "delete", "--log-level", "ERROR", remote)
+			output2, err2 := cmd2.CombinedOutput()
+			if err2 != nil {
+				return fmt.Errorf("%v (%s)", err2, strings.TrimSpace(string(output2)))
+			}
+			return nil
+		}
 		return fmt.Errorf("%v (%s)", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// extractFilename parses Content-Disposition header to get filename with path preserved
+// (Go's FileHeader.Filename strips directory for security)
+func extractFilename(cd string) string {
+	lower := strings.ToLower(cd)
+	idx := strings.Index(lower, "filename=")
+	if idx == -1 {
+		return ""
+	}
+	rest := cd[idx+len("filename="):]
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return ""
+	}
+	if strings.HasPrefix(rest, "\"") {
+		end := strings.Index(rest[1:], "\"")
+		if end != -1 {
+			return rest[1 : 1+end]
+		}
+		return rest[1:]
+	}
+	if idx := strings.Index(rest, ";"); idx != -1 {
+		return strings.TrimSpace(rest[:idx])
+	}
+	return strings.TrimSpace(rest)
 }

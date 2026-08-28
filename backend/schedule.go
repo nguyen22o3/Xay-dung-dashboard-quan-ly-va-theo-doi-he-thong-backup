@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -140,6 +141,51 @@ func advanceSchedule(s *BackupSchedule, sched cron.Schedule, due time.Time) {
 	n := sched.Next(due)
 	s.NextDueAt = &n
 	DB.Save(s)
+}
+
+// CheckAndAdvanceSchedulesForBackup kiểm tra các schedule đang bật có khớp với backup vừa tạo.
+// Nếu khớp (theo source_key hoặc source), đánh dấu kỳ hiện tại đã hoàn thành bằng cách gọi advanceSchedule.
+// Trả về true nếu có ít nhất một schedule được cập nhật.
+func CheckAndAdvanceSchedulesForBackup(sourceName, fileName string) bool {
+	schedules := []BackupSchedule{}
+	if err := DB.Where("enabled = ?", true).Find(&schedules).Error; err != nil {
+		log.Printf("Lỗi truy vấn lịch backup để kiểm tra: %v", err)
+		return false
+	}
+
+	now := time.Now()
+	updated := false
+
+	for _, s := range schedules {
+		sched, err := cron.ParseStandard(s.CronExpr)
+		if err != nil {
+			continue
+		}
+
+		// Kiểm tra khớp: ưu tiên source_key (prefix tên file), fallback source name
+		matched := false
+		if s.SourceKey != "" && strings.HasPrefix(fileName, s.SourceKey) {
+			matched = true
+		} else if s.Source == sourceName {
+			matched = true
+		}
+
+		if !matched {
+			continue
+		}
+
+		// Kỳ kỳ vọng đang chờ
+		due := s.pendingDue(sched, now)
+
+		// Backup vừa tạo có CreatedAt = now, luôn nằm trong kỳ hiện tại
+		// Và fileName đã khớp prefix/source_key ở trên
+
+		advanceSchedule(&s, sched, due)
+		updated = true
+		log.Printf("✅ Backup thủ công thỏa mãn lịch '%s' (source_key=%s), đã cập nhật kỳ kỳ vọng", s.Source, s.SourceKey)
+	}
+
+	return updated
 }
 
 // startScheduleChecker chạy kiểm tra lịch backup định kỳ trong goroutine.

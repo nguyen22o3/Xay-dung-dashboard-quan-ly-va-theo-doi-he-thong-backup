@@ -14,6 +14,8 @@ import (
 
 // sendNotifications dispatches a backup alert to all enabled platforms
 func sendNotifications(fileName string, status string) {
+	fmt.Printf("[notify] sendNotifications: fileName=%q status=%q isSuccess=%v\n", fileName, status, isSuccessStatus(status))
+
 	cfg := loadNotificationConfig()
 
 	go sendDiscord(fileName, status, cfg)
@@ -45,10 +47,14 @@ func isSuccessStatus(status string) bool {
 
 // ---------- Discord ----------
 func sendDiscord(fileName string, status string, cfg NotificationConfig) {
+	fmt.Printf("[notify] sendDiscord: enabled=%v webhook_set=%v isSuccess=%v\n", cfg.DiscordEnabled, cfg.DiscordWebhookURL != "", isSuccessStatus(status))
+
 	if !cfg.DiscordEnabled {
+		fmt.Println("[notify] sendDiscord: Discord disabled, skipping")
 		return
 	}
 	if cfg.DiscordWebhookURL == "" {
+		fmt.Println("[notify] sendDiscord: Webhook URL empty, skipping")
 		return
 	}
 
