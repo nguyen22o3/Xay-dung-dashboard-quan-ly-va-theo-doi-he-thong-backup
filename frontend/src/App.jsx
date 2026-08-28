@@ -545,38 +545,7 @@ function App() {
     await loadFolder(initialPath || '/')
   }
 
-<<<<<<< HEAD
-  const handleDestFolderChange = (e) => {
-    const files = Array.from(e.target.files || [])
-    if (files.length === 0) return
-    // Lấy tên thư mục gốc từ webkitRelativePath (vd "MyBackups/file.txt" -> "MyBackups")
-    const rel = files[0]?.webkitRelativePath || files[0]?.name || ''
-    const topFolder = rel.split('/')[0] || 'backup'
-    // Gợi ý tự do, user có thể sửa tay bất kỳ chỗ nào
-    const suggested = `/home/ddnguyen/backups/${topFolder}`
-    handleCreateField('dest_path', suggested)
-    showToast(`Đã chọn thư mục "${topFolder}" -> gợi ý ${suggested} (tự do sửa)`)
-    e.target.value = ''
-  }
-
-  const handleDestPickClick = async () => {
-    // Ưu tiên File System Access API (Chrome/Edge) cho popup native thực sự
-    if (window.showDirectoryPicker) {
-      try {
-        const handle = await window.showDirectoryPicker()
-        const suggested = `/home/ddnguyen/backups/${handle.name}`
-        handleCreateField('dest_path', suggested)
-        showToast(`Đã chọn thư mục "${handle.name}" -> lưu tại ${suggested}`)
-        return
-      } catch (err) {
-        if (err?.name === 'AbortError') return // user hủy
-        // fallback sang input webkitdirectory
-      }
-    }
-    // Fallback: input webkitdirectory ẩn
-    document.getElementById('dest-folder-picker')?.click()
-=======
-  const handleDestPickClick = async () => {
+const handleDestPickClick = async () => {
     setNativePicking(true)
     showToast('Đang mở cửa sổ chọn thư mục...', 'info')
     try {
@@ -635,10 +604,11 @@ function App() {
 
   const handleSourcePickClick = async () => {
     setNativePicking(true)
-    showToast('Đang mở cửa sổ chọn thư mục...', 'info')
+    showToast('Đang mở cửa sổ chọn file/thư mục...', 'info')
     try {
-      // Nút + của Nguồn dữ liệu: mở cửa sổ native Ubuntu để chọn thư mục nguồn trên server
-      const res = await fetch(`/api/native-picker?start=${encodeURIComponent(createForm.source_path || '/home/ddnguyen')}&kind=dir`, { headers: ah() })
+      // Nút + của Nguồn dữ liệu: mở cửa sổ native Ubuntu, chọn 1 FILE hoặc 1 THƯ MỤC
+      // kind=file: GTK cho phép chọn cả file lẫn thư mục — đúng nhu cầu "chọn 1 file là có path"
+      const res = await fetch(`/api/native-picker?start=${encodeURIComponent(createForm.source_path || '/home/ddnguyen')}&kind=file`, { headers: ah() })
       if (res.ok) {
         const data = await res.json()
         if (data.path) {
@@ -652,9 +622,8 @@ function App() {
       }
     } catch {}
     setNativePicking(false)
-    showToast('Không mở được cửa sổ chọn thư mục — hãy nhập đường dẫn hoặc chọn từ máy', 'error')
+    showToast('Không mở được cửa sổ chọn file/thư mục — hãy nhập đường dẫn hoặc chọn từ máy', 'error')
     setSourceModalOpen(true)
->>>>>>> ca41d35 (28/08/2026)
   }
 
   const sources = useMemo(() => {
@@ -1383,11 +1352,11 @@ function App() {
                     <label className="settings-label">Nguồn dữ liệu</label>
                     <div className="path-pick">
                       <input className="settings-input path-input" type="text" placeholder="VD: /var/www/html hoặc /home/user/file.txt" value={createForm.source_path} onChange={e => handleCreateField('source_path', e.target.value)} />
-                      <button type="button" className="btn-secondary btn-sm path-btn" onClick={handleSourcePickClick} title="Mở cửa sổ chọn thư mục trên server">
+                      <button type="button" className="btn-secondary btn-sm path-btn" onClick={handleSourcePickClick} title="Mở cửa sổ chọn file hoặc thư mục trên server">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
                       </button>
                     </div>
-                    <p className="settings-hint">Nhập đường dẫn trên server hoặc bấm <strong>+</strong> để mở cửa sổ chọn thư mục. <button type="button" className="btn-link" style={{ fontSize: 12, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)' }} onClick={() => setSourceModalOpen(true)}>Hoặc tải file/thư mục từ máy</button></p>
+                    <p className="settings-hint">Nhập đường dẫn trên server hoặc bấm <strong>+</strong> để mở cửa sổ chọn file/thư mục. <button type="button" className="btn-link" style={{ fontSize: 12, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)' }} onClick={() => setSourceModalOpen(true)}>Hoặc tải file/thư mục từ máy</button></p>
                     {uploadFiles.length > 0 && (
                       <div className="upload-list">
                         {uploadFiles.length === 1
@@ -1403,25 +1372,6 @@ function App() {
                       </div>
                     )}
                   </div>
-<<<<<<< HEAD
-                  <p className="settings-hint">Nhập đường dẫn trên server, hoặc bấm + để chọn file/thư mục từ máy.</p>
-                  {uploadFiles.length > 0 && (
-                    <div className="upload-list">
-                      {uploadFiles.length === 1
-                        ? `Đã chọn từ máy: ${uploadFiles[0].name}`
-                        : `Đã chọn từ máy ${uploadFiles.length} file/folder`}
-                      <ul>
-                        {uploadFiles.slice(0, 5).map((f, i) => (
-                          <li key={i}>{f.webkitRelativePath || f.name}</li>
-                        ))}
-                        {uploadFiles.length > 5 && <li>... và {uploadFiles.length - 5} mục khác</li>}
-                      </ul>
-                      <button type="button" className="btn-secondary btn-sm" style={{ marginTop: 6 }} onClick={() => { setUploadFiles([]) }}>Bỏ chọn</button>
-                    </div>
-                  )}
-                </div>
-=======
->>>>>>> ca41d35 (28/08/2026)
 
                 <div className="settings-row">
                   <label className="settings-label">Nguồn hiển thị (tùy chọn)</label>
@@ -1451,27 +1401,15 @@ function App() {
 
                 {(createForm.destinations || []).includes('server') && (
                   <div className="settings-row">
-<<<<<<< HEAD
-                    <label className="settings-label">Đường dẫn lưu trên Server <span style={{ color: 'var(--danger)', fontWeight: 400 }}>* tự do chọn</span></label>
-                    <input type="file" id="dest-folder-picker" webkitdirectory="" directory="" multiple style={{ display: 'none' }} onChange={handleDestFolderChange} />
-                    <div className="path-pick">
-                      <input className="settings-input path-input" type="text" placeholder="Bắt buộc: tự do chọn, vd /home/ddnguyen/backups hoặc /tmp/backups" value={createForm.dest_path} onChange={e => handleCreateField('dest_path', e.target.value)} required />
-                      <button type="button" className="btn-secondary btn-sm path-btn" onClick={handleDestPickClick} title="Chọn thư mục lưu - popup hệ thống (tự do)">
-=======
                     <label className="settings-label">Đường dẫn lưu trên Server <span style={{ color: 'var(--danger)', fontWeight: 400 }}>* bắt buộc</span></label>
                     <div className="path-pick">
                       <input className="settings-input path-input" type="text" placeholder="Nhập đường dẫn, vd /home/ddnguyen/backups hoặc /tmp/backups" value={createForm.dest_path} onChange={e => handleCreateField('dest_path', e.target.value)} required />
                       <button type="button" className="btn-secondary btn-sm path-btn" onClick={handleDestPickClick} title="Duyệt thư mục server">
->>>>>>> ca41d35 (28/08/2026)
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
                       </button>
                     </div>
                     <p className="settings-hint">
-<<<<<<< HEAD
-                      Tự do chọn bất kỳ thư mục nào, bấm <strong>+</strong> để mở popup hệ thống (gợi ý <code>/home/&lt;user&gt;/backups/&lt;tên&gt;</code>). <button type="button" className="btn-link" style={{ fontSize: 12, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)' }} onClick={() => openFolderPicker(createForm.dest_path)}>Hoặc duyệt cây thư mục server</button>. Không có thư mục mặc định.
-=======
                       Nhập đường dẫn hoặc bấm <strong>+</strong> để mở popup chọn thư mục server.
->>>>>>> ca41d35 (28/08/2026)
                     </p>
                   </div>
                 )}
@@ -1549,61 +1487,6 @@ function App() {
               <button className="modal-close" onClick={() => { setFolderOpen(false); setFindResults([]); setFindName('') }} aria-label="Đóng">×</button>
             </div>
             <div className="modal-body">
-<<<<<<< HEAD
-              <div className="settings-row">
-                <label className="settings-label">Đường dẫn hiện tại</label>
-                <div className="folder-crumb" style={{ background: 'var(--bg-subtle)', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)' }}>
-                  <button type="button" className="crumb-btn" onClick={() => loadFolder('/')}>/</button>
-                  {currentFolderPath.split('/').filter(Boolean).map((seg, i) => {
-                    const upTo = '/' + currentFolderPath.split('/').filter(Boolean).slice(0, i + 1).join('/')
-                    return (
-                      <span key={i}>
-                        <span className="crumb-sep">/</span>
-                        <button type="button" className="crumb-btn" onClick={() => loadFolder(upTo)}>{seg}</button>
-                      </span>
-                    )
-                  })}
-                </div>
-              </div>
-              <div className="file-picker file-picker--unified" style={{ border: '1.5px dashed var(--border)', borderRadius: 12, padding: 16, background: 'var(--bg-subtle)', marginTop: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6 }}>
-                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                  </svg>
-                  <div>
-                    <strong>Chọn thư mục lưu trên Server</strong>
-                    <div style={{ fontSize: 12, opacity: 0.7 }}>Bấm vào tên thư mục để mở, bấm “Chọn” để lưu backup vào đó</div>
-                  </div>
-                </div>
-                {folderLoading ? (
-                  <p className="settings-hint">Đang tải...</p>
-                ) : currentFolders.length === 0 ? (
-                  <p className="settings-hint">Thư mục trống hoặc không có thư mục con.</p>
-                ) : (
-                  <div className="folder-list">
-                    {currentFolders.map(f => (
-                      <div key={f.path} className={`folder-item ${f.write ? '' : 'folder-item--noread'}`}>
-                        <button type="button" className="folder-name" onClick={() => loadFolder(f.path)}>
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.6 }}>
-                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                          </svg>
-                          <span>{f.name}</span>
-                        </button>
-                        <div className="folder-actions">
-                          {!f.write && <span className="folder-note">không ghi được</span>}
-                          <button type="button" className="btn-secondary btn-sm" onClick={() => { handleCreateField('dest_path', f.path); setFolderOpen(false) }}>Chọn</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <p className="settings-hint" style={{ marginTop: 8 }}>Đường dẫn sẽ lưu: <code>{currentFolderPath}</code> (tự do chọn, không mặc định)</p>
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn-secondary" onClick={() => setFolderOpen(false)}>Đóng</button>
-              <button type="button" className="btn-primary" onClick={() => { handleCreateField('dest_path', currentFolderPath); setFolderOpen(false) }}>Chọn thư mục hiện tại</button>
-=======
               {findResults.length > 0 && (
                 <div className="settings-row">
                   <label className="settings-label">Tìm thấy "{findName}" tại {findResults.length} vị trí — chọn một:</label>
@@ -1676,7 +1559,6 @@ function App() {
             <div className="modal-footer">
               <button type="button" className="btn-secondary" onClick={() => { setFolderOpen(false); setFindResults([]); setFindName('') }}>Hủy</button>
               <button type="button" className="btn-primary" onClick={() => { handleCreateField('dest_path', currentFolderPath); setFolderOpen(false); setFindResults([]); setFindName('') }}>Chọn thư mục hiện tại</button>
->>>>>>> ca41d35 (28/08/2026)
             </div>
           </div>
         </div>
