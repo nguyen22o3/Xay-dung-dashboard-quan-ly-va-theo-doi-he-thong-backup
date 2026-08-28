@@ -512,11 +512,6 @@ function App() {
     setFolderOpen(false)
   }
 
-  // Debug: log khi dest_path thay đổi
-  useEffect(() => {
-    console.log('DEBUG dest_path changed:', createForm.dest_path)
-  }, [createForm.dest_path])
-
   const hasUpload = uploadFiles && uploadFiles.length > 0
   const hasSourcePath = !!createForm.source_path && createForm.source_path.trim() !== ''
 
@@ -548,7 +543,6 @@ function App() {
   }
 
   const handleDestFolderChange = (e) => {
-    console.log('handleDestFolderChange triggered', e.target.files)
     const files = Array.from(e.target.files || [])
     if (files.length === 0) return
     // Lấy tên thư mục gốc từ webkitRelativePath (vd "MyBackups/file.txt" -> "MyBackups")
@@ -556,7 +550,6 @@ function App() {
     const topFolder = rel.split('/')[0] || 'backup'
     // Gợi ý tự do, user có thể sửa tay bất kỳ chỗ nào
     const suggested = `/home/ddnguyen/backups/${topFolder}`
-    console.log('handleDestFolderChange -> dest_path', suggested)
     handleCreateField('dest_path', suggested)
     showToast(`Đã chọn thư mục "${topFolder}" -> gợi ý ${suggested} (tự do sửa)`)
     e.target.value = ''
@@ -1483,7 +1476,7 @@ function App() {
                         </button>
                         <div className="folder-actions">
                           {!f.write && <span className="folder-note">không ghi được</span>}
-                          <button type="button" className="btn-secondary btn-sm" onClick={() => { console.log('Chọn folder', f.path); handleCreateField('dest_path', f.path); setFolderOpen(false) }}>Chọn</button>
+                          <button type="button" className="btn-secondary btn-sm" onClick={() => { handleCreateField('dest_path', f.path); setFolderOpen(false) }}>Chọn</button>
                         </div>
                       </div>
                     ))}
@@ -1494,7 +1487,7 @@ function App() {
             </div>
             <div className="modal-footer">
               <button type="button" className="btn-secondary" onClick={() => setFolderOpen(false)}>Đóng</button>
-              <button type="button" className="btn-primary" onClick={() => { console.log('Chọn thư mục hiện tại', currentFolderPath); handleCreateField('dest_path', currentFolderPath); setFolderOpen(false) }}>Chọn thư mục hiện tại</button>
+              <button type="button" className="btn-primary" onClick={() => { handleCreateField('dest_path', currentFolderPath); setFolderOpen(false) }}>Chọn thư mục hiện tại</button>
             </div>
           </div>
         </div>

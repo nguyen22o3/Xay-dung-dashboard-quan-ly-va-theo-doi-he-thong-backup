@@ -453,7 +453,6 @@ func uploadBackupHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		rel := strings.TrimPrefix(rawName, "/")
 		rel = strings.ReplaceAll(rel, "\\", "/")
-		log.Printf("📥 fh.Filename=%q rawName=%q rel=%q", fh.Filename, rawName, rel)
 		dst := filepath.Join(tmpRoot, rel)
 		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 			http.Error(w, "Lỗi tạo thư mục tạm: "+err.Error(), http.StatusInternalServerError)
