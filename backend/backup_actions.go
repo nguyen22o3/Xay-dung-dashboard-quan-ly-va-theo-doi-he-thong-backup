@@ -658,6 +658,148 @@ func unixWritable(dir string) bool {
 	return true
 }
 
+// nativePickerHandler mở hộp thoại chọn thư mục/file NATIVE của hệ điều hành (Ubuntu/GNOME)
+// bằng công cụ zenity trên chính máy chủ. Do backend chạy trên cùng máy với người dùng
+// (DISPLAY của user hiện tại), cửa sổ file hệ điều hành sẽ hiện lên màn hình.
+//
+//	GET /api/native-picker?start=/home/ddnguyen&kind=dir|file
+//
+// kind=dir  → chọn THƯ MỤC (mặc định)
+// kind=file → chọn FILE hoặc thư mục (GTK cho phép chọn cả hai ở chế độ mở)
+//
+// Trả về: {"path":"/home/ddnguyen/backups"} hoặc {"cancelled":true} khi user bấm Hủy.
+func nativePickerHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Chỉ hỗ trợ GET", http.StatusMethodNotAllowed)
+		return
+	}
+	start := strings.TrimSpace(r.URL.Query().Get("start"))
+	if start == "" {
+		start = "/home/ddnguyen"
+	}
+	info, err := os.Stat(start)
+	if err != nil || !info.IsDir() {
+		start = "/home/ddnguyen" // fallback nếu khởi điểm không hợp lệ
+	}
+
+	kind := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("kind")))
+	if kind == "" {
+		kind = "dir"
+	}
+
+	zenityPath, err := exec.LookPath("zenity")
+	if err != nil {
+		http.Error(w, "Không tìm thấy zenity. Cài bằng: sudo apt install zenity", http.StatusNotImplemented)
+		return
+	}
+
+	// Chạy zenity: cửa sổ chọn thư mục/file native (GTK) hiện lên trên màn hình user.
+	args := []string{"--file-selection", "--filename=" + start + "/", "--title=Chọn thư mục lưu backup trên Server"}
+	if kind == "dir" {
+		args = append(args, "--directory")
+	}
+	cmd := exec.Command(zenityPath, args...)
+	// Editor cho đời: chuyển DISPLAY/XAUTH từ env hiện tại của backend.
+	out, runErr := cmd.Output()
+	if runErr != nil {
+		// zenity exit 1 = user hủy
+		if exitErr, ok := runErr.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"cancelled": true})
+			return
+		}
+		// exit 5 = không kết nối được DISPLAY
+		log.Printf("⚠️ zenity lỗi: %v", runErr)
+		http.Error(w, "Không mở được cửa sổ chọn: "+runErr.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	path := strings.TrimSpace(string(out))
+	if path == "" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"cancelled": true})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"path": path})
+}
+
+// findDirHandler tìm kiếm thư mục theo tên trong các thư mục phổ biến,
+// trả về danh sách đường dẫn đầy đủ khớp với tên được cung cấp.
+func findDirHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Chỉ hỗ trợ GET", http.StatusMethodNotAllowed)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		http.Error(w, "Thiếu tham số name", http.StatusBadRequest)
+		return
+	}
+
+	// Các thư mục gốc để tìm kiếm
+	searchRoots := []string{
+		"/home",
+		"/var",
+		"/tmp",
+		"/opt",
+		"/srv",
+	}
+
+	type foundDir struct {
+		Path  string `json:"path"`
+		Write bool   `json:"write"`
+	}
+	results := []foundDir{}
+
+	for _, root := range searchRoots {
+		info, err := os.Stat(root)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		// Tìm ở độ sâu 2 (vd /home/user/backups)
+		entries, _ := os.ReadDir(root)
+		for _, e1 := range entries {
+			if !e1.IsDir() {
+				continue
+			}
+			p1 := filepath.Join(root, e1.Name())
+			if strings.EqualFold(e1.Name(), name) {
+				results = append(results, foundDir{Path: p1, Write: unixWritable(p1)})
+			}
+			// Độ sâu 1 thêm
+			sub1, _ := os.ReadDir(p1)
+			for _, e2 := range sub1 {
+				if !e2.IsDir() {
+					continue
+				}
+				p2 := filepath.Join(p1, e2.Name())
+				if strings.EqualFold(e2.Name(), name) {
+					results = append(results, foundDir{Path: p2, Write: unixWritable(p2)})
+				}
+				// Độ sâu 2
+				sub2, _ := os.ReadDir(p2)
+				for _, e3 := range sub2 {
+					if !e3.IsDir() {
+						continue
+					}
+					p3 := filepath.Join(p2, e3.Name())
+					if strings.EqualFold(e3.Name(), name) {
+						results = append(results, foundDir{Path: p3, Write: unixWritable(p3)})
+					}
+				}
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"name":    name,
+		"results": results,
+	})
+}
+
 // ---------- helpers ----------
 
 func normalizeDestination(d string) string {

@@ -103,6 +103,12 @@ func main() {
 	// API Liệt kê thư mục trên server (cần JWT) — dùng cho hộp thoại chọn nơi lưu
 	http.HandleFunc("/api/folders", middleware.Logging(middleware.CORS(middleware.JWT(folderPickHandler))))
 
+	// API Tìm thư mục theo tên (cần JWT) — dùng khi chọn từ native file dialog
+	http.HandleFunc("/api/find-dir", middleware.Logging(middleware.CORS(middleware.JWT(findDirHandler))))
+
+	// API Mở hộp thoại chọn thư mục NATIVE của hệ điều hành (Ubuntu zenity)
+	http.HandleFunc("/api/native-picker", middleware.Logging(middleware.CORS(middleware.JWT(nativePickerHandler))))
+
 	// API Xóa backup tại đúng nơi cất giữ (cần JWT)
 	http.HandleFunc("/api/delete", middleware.Logging(middleware.CORS(middleware.JWT(deleteBackupHandler))))
 
