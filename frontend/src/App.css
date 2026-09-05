@@ -220,19 +220,19 @@
   align-items: center;
   gap: 6px;
   padding: 8px 14px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: var(--color-accent, #6366f1);
+  border: 1px solid var(--color-accent, #6366f1);
   border-radius: var(--radius-md);
   font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text);
+  font-weight: 600;
+  color: #fff;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .btn-refresh:hover {
-  background: var(--color-surface-alt);
-  border-color: var(--color-border);
+  background: color-mix(in srgb, var(--color-accent, #6366f1) 85%, #000);
+  border-color: color-mix(in srgb, var(--color-accent, #6366f1) 85%, #000);
 }
 
 .btn-refresh:active {
@@ -713,7 +713,7 @@
    ============================================ */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -1012,7 +1012,7 @@
   font-size: 12px;
   color: var(--color-text-muted);
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;

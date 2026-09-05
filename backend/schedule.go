@@ -191,7 +191,7 @@ func CheckAndAdvanceSchedulesForBackup(sourceName, fileName string) bool {
 // startScheduleChecker chạy kiểm tra lịch backup định kỳ trong goroutine.
 func startScheduleChecker() {
 	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
+		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
 			checkBackupSchedules()

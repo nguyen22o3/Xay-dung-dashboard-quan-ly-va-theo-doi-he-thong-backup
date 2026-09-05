@@ -602,13 +602,14 @@ const handleDestPickClick = async () => {
     await loadFolder(createForm.dest_path || '/')
   }
 
-  const handleSourcePickClick = async () => {
+  const handleSourcePickClick = async (kind = 'dir') => {
     setNativePicking(true)
-    showToast('Đang mở cửa sổ chọn file/thư mục...', 'info')
+    showToast(kind === 'dir' ? 'Đang mở cửa sổ chọn thư mục...' : 'Đang mở cửa sổ chọn file...', 'info')
     try {
-      // Nút + của Nguồn dữ liệu: mở cửa sổ native Ubuntu, chọn 1 FILE hoặc 1 THƯ MỤC
-      // kind=file: GTK cho phép chọn cả file lẫn thư mục — đúng nhu cầu "chọn 1 file là có path"
-      const res = await fetch(`/api/native-picker?start=${encodeURIComponent(createForm.source_path || '/home/ddnguyen')}&kind=file`, { headers: ah() })
+      // Nút chọn của Nguồn dữ liệu: mở cửa sổ native Ubuntu.
+      // kind=dir  → chọn THƯ MỤC (OK sáng khi chỉ vào thư mục)
+      // kind=file → chọn FILE (GTK chặn OK đối với thư mục, nên tách riêng 2 nút)
+      const res = await fetch(`/api/native-picker?start=${encodeURIComponent(createForm.source_path || '/home/ddnguyen')}&kind=${kind}`, { headers: ah() })
       if (res.ok) {
         const data = await res.json()
         if (data.path) {
@@ -622,7 +623,7 @@ const handleDestPickClick = async () => {
       }
     } catch {}
     setNativePicking(false)
-    showToast('Không mở được cửa sổ chọn file/thư mục — hãy nhập đường dẫn hoặc chọn từ máy', 'error')
+    showToast('Không mở được cửa sổ chọn — hãy nhập đường dẫn hoặc chọn từ máy', 'error')
     setSourceModalOpen(true)
   }
 
@@ -824,13 +825,15 @@ const handleDestPickClick = async () => {
                   </svg>
                   <span>Tạo bản backup</span>
                 </button>
-                <button className={`btn-auto ${autoRefresh ? 'active' : ''}`} onClick={() => setAutoRefresh(prev => !prev)} title="Tự động làm mới mỗi 10 giây">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 12a9 9 0 1 1-2.636-6.364" />
-                    <polyline points="21 3 21 9 15 9" />
-                  </svg>
-                  <span>{autoRefresh ? 'Tự động' : 'Thủ công'}</span>
-                </button>
+                {/* Nút chuyển chế độ Tự động/Thủ công làm mới (đã ẩn theo yêu cầu)
+              <button className="refresh-toggle" aria-hidden="true" title="Tự động làm mới mỗi 10 giây">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12a9 9 0 1 1-2.636-6.364" />
+                  <polyline points="21 3 21 9 15 9" />
+                </svg>
+                <span>{autoRefresh ? 'Tự động' : 'Thủ công'}</span>
+              </button>
+            */}
                 <button className="btn-refresh" onClick={handleRefresh} disabled={refreshing} title="Làm mới dữ liệu">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={refreshing ? 'spin' : ''}>
                     <polyline points="23 4 23 10 17 10" />
@@ -872,8 +875,7 @@ const handleDestPickClick = async () => {
                   {config.discord_enabled && (
                     <div className="settings-row">
                       <label className="settings-label">Webhook URL</label>
-                      <input className="settings-input" type="password" placeholder={config.discord_webhook_url === '••••••••' ? '•••••••• (đã lưu, nhập để thay đổi)' : 'https://discord.com/api/webhooks/...'} value={config.discord_webhook_url === '••••••••' ? '' : config.discord_webhook_url} onChange={e => setConfigField('discord_webhook_url', e.target.value)} />
-                      <p className="settings-hint">Webhook Discord để nhận thông báo. Giá trị lưu được che đi cho an toàn</p>
+                      <input className="settings-input" type="password" placeholder="https://discord.com/api/webhooks/..." value={config.discord_webhook_url === '••••••••' ? '' : config.discord_webhook_url} onChange={e => setConfigField('discord_webhook_url', e.target.value)} />
                     </div>
                   )}
                 </div>
@@ -997,8 +999,8 @@ const handleDestPickClick = async () => {
                 <form className="schedule-form" onSubmit={saveSchedule}>
                   <div className="settings-row settings-row--split">
                     <div className="settings-row">
-                      <label className="settings-label">Nguồn (tên hiển thị)</label>
-                      <input className="settings-input" type="text" placeholder="Ví dụ: Server Web LAMP" value={scheduleForm.source} onChange={e => handleScheduleForm('source', e.target.value)} required />
+                      <label className="settings-label">Tên bản backup</label>
+                      <input className="settings-input" type="text" value={scheduleForm.source} onChange={e => handleScheduleForm('source', e.target.value)} required />
                     </div>
                     <div className="settings-row">
                       <label className="settings-label">Prefix tên file (source_key)</label>
@@ -1012,7 +1014,7 @@ const handleDestPickClick = async () => {
                       <p className="settings-hint">Định dạng 5 trường: phút giờ ngày tháng tuần. VD: <code>0 2 * * *</code> = 2h sáng hằng ngày</p>
                     </div>
                     <div className="settings-row">
-                      <label className="settings-label">Ân hạn (phút)</label>
+                      <label className="settings-label">Độ trễ (phút)</label>
                       <input className="settings-input" type="number" min="0" value={scheduleForm.grace_minutes} onChange={e => handleScheduleForm('grace_minutes', Number(e.target.value))} />
                     </div>
                   </div>
@@ -1038,10 +1040,10 @@ const handleDestPickClick = async () => {
                     <table className="schedule-table">
                       <thead>
                         <tr>
-                          <th>Nguồn</th>
+                          <th>Tên bản backup</th>
                           <th>Prefix</th>
                           <th>Cron</th>
-                          <th>Ân hạn</th>
+                          <th>Độ trễ</th>
                           <th>Trạng thái</th>
                           <th></th>
                         </tr>
@@ -1175,8 +1177,8 @@ const handleDestPickClick = async () => {
                         </svg>
                       </div>
                       <div className="stat-body">
-                        <span className="stat-number">{stats.successRate}%</span>
-                        <span className="stat-name">Tỷ lệ thành công</span>
+                        <span className="stat-number">{stats.success}</span>
+                        <span className="stat-name">Bản sao lưu thành công</span>
                       </div>
                     </div>
 
@@ -1191,6 +1193,19 @@ const handleDestPickClick = async () => {
                       <div className="stat-body">
                         <span className="stat-number">{stats.failed}</span>
                         <span className="stat-name">Thất bại</span>
+                      </div>
+                    </div>
+
+                    <div className="stat-card">
+                      <div className="stat-icon-wrap stat-icon--success">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                          <polyline points="22 4 12 14.01 9 11.01" />
+                        </svg>
+                      </div>
+                      <div className="stat-body">
+                        <span className="stat-number">{stats.successRate}%</span>
+                        <span className="stat-name">Tỷ lệ thành công</span>
                       </div>
                     </div>
 
@@ -1237,7 +1252,7 @@ const handleDestPickClick = async () => {
                       </select>
                       <select className="filter-select" value={filterDestination} onChange={e => { setFilterDestination(e.target.value); setPageNum(1) }}>
                         {destinations.map(d => (
-                          <option key={d} value={d}>{d === 'all' ? 'Tất cả nơi cất giữ' : d}</option>
+                          <option key={d} value={d}>{d === 'all' ? 'Tất cả nơi lưu trữ' : d}</option>
                         ))}
                       </select>
                     </div>
@@ -1248,8 +1263,8 @@ const handleDestPickClick = async () => {
                       <thead>
                         <tr>
                           <th style={{ width: 64 }}>ID</th>
-                          <th>Nguồn lưu trữ</th>
-                          <th>Nơi cất giữ</th>
+                          <th>Tên bản backup</th>
+                          <th>Nơi lưu trữ</th>
                           <th>Tên file</th>
                           <th>Dung lượng</th>
                           <th>Trạng thái</th>
@@ -1304,19 +1319,7 @@ const handleDestPickClick = async () => {
                   </div>
 
                   <div className="card-footer">
-                    <span>{filtered.length === 0 ? 'Không có bản ghi' : `Hiển thị ${(safePage - 1) * perPage + 1}–${Math.min(safePage * perPage, filtered.length)} / ${filtered.length} bản ghi`}</span>
                     <div className="pagination">
-                      <select
-                        className="filter-select per-page"
-                        value={perPage}
-                        onChange={e => { setPerPage(Number(e.target.value)); setPageNum(1) }}
-                        aria-label="Số bản ghi mỗi trang"
-                      >
-                        <option value={10}>10 / trang</option>
-                        <option value={25}>25 / trang</option>
-                        <option value={50}>50 / trang</option>
-                        <option value={100}>100 / trang</option>
-                      </select>
                       <button
                         className="pagination-btn"
                         onClick={() => setPageNum(safePage - 1)}
@@ -1351,12 +1354,11 @@ const handleDestPickClick = async () => {
 <div className="settings-row">
                     <label className="settings-label">Nguồn dữ liệu</label>
                     <div className="path-pick">
-                      <input className="settings-input path-input" type="text" placeholder="VD: /var/www/html hoặc /home/user/file.txt" value={createForm.source_path} onChange={e => handleCreateField('source_path', e.target.value)} />
-                      <button type="button" className="btn-secondary btn-sm path-btn" onClick={handleSourcePickClick} title="Mở cửa sổ chọn file hoặc thư mục trên server">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                      <input className="settings-input path-input" type="text" value={createForm.source_path} onChange={e => handleCreateField('source_path', e.target.value)} />
+                      <button type="button" className="btn-secondary btn-sm path-btn" onClick={() => handleSourcePickClick('dir')} title="Chọn thư mục trên server">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
                       </button>
                     </div>
-                    <p className="settings-hint">Nhập đường dẫn trên server hoặc bấm <strong>+</strong> để mở cửa sổ chọn file/thư mục. <button type="button" className="btn-link" style={{ fontSize: 12, textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)' }} onClick={() => setSourceModalOpen(true)}>Hoặc tải file/thư mục từ máy</button></p>
                     {uploadFiles.length > 0 && (
                       <div className="upload-list">
                         {uploadFiles.length === 1
@@ -1374,12 +1376,12 @@ const handleDestPickClick = async () => {
                   </div>
 
                 <div className="settings-row">
-                  <label className="settings-label">Nguồn hiển thị (tùy chọn)</label>
+                  <label className="settings-label">Tên bản backup (tùy chọn)</label>
                   <input className="settings-input" type="text" placeholder="VD: Server Web LAMP" value={createForm.source_name} onChange={e => handleCreateField('source_name', e.target.value)} />
                 </div>
 
                 <div className="settings-row">
-                  <label className="settings-label">Nơi cất giữ (chọn 1 hoặc nhiều)</label>
+                  <label className="settings-label">Nơi lưu trữ</label>
                   <div className="dest-check-row">
                     <label className={`dest-check ${(createForm.destinations || []).includes('server') ? 'dest-check--active' : ''}`}>
                       <input type="checkbox" checked={(createForm.destinations || []).includes('server')} onChange={() => toggleDestination('server')} />
@@ -1401,16 +1403,13 @@ const handleDestPickClick = async () => {
 
                 {(createForm.destinations || []).includes('server') && (
                   <div className="settings-row">
-                    <label className="settings-label">Đường dẫn lưu trên Server <span style={{ color: 'var(--danger)', fontWeight: 400 }}>* bắt buộc</span></label>
+                    <label className="settings-label">Nơi lưu trữ</label>
                     <div className="path-pick">
-                      <input className="settings-input path-input" type="text" placeholder="Nhập đường dẫn, vd /home/ddnguyen/backups hoặc /tmp/backups" value={createForm.dest_path} onChange={e => handleCreateField('dest_path', e.target.value)} required />
-                      <button type="button" className="btn-secondary btn-sm path-btn" onClick={handleDestPickClick} title="Duyệt thư mục server">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                      <input className="settings-input path-input" type="text" value={createForm.dest_path} onChange={e => handleCreateField('dest_path', e.target.value)} required />
+                      <button type="button" className="btn-secondary btn-sm path-btn" onClick={handleDestPickClick} title="Chọn thư mục trên server">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
                       </button>
                     </div>
-                    <p className="settings-hint">
-                      Nhập đường dẫn hoặc bấm <strong>+</strong> để mở popup chọn thư mục server.
-                    </p>
                   </div>
                 )}
               </div>
