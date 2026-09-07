@@ -375,7 +375,7 @@ function App() {
 
   const handleDelete = async (id, destination) => {
     const where = destination ? ` tại ${destination}` : ''
-    if (!window.confirm(`Bạn có chắc chắn muốn xóa bản sao lưu này${where}? File sẽ bị xóa khỏi nơi cất giữ tương ứng.`)) return
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa bản backup này${where}? File sẽ bị xóa khỏi nơi cất giữ tương ứng.`)) return
     try {
       const res = await fetch(`/api/delete?id=${id}`, {
         method: 'DELETE',
@@ -383,15 +383,15 @@ function App() {
       })
       if (!res.ok) {
         const errText = await res.text()
-        showToast('Xóa bản sao lưu thất bại' + (errText ? `: ${errText}` : ''), 'error')
+        showToast('Xóa bản backup thất bại' + (errText ? `: ${errText}` : ''), 'error')
         return
       }
       await resetIds()
       await fetchBackups()
-      showToast('Đã xóa bản sao lưu')
+      showToast('Đã xóa bản backup')
     } catch (e) {
       console.error('Lỗi khi xóa:', e)
-      showToast('Xóa bản sao lưu thất bại', 'error')
+      showToast('Xóa bản backup thất bại', 'error')
     }
   }
 
@@ -686,8 +686,8 @@ const handleDestPickClick = async () => {
   }
 
   const pageTitles = {
-    dashboard: { title: 'Tổng quan giám sát', desc: 'Theo dõi và quản lý tất cả hoạt động sao lưu' },
-    backups: { title: 'Bản sao lưu', desc: 'Danh sách và lịch sử sao lưu' },
+    dashboard: { title: 'Tổng quan giám sát', desc: 'Theo dõi và quản lý tất cả hoạt động backup' },
+    backups: { title: 'Bản backup', desc: 'Danh sách và lịch sử backup' },
     settings: { title: 'Cài đặt', desc: 'Cấu hình hệ thống và tùy chọn' },
   }
 
@@ -749,7 +749,7 @@ const handleDestPickClick = async () => {
               <polyline points="17 8 12 3 7 8" />
               <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
-            <span>Bản sao lưu</span>
+            <span>Bản backup</span>
           </button>
           <button className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => setPage('settings')}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -1099,7 +1099,7 @@ const handleDestPickClick = async () => {
                 <div className="settings-divider" />
                 <div className="settings-row settings-row--between">
                   <div>
-                    <div className="settings-label">Số bản sao lưu</div>
+                    <div className="settings-label">Số bản backup</div>
                     <p className="settings-hint" style={{ margin: '4px 0 0' }}>Tổng số bản ghi trong hệ thống</p>
                   </div>
                   <span className="cell-mono">{stats.total}</span>
@@ -1108,7 +1108,7 @@ const handleDestPickClick = async () => {
                 <div className="settings-row settings-row--between">
                   <div>
                     <div className="settings-label">Tổng dung lượng</div>
-                    <p className="settings-hint" style={{ margin: '4px 0 0' }}>Dung lượng đã sao lưu</p>
+                    <p className="settings-hint" style={{ margin: '4px 0 0' }}>Dung lượng đã backup</p>
                   </div>
                   <span className="cell-mono">{formatSize(stats.totalSize)}</span>
                 </div>
@@ -1131,7 +1131,7 @@ const handleDestPickClick = async () => {
               <div className="settings-card settings-card--danger">
                 <div className="settings-danger-content">
                   <div>
-                    <div className="settings-label">Xóa toàn bộ bản sao lưu</div>
+                    <div className="settings-label">Xóa toàn bộ bản backup</div>
                     <p className="settings-hint" style={{ margin: '4px 0 0' }}>Xóa tất cả bản ghi và reset ID về 1. Không thể hoàn tác.</p>
                   </div>
                   <button className="btn-danger" onClick={handleClearAll}>
@@ -1165,7 +1165,7 @@ const handleDestPickClick = async () => {
                       </div>
                       <div className="stat-body">
                         <span className="stat-number">{stats.total}</span>
-                        <span className="stat-name">Tổng bản sao lưu</span>
+                        <span className="stat-name">Tổng bản backup</span>
                       </div>
                     </div>
 
@@ -1178,7 +1178,7 @@ const handleDestPickClick = async () => {
                       </div>
                       <div className="stat-body">
                         <span className="stat-number">{stats.success}</span>
-                        <span className="stat-name">Bản sao lưu thành công</span>
+                        <span className="stat-name">Bản backup thành công</span>
                       </div>
                     </div>
 
@@ -1234,7 +1234,7 @@ const handleDestPickClick = async () => {
                       <input
                         type="text"
                         className="search-input"
-                        placeholder="Tìm theo tên file hoặc nguồn..."
+                        placeholder="Tìm theo tên bản backup hoặc tên file..."
                         value={search}
                         onChange={e => { setSearch(e.target.value); setPageNum(1) }}
                       />
@@ -1291,7 +1291,7 @@ const handleDestPickClick = async () => {
                             </td>
                             <td className="cell-time">{formatTime(item.created_at)}</td>
                             <td style={{ textAlign: 'center' }}>
-                              <button className="btn-icon btn-icon--danger" onClick={() => handleDelete(item.id, item.destination)} title="Xóa bản sao lưu tại nơi cất giữ">
+                              <button className="btn-icon btn-icon--danger" onClick={() => handleDelete(item.id, item.destination)} title="Xóa bản backup tại nơi cất giữ">
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                   <polyline points="3 6 5 6 21 6" />
                                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -1309,7 +1309,7 @@ const handleDestPickClick = async () => {
                                   <polyline points="17 8 12 3 7 8" />
                                   <line x1="12" y1="3" x2="12" y2="15" />
                                 </svg>
-                                <p>{backups.length === 0 ? 'Chưa có bản sao lưu nào' : 'Không tìm thấy kết quả phù hợp'}</p>
+                                <p>{backups.length === 0 ? 'Chưa có bản backup nào' : 'Không tìm thấy kết quả phù hợp'}</p>
                               </div>
                             </td>
                           </tr>

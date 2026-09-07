@@ -33,9 +33,9 @@ func sendTestNotifications(cfg NotificationConfig) {
 // buildMessage returns platform-agnostic text for an alert
 func buildMessage(fileName string, status string) string {
 	if isSuccessStatus(status) {
-		return fmt.Sprintf("✅ Backup THÀNH CÔNG: file %s đã được sao lưu an toàn.", fileName)
+		return fmt.Sprintf("✅ Backup THÀNH CÔNG: file %s đã được backup an toàn.", fileName)
 	}
-	return fmt.Sprintf("🚨 Backup THẤT BẠI: file %s không thể sao lưu. Vui lòng kiểm tra ngay!", fileName)
+	return fmt.Sprintf("🚨 Backup THẤT BẠI: file %s không thể backup. Vui lòng kiểm tra ngay!", fileName)
 }
 
 // isSuccessStatus đánh giá một status có phải là thành công hay không.
