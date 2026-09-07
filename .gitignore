@@ -12,3 +12,8 @@ Thumbs.db
 .env.local
 .env.production
 backend/.env
+# Bỏ qua thư mục nháp của AI
+scratch/
+
+# Bỏ qua các file PowerPoint (Báo cáo)
+*.pptx
