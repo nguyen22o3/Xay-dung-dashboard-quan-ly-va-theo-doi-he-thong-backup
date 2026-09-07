@@ -124,8 +124,8 @@ func checkBackupSchedules() {
 		}
 		DB.Create(&missed)
 
-		log.Printf("⚠️ Backup quá hạn cho %s (kỳ vọng %s)", s.Source, due.Format(time.RFC3339))
-		go sendNotifications(s.Source, "Missed (quá hạn kỳ vọng "+due.Format("02/01/2006 15:04")+")")
+		log.Printf("⚠️ Thiếu bản backup cho %s (lịch trình dự kiến %s)", s.Source, due.Format(time.RFC3339))
+		go sendNotifications(s.Source, "Missed (Thiếu bản backup dự kiến lúc "+due.Format("02/01/2006 15:04")+")")
 	}
 }
 

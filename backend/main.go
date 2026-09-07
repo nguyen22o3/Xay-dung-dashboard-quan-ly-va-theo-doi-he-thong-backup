@@ -67,7 +67,7 @@ func main() {
 	// Khởi động quét Google Drive định kỳ (mô hình push: backend đọc Drive)
 	startDriveSyncRunner()
 
-	// Khởi động kiểm tra lịch backup kỳ vọng & cảnh báo quá hạn
+	// Khởi động kiểm tra lịch trình và gửi cảnh báo thiếu backup
 	startScheduleChecker()
 
 	// API Kiểm tra trạng thái (không cần auth)

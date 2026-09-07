@@ -16,10 +16,11 @@ import (
 
 // createBackupRequest yêu cầu tạo bản backup từ dashboard.
 type createBackupRequest struct {
-	SourcePath   string   `json:"source_path"`  // Đường dẫn file/folder nguồn cần backup
-	Destinations []string `json:"destinations"` // Danh sách đích: "server" | "drive" | "nas"
-	DestPath     string   `json:"dest_path"`    // Với "server": đường dẫn đích trên máy (tùy chọn)
-	SourceName   string   `json:"source_name"`  // Tên nguồn hiển thị (vd "Server Web LAMP"), tùy chọn
+	SourcePath     string   `json:"source_path"`      // Đường dẫn file/folder nguồn cần backup
+	Destinations   []string `json:"destinations"`     // Danh sách đích: "server" | "drive" | "nas"
+	DestPath       string   `json:"dest_path"`        // Với "server": đường dẫn đích trên máy (tùy chọn)
+	SourceName     string   `json:"source_name"`      // Tên nguồn hiển thị (vd "Server Web LAMP"), tùy chọn
+	CustomFileName string   `json:"custom_file_name"` // Tên file backup tùy chọn
 }
 
 // createBackupHandler tạo các bản backup: tar nguồn một lần rồi copy tới từng đích.
@@ -47,7 +48,7 @@ func createBackupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, okDests, err := createBackupToDests(req.SourcePath, req.Destinations, req.DestPath, req.SourceName)
+	msg, okDests, err := createBackupToDests(req.SourcePath, req.Destinations, req.DestPath, req.SourceName, req.CustomFileName)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -63,7 +64,7 @@ func createBackupHandler(w http.ResponseWriter, r *http.Request) {
 
 // createBackupToDests nén nguồn rồi copy tới từng đích đã chọn, ghi record cho mỗi đích.
 // Trả về thông báo thành công, danh sách đích đã ghi và lỗi (nếu có).
-func createBackupToDests(sourcePath string, destinations []string, destPath, sourceName string) (string, []string, error) {
+func createBackupToDests(sourcePath string, destinations []string, destPath, sourceName, customFileName string) (string, []string, error) {
 	// Chuẩn hoá danh sách đích, loại bỏ trùng lặp (giữ thứ tự).
 	set := map[string]bool{}
 	var dests []string
@@ -82,8 +83,13 @@ func createBackupToDests(sourcePath string, destinations []string, destPath, sou
 	}
 
 	timestamp := time.Now().Format("20060102_150405")
-	baseName := filepath.Base(strings.TrimRight(sourcePath, "/"))
-	fileName := fmt.Sprintf("manual_%s_%s.tar.gz", sanitizeBase(baseName), timestamp)
+	var baseName string
+	if strings.TrimSpace(customFileName) != "" {
+		baseName = sanitizeBase(strings.TrimSpace(customFileName))
+	} else {
+		baseName = sanitizeBase(filepath.Base(strings.TrimRight(sourcePath, "/")))
+	}
+	fileName := fmt.Sprintf("%s_%s.tar.gz", baseName, timestamp)
 
 	// Temp file để nén.
 	tmp, err := os.CreateTemp("", "bkup_*.tar.gz")
@@ -308,7 +314,7 @@ func createBackupToDests(sourcePath string, destinations []string, destPath, sou
 		go sendNotifications(sourceName, "Failed (tạo thủ công một phần: "+fileName+" - thất bại tại "+strings.Join(failedDests, ", ")+", thành công tại "+strings.Join(okDests, ", ")+")")
 	}
 
-	// Kiểm tra và cập nhật schedule nếu backup thủ công thỏa mãn lịch kỳ vọng
+	// Kiểm tra và cập nhật schedule nếu backup thủ công thỏa mãn lịch trình
 	CheckAndAdvanceSchedulesForBackup(sourceName, fileName)
 
 	go sendNotifications(sourceName, "Success (tạo thủ công: "+fileName+")")
@@ -398,12 +404,13 @@ func uploadBackupHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Đọc các field đi kèm.
 	var destinations []string
-	var destPath, sourceName, serverPath string
+	var destPath, sourceName, serverPath, customFileName string
 	if v := r.FormValue("destinations"); v != "" {
 		_ = json.Unmarshal([]byte(v), &destinations)
 	}
 	destPath = strings.TrimSpace(r.FormValue("dest_path"))
 	sourceName = strings.TrimSpace(r.FormValue("source_name"))
+	customFileName = strings.TrimSpace(r.FormValue("custom_file_name"))
 	serverPath = strings.TrimSpace(r.FormValue("source_path"))
 
 	// Tạo thư mục tạm.
@@ -508,7 +515,7 @@ func uploadBackupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Gọi logic tạo backup tới các đích đã chọn.
-	msg, okDests, err := createBackupToDests(sourcePath, destinations, destPath, sourceName)
+	msg, okDests, err := createBackupToDests(sourcePath, destinations, destPath, sourceName, customFileName)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

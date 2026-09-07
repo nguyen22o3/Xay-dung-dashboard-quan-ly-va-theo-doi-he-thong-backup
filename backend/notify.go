@@ -33,9 +33,18 @@ func sendTestNotifications(cfg NotificationConfig) {
 // buildMessage returns platform-agnostic text for an alert
 func buildMessage(fileName string, status string) string {
 	if isSuccessStatus(status) {
-		return fmt.Sprintf("✅ Backup THÀNH CÔNG: file %s đã được backup an toàn.", fileName)
+		return fmt.Sprintf("✅ Backup THÀNH CÔNG: bản backup %s đã được tạo.", fileName)
 	}
-	return fmt.Sprintf("🚨 Backup THẤT BẠI: file %s không thể backup. Vui lòng kiểm tra ngay!", fileName)
+	if isMissedStatus(status) {
+		detail := ""
+		if start := strings.Index(status, "("); start != -1 {
+			if end := strings.Index(status, ")"); end != -1 && end > start {
+				detail = " - " + status[start+1:end]
+			}
+		}
+		return fmt.Sprintf("⚠️ CẢNH BÁO THIẾU BACKUP: Không tìm thấy bản sao lưu mới cho '%s'%s.", fileName, detail)
+	}
+	return fmt.Sprintf("🚨 Backup THẤT BẠI: Quá trình tạo bản backup '%s' gặp lỗi. Vui lòng kiểm tra ngay!", fileName)
 }
 
 // isSuccessStatus đánh giá một status có phải là thành công hay không.
@@ -43,6 +52,11 @@ func buildMessage(fileName string, status string) string {
 func isSuccessStatus(status string) bool {
 	s := strings.TrimSpace(status)
 	return s == "Success" || strings.HasPrefix(s, "Success")
+}
+
+func isMissedStatus(status string) bool {
+	s := strings.TrimSpace(status)
+	return s == "Missed" || strings.HasPrefix(s, "Missed")
 }
 
 // ---------- Discord ----------
