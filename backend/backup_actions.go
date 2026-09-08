@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -144,182 +145,105 @@ func createBackupToDests(sourcePath string, destinations []string, destPath, sou
 		return "", nil, fmt.Errorf("Nén backup thất bại: %v", err)
 	}
 
-	// 2. Copy tới từng đích và ghi mỗi record tương ứng.
-	okDests := []string{}
-	failedDests := []string{}
+	// 2. Ghi nhận Processing vào DB
 	for _, dest := range dests {
-		var displayDest, fileRef string
+		var displayDest string
 		switch dest {
 		case "drive":
-			remote := driveRemoteFolder() + "/" + fileName
-			if err := copyToDrive(tmpPath, remote); err != nil {
-				log.Printf("Upload Google Drive thất bại: %v", err)
-				recFail := BackupRecord{
-					Source:    sourceName,
-					Destination: "Google Drive",
-					FileName:  fileName,
-					FilePath:  remote,
-					Status:    "Failed",
-					SizeMB:    0,
-					CreatedAt: time.Now(),
-				}
-				DB.Create(&recFail)
-				failedDests = append(failedDests, "Google Drive")
-				go sendNotifications(sourceName, "Failed (Google Drive: "+fileName+" - "+err.Error()+")")
-				continue
-			}
 			displayDest = "Google Drive"
-			fileRef = remote
 		case "nas":
-			remote := nasRemoteFolder() + "/" + fileName
-			if err := copyToNas(tmpPath, remote); err != nil {
-				log.Printf("Upload NAS thất bại: %v", err)
-				recFail := BackupRecord{
-					Source:    sourceName,
-					Destination: "NAS",
-					FileName:  fileName,
-					FilePath:  remote,
-					Status:    "Failed",
-					SizeMB:    0,
-					CreatedAt: time.Now(),
-				}
-				DB.Create(&recFail)
-				failedDests = append(failedDests, "NAS")
-				go sendNotifications(sourceName, "Failed (NAS: "+fileName+" - "+err.Error()+")")
-				continue
-			}
 			displayDest = "NAS"
-			fileRef = remote
-		default: // server
-			// Không dùng thư mục mặc định - yêu cầu user tự chọn chỗ lưu
-			trimmedDest := strings.TrimSpace(destPath)
-			if trimmedDest == "" {
-				log.Printf("Thiếu đường dẫn lưu trên Server: user chưa chọn chỗ lưu")
-				recFail := BackupRecord{
-					Source:    sourceName,
-					Destination: "Server",
-					FileName:  fileName,
-					FilePath:  fileName,
-					Status:    "Failed",
-					SizeMB:    0,
-					CreatedAt: time.Now(),
-				}
-				DB.Create(&recFail)
-				failedDests = append(failedDests, "Server")
-				go sendNotifications(sourceName, "Failed (Server: chưa chọn chỗ lưu - vui lòng chọn đường dẫn)")
-				continue
-			}
-			destDir := sanitizeServerPath(trimmedDest, "")
-			if destDir == "" {
-				log.Printf("Đường dẫn lưu không hợp lệ sau khi chuẩn hóa: %q", destPath)
-				recFail := BackupRecord{
-					Source:    sourceName,
-					Destination: "Server",
-					FileName:  fileName,
-					FilePath:  fileName,
-					Status:    "Failed",
-					SizeMB:    0,
-					CreatedAt: time.Now(),
-				}
-				DB.Create(&recFail)
-				failedDests = append(failedDests, "Server")
-				go sendNotifications(sourceName, "Failed (Server: đường dẫn không hợp lệ)")
-				continue
-			}
-			if err := os.MkdirAll(destDir, 0755); err != nil {
-				log.Printf("Không tạo được thư mục đích: %v", err)
-				// Lưu bản ghi Failed để user thấy và nhận thông báo
-				recFail := BackupRecord{
-					Source:    sourceName,
-					Destination: "Server",
-					FileName:  fileName,
-					FilePath:  filepath.Join(destDir, fileName),
-					Status:    "Failed",
-					SizeMB:    0,
-					CreatedAt: time.Now(),
-				}
-				if err2 := DB.Create(&recFail).Error; err2 != nil {
-					log.Printf("Lỗi tạo bản ghi Failed Server Mkdir: %v", err2)
-				} else {
-					log.Printf("Đã tạo bản ghi Failed cho Server Mkdir: %s", fileName)
-				}
-				failedDests = append(failedDests, "Server")
-				go sendNotifications(sourceName, "Failed (Server Mkdir: "+fileName+" - "+err.Error()+")")
-				continue
-			}
-			fullPath := filepath.Join(destDir, fileName)
-			if err := copyLocal(tmpPath, fullPath); err != nil {
-				log.Printf("Lưu file trên server thất bại: %v", err)
-				recFail := BackupRecord{
-					Source:    sourceName,
-					Destination: "Server",
-					FileName:  fileName,
-					FilePath:  fullPath,
-					Status:    "Failed",
-					SizeMB:    0,
-					CreatedAt: time.Now(),
-				}
-				DB.Create(&recFail)
-				failedDests = append(failedDests, "Server")
-				go sendNotifications(sourceName, "Failed (Server: "+fileName+" - "+err.Error()+")")
-				continue
-			}
+		default:
 			displayDest = "Server"
-			fileRef = fullPath
 		}
-
-		var sizeBytes int64
-		// Lấy dung lượng từ file tạm đã nén (áp dụng cho cả Server/Drive/NAS)
-		// thay vì os.Stat(fileRef) vì fileRef với Drive/NAS là remote path (gdrive:...) không stat được -> luôn 0.
-		if st, e := os.Stat(tmpPath); e == nil {
-			sizeBytes = st.Size()
-		} else if st, e := os.Stat(fileRef); e == nil {
-			// Fallback cho Server nếu tmp đã xóa
-			sizeBytes = st.Size()
-		}
-
+		
 		rec := BackupRecord{
 			Source:      sourceName,
 			Destination: displayDest,
 			FileName:    fileName,
-			FilePath:    fileRef,
-			Status:      "Success",
-			SizeMB:      float64(sizeBytes) / (1024 * 1024),
+			Status:      "Processing",
+			SizeMB:      0,
 			CreatedAt:   time.Now(),
 		}
-		if err := DB.Create(&rec).Error; err != nil {
-			log.Printf("Lỗi lưu bản ghi backup: %v", err)
-			continue
+		DB.Create(&rec)
+	}
+
+	// 3. Chạy Goroutine nén (upload)
+	go func() {
+		defer os.Remove(tmpPath)
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		okDests := []string{}
+		failedDests := []string{}
+
+		for _, dest := range dests {
+			wg.Add(1)
+			go func(d string) {
+				defer wg.Done()
+				var displayDest, fileRef string
+				var uploadErr error
+
+				switch d {
+				case "drive":
+					displayDest = "Google Drive"
+					fileRef = driveRemoteFolder() + "/" + fileName
+					uploadErr = copyToDrive(tmpPath, fileRef)
+				case "nas":
+					displayDest = "NAS"
+					fileRef = nasRemoteFolder() + "/" + fileName
+					uploadErr = copyToNas(tmpPath, fileRef)
+				default:
+					displayDest = "Server"
+					trimmedDest := strings.TrimSpace(destPath)
+					if trimmedDest == "" {
+						uploadErr = fmt.Errorf("chưa chọn chỗ lưu")
+					} else {
+						destDir := sanitizeServerPath(trimmedDest, "")
+						if destDir == "" {
+							uploadErr = fmt.Errorf("đường dẫn không hợp lệ")
+						} else {
+							os.MkdirAll(destDir, 0755)
+							fileRef = filepath.Join(destDir, fileName)
+							uploadErr = copyLocal(tmpPath, fileRef)
+						}
+					}
+				}
+
+				mu.Lock()
+				defer mu.Unlock()
+				var rec BackupRecord
+				DB.Where("file_name = ? AND status = ? AND destination = ?", fileName, "Processing", displayDest).First(&rec)
+
+				if uploadErr != nil {
+					rec.Status = "Failed"
+					rec.FilePath = fileRef
+					DB.Save(&rec)
+					failedDests = append(failedDests, displayDest)
+					go sendNotifications(sourceName, "Failed ("+displayDest+": "+fileName+" - "+uploadErr.Error()+")")
+				} else {
+					var sizeBytes int64
+					if st, e := os.Stat(tmpPath); e == nil {
+						sizeBytes = st.Size()
+					} else if st, e := os.Stat(fileRef); e == nil {
+						sizeBytes = st.Size()
+					}
+					rec.Status = "Success"
+					rec.FilePath = fileRef
+					rec.SizeMB = float64(sizeBytes) / (1024 * 1024)
+					DB.Save(&rec)
+					okDests = append(okDests, displayDest)
+				}
+			}(dest)
 		}
-		okDests = append(okDests, displayDest)
-	}
+		wg.Wait()
 
-	os.Remove(tmpPath)
-
-	if len(okDests) == 0 {
-		// Đã gửi Failed cho từng dest ở trên, gửi thêm tổng hợp nếu chưa có
-		if len(failedDests) == 0 {
-			go sendNotifications(sourceName, "Failed (tạo thủ công: "+fileName+")")
-		} else {
-			// Đã gửi cho từng dest, không gửi trùng nếu chỉ 1 dest (tránh spam)
-			if len(failedDests) > 1 {
-				go sendNotifications(sourceName, "Failed (tạo thủ công: "+fileName+" - thất bại tại "+strings.Join(failedDests, ", ")+")")
-			}
+		if len(okDests) > 0 {
+			CheckAndAdvanceSchedulesForBackup(sourceName, fileName)
+			go sendNotifications(sourceName, "Success (tạo thủ công: "+fileName+")")
 		}
-		return "", failedDests, fmt.Errorf("Tạo bản backup thất bại cho mọi nơi cất giữ đã chọn (%s)", strings.Join(failedDests, ", "))
-	}
+	}()
 
-	// Có một phần thất bại, thông báo thêm để user biết
-	if len(failedDests) > 0 {
-		go sendNotifications(sourceName, "Failed (tạo thủ công một phần: "+fileName+" - thất bại tại "+strings.Join(failedDests, ", ")+", thành công tại "+strings.Join(okDests, ", ")+")")
-	}
-
-	// Kiểm tra và cập nhật schedule nếu backup thủ công thỏa mãn lịch trình
-	CheckAndAdvanceSchedulesForBackup(sourceName, fileName)
-
-	go sendNotifications(sourceName, "Success (tạo thủ công: "+fileName+")")
-
-	return "Đã tạo bản backup thành công tại: " + strings.Join(okDests, ", "), okDests, nil
+	return "Hệ thống đang lưu backup dưới nền. Vui lòng chờ vài giây...", dests, nil
 }
 
 // deleteBackupHandler xóa backup tại đúng nơi cất giữ của bản ghi.
@@ -851,7 +775,9 @@ func createTarball(src, out string) error {
 }
 
 func copyToDrive(src, remote string) error {
-	cmd := exec.Command("rclone", "copyto", "--log-level", "ERROR", src, remote)
+	// Dùng --no-check-dest để bỏ qua bước kiểm tra file đích (giảm 1 luồng request API chậm chạp).
+	// Dùng --drive-chunk-size 64M để tối ưu upload file to.
+	cmd := exec.Command("rclone", "copyto", "--log-level", "ERROR", "--no-check-dest", "--drive-chunk-size", "64M", src, remote)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%v (%s)", err, strings.TrimSpace(string(output)))

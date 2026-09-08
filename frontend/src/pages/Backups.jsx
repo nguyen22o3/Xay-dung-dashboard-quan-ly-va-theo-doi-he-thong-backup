@@ -32,6 +32,7 @@ export default function Backups({
             <option value="all">Tất cả trạng thái</option>
             <option value="Success">Thành công</option>
             <option value="Failed">Thất bại</option>
+            <option value="Processing">Đang chạy</option>
           </select>
           <select className="filter-select" value={filterSource} onChange={e => { setFilterSource(e.target.value); setPageNum(1) }}>
             {sources.map(s => (
@@ -95,8 +96,8 @@ export default function Backups({
                 </td>
                 <td className="cell-mono">{formatSize(item.size_mb)}</td>
                 <td>
-                  <span className={`tag tag--${item.status === 'Success' ? 'success' : item.status === 'Missed' ? 'warning' : 'danger'}`}>
-                    {item.status === 'Success' ? 'Thành công' : item.status === 'Missed' ? 'Thiếu file' : 'Thất bại'}
+                  <span className={`tag tag--${item.status === 'Success' ? 'success' : item.status === 'Missed' ? 'warning' : item.status === 'Processing' ? 'info' : 'danger'}`}>
+                    {item.status === 'Success' ? 'Thành công' : item.status === 'Missed' ? 'Thiếu file' : item.status === 'Processing' ? 'Đang chạy' : 'Thất bại'}
                   </span>
                 </td>
                 <td className="cell-time">{formatTime(item.created_at)}</td>

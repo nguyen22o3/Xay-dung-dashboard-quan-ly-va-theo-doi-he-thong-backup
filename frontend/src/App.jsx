@@ -369,12 +369,13 @@ function App() {
     if (!window.confirm(`Bạn có chắc chắn muốn xóa bản backup này trên tất cả các nơi cất giữ?`)) return
     try {
       const dests = item.dests ? Object.values(item.dests) : [item]
-      for (const dest of dests) {
-        await fetch(`/api/delete?id=${dest.id}`, {
+      // Thực hiện xóa song song (concurrent) để tăng tốc độ
+      await Promise.all(dests.map(dest => 
+        fetch(`/api/delete?id=${dest.id}`, {
           method: 'DELETE',
           headers: ah(),
         })
-      }
+      ))
       showToast('Xóa bản backup thành công')
       await fetchBackups()
     } catch (e) {
