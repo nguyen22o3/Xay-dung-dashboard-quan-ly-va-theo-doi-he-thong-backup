@@ -1,0 +1,659 @@
+import React, { useEffect, useState } from 'react'
+import { Responsive } from 'react-grid-layout'
+import type { Layout } from 'react-grid-layout'
+import 'react-grid-layout/css/styles.css'
+import 'react-resizable/css/styles.css'
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts'
+import { ErrorBoundary } from '../ErrorBoundary'
+import type { Lang } from '../language'
+import { tr } from '../language'
+import { makeTheme } from '../theme'
+import { useServerStatus, useBackupStatus } from '../api'
+import { formatBytes, formatDuration } from '../utils'
+
+import type { CSSProperties } from 'react'
+
+interface ChartDatum {
+  date: string
+  totalSize: number
+  diffSize: number
+  success: number
+  failed: number
+  noBackup: number
+}
+
+function ChartTooltip({
+  active,
+  payload,
+  label,
+  unit,
+  palette,
+}: {
+  active?: boolean
+  payload?: Array<{ value: number; color?: string; fill?: string }>
+  label?: string
+  unit?: 'bytes'
+  palette: { bg: string; border: string; text: string }
+}) {
+  if (active && payload && payload.length) {
+    return (
+      <div
+        style={{
+          backgroundColor: palette.bg,
+          border: `1px solid ${palette.border}`,
+          padding: '10px',
+          color: palette.text,
+          fontSize: '12px',
+          zIndex: 1000,
+        }}
+      >
+        <p style={{ margin: '0 0 5px 0', fontWeight: 'bold' }}>{label}</p>
+        <p style={{ margin: 0, color: payload[0].color || payload[0].fill }}>
+          {unit === 'bytes' ? formatBytes(payload[0].value) : payload[0].value}
+        </p>
+      </div>
+    )
+  }
+  return null
+}
+
+function useCustomContainerWidth() {
+  const [width, setWidth] = useState(0)
+  const containerRef = React.useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!containerRef.current) return
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (entries[0] && entries[0].contentRect.width > 0) {
+        setWidth(entries[0].contentRect.width)
+      }
+    })
+    resizeObserver.observe(containerRef.current)
+    setWidth(containerRef.current.offsetWidth)
+    return () => resizeObserver.disconnect()
+  }, [])
+
+  return { width, containerRef }
+}
+
+export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) {
+  const theme = makeTheme(isDark)
+  const server = useServerStatus()
+  const backup = useBackupStatus()
+  
+  const { width: containerWidth, containerRef } = useCustomContainerWidth()
+
+  const [layouts, setLayouts] = useState<Partial<Record<string, Layout>>>(() => {
+    const saved = localStorage.getItem('driveGridV4')
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved)
+        if (parsed?.lg) return parsed
+      } catch {
+        /* ignore */
+      }
+    }
+    return {
+      lg: [
+        { i: 'daily', x: 0, y: 0, w: 12, h: 7, minH: 2, minW: 2 },
+        { i: 'last-backup', x: 12, y: 0, w: 12, h: 7, minH: 2, minW: 2 },
+        { i: 'growth', x: 0, y: 7, w: 24, h: 10, minH: 2, minW: 2 },
+        { i: 'history', x: 0, y: 17, w: 12, h: 10, minH: 2, minW: 2 },
+        { i: 'success', x: 12, y: 17, w: 12, h: 10, minH: 2, minW: 2 },
+        { i: 'cloud', x: 0, y: 27, w: 24, h: 7, minH: 2, minW: 2 },
+      ],
+    }
+  })
+
+  const onLayoutChange = (_currentLayout: Layout, allLayouts: Partial<Record<string, Layout>>) => {
+    setLayouts(allLayouts)
+    localStorage.setItem('driveGridV4', JSON.stringify(allLayouts))
+  }
+
+  const serverStatus = server.data ?? {}
+  const backupStatus = backup.data ?? {}
+
+  // Disk Storage Math
+        
+  // Drive Storage Math
+  const { dirs, about } = backupStatus
+  const folders = dirs ? dirs.split(',').filter(Boolean) : []
+  const finishedBackupsCount = folders.length
+  const hasSiteBackup = folders.some((f) => f.toLowerCase().includes('site'))
+  const hasDbBackup = folders.some((f) => f.toLowerCase().includes('database') || f.toLowerCase().includes('db'))
+  const hasPanelBackup = folders.some((f) => f.toLowerCase().includes('panel'))
+
+  const backupFolderSize = backupStatus.size?.bytes || 0
+  const driveTotal = about?.total || 5 * 1024 * 1024 * 1024 * 1024
+  const rawDrivePercent = driveTotal ? (backupFolderSize / driveTotal) * 100 : 0
+  const driveUsedPercent = rawDrivePercent > 0 && rawDrivePercent < 0.01 ? '< 0.01' : rawDrivePercent.toFixed(1)
+  const driveFreePercent = (100 - (rawDrivePercent > 0 && rawDrivePercent < 0.01 ? 0.01 : rawDrivePercent)).toFixed(1)
+
+  const getLocalDateString = (d: Date) => {
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  // PIE CHART DATA (DAILY BACKUPS) — thực tế từ activity hôm nay
+  const today = getLocalDateString(new Date())
+  const activities = backupStatus.activity ?? []
+  const todayActivity = activities.filter((a) => a.date === today)
+  const failedToday = todayActivity.filter((a) => a.status !== 'Successful').length
+
+  const totalPie = finishedBackupsCount + failedToday
+  const pieData =
+    totalPie === 0
+      ? [{ name: 'idle', value: 1 }]
+      : [
+          { name: tr(lang, 'successful'), value: finishedBackupsCount },
+          { name: tr(lang, 'failed'), value: failedToday },
+        ]
+  const PIE_COLORS = [theme.successText, theme.errorText, theme.gridLine]
+  const successPercent = totalPie > 0 ? Math.round((finishedBackupsCount / totalPie) * 100) : 0
+  const failedPercent = totalPie > 0 ? Math.round((failedToday / totalPie) * 100) : 0
+
+  // Parse History to get charts data
+  let chartData: ChartDatum[] = []
+  const history = backupStatus.history
+  if (history && Array.isArray(history)) {
+    const historyMap = new Map()
+    history.forEach((h) => historyMap.set(h.date, { bytes: h.bytes, files: h.files || 0 }))
+
+    const last14Days: string[] = []
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      last14Days.push(getLocalDateString(d))
+    }
+
+    chartData = last14Days.map((dateStr, i) => {
+      const histData = historyMap.get(dateStr) || { bytes: 0, files: 0 }
+        const bytes = histData.bytes
+        
+      let diff = 0
+      if (i > 0) {
+        const prevBytes = (historyMap.get(last14Days[i - 1]) || { bytes: 0 }).bytes
+        diff = Math.abs(bytes - prevBytes)
+      }
+
+      let success = 0
+      const failed = 0
+      let noBackup = 0
+
+      const files = histData.files || 0
+        if (files > 0) {
+          success = files
+        } else {
+          noBackup = 1
+        }
+
+      return {
+        date: dateStr,
+        totalSize: bytes,
+        diffSize: diff,
+        success,
+        failed,
+        noBackup,
+      }
+    })
+
+      }
+
+  const cardStyle: CSSProperties = {
+    backgroundColor: theme.cardBg,
+    border: `1px solid ${theme.cardBorder}`,
+    boxShadow: isDark ? 'none' : '0 1px 3px rgba(0,0,0,0.1)',
+    display: 'flex',
+    flexDirection: 'column',
+    containerType: 'size' as unknown as 'size',
+  }
+  const dragHandleStyle: CSSProperties = {
+    padding: 'clamp(0px, 2cqh, 8px) 10px',
+    cursor: 'grab',
+    fontSize: 'clamp(4px, 8cqmin, 12px)',
+    fontWeight: 'bold',
+    color: theme.titleColor,
+    textTransform: 'uppercase',
+    display: 'flex',
+    alignItems: 'center',
+    lineHeight: 1,
+  }
+
+  const tickFormatter = (tick: string) => {
+    const parts = tick.split('-')
+    return parts.length === 3 ? `${parts[2]}/${parts[1]}` : tick
+  }
+
+  return (
+    <div style={{ width: '100%' }}>
+      <h2 style={{ margin: '0 0 15px 0', fontSize: '22px', fontWeight: 'normal', color: theme.titleColor }}>
+        {tr(lang, 'homeDashboard')}
+      </h2>
+
+      <div style={{ margin: '0 -15px' }}>
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `
+              .react-resizable-handle {
+                filter: invert(1);
+                opacity: 0.5;
+              }
+              .react-grid-item:hover .react-resizable-handle {
+                opacity: 1;
+              }
+            `,
+          }}
+        />
+
+        <div ref={containerRef} style={{ minHeight: '500px', width: '100%' }}>
+          {containerWidth > 0 && (
+            <ErrorBoundary>
+              <Responsive
+                width={containerWidth}
+                className="layout"
+                layouts={layouts}
+                breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
+                cols={{ lg: 24, md: 20, sm: 12, xs: 8, xxs: 4 }}
+                rowHeight={30}
+                onLayoutChange={onLayoutChange}
+                dragConfig={{ handle: '.drag-handle' }}
+                resizeConfig={{ handles: ['s', 'w', 'e', 'n', 'sw', 'nw', 'se', 'ne'] }}
+                margin={[15, 15]}
+              >
+                {/* DAILY PIE */}
+                <div key="daily" style={cardStyle}>
+                  <div className="drag-handle" style={dragHandleStyle}>
+                    {tr(lang, 'dailyBackups')}
+                  </div>
+                  <div
+                    style={{
+                      padding: '0 10px 10px 10px',
+                      flex: 1,
+                      overflow: 'hidden',
+                      minHeight: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div style={{ flex: 1, position: 'relative', height: '100px' }}>
+                      <ResponsiveContainer>
+                        <PieChart>
+                          <Pie
+                            data={pieData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius="60%"
+                            outerRadius="90%"
+                            paddingAngle={2}
+                            dataKey="value"
+                            stroke="none"
+                          >
+                            {pieData.map((_, index) => (
+                              <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: theme.cardBg,
+                              border: `1px solid ${theme.cardBorder}`,
+                              fontSize: '12px',
+                            }}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          height: '100%',
+                          display: 'flex',
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          fontWeight: 'bold',
+                          fontSize: '18px',
+                        }}
+                      >
+                        {totalPie}
+                      </div>
+                    </div>
+                    <div style={{ flex: 1.5, fontSize: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                        <div style={{ width: '40px', fontSize: '18px', textAlign: 'right', marginRight: '10px' }}>{successPercent}%</div>
+                        <div style={{ flex: 1, height: '4px', backgroundColor: theme.successText, marginRight: '10px' }} />
+                        <div style={{ width: '80px' }}>
+                          {finishedBackupsCount} {tr(lang, 'successful')}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                        <div style={{ width: '40px', fontSize: '18px', textAlign: 'right', marginRight: '10px' }}>{failedPercent}%</div>
+                        <div style={{ flex: 1, height: '4px', backgroundColor: theme.errorText, marginRight: '10px' }} />
+                        <div style={{ width: '80px' }}>
+                          {failedToday} {tr(lang, 'failed')}
+                        </div>
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-around',
+                          marginTop: '10px',
+                          paddingTop: '6px',
+                          borderTop: `1px solid ${theme.gridLine}`,
+                          fontSize: '11px',
+                          color: theme.textSecondary,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          <span>Site:</span>
+                          <strong style={{ color: theme.titleColor, fontSize: '12px' }}>{hasSiteBackup ? 1 : 0}</strong>
+                        </div>
+                        <div style={{ width: '1px', height: '10px', backgroundColor: theme.gridLine }} />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <span>Database:</span>
+                            <strong style={{ color: theme.titleColor, fontSize: '12px' }}>{hasDbBackup ? 1 : 0}</strong>
+                          </div>
+                          <div style={{ width: '1px', height: '10px', backgroundColor: theme.gridLine }} />
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <span>aaPanel:</span>
+                            <strong style={{ color: theme.titleColor, fontSize: '12px' }}>{hasPanelBackup ? 1 : 0}</strong>
+                          </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+
+
+                {/* LAST BACKUP */}
+                <div key="last-backup" style={cardStyle}>
+                  <div className="drag-handle" style={dragHandleStyle}>
+                    {tr(lang, 'lastBackup')}
+                  </div>
+                  <div style={{ padding: '0 10px 10px 10px', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+                    {(() => {
+                      const lastBackup = activities.length > 0
+                        ? [...activities].sort((a, b) => {
+                            const da = `${a.date} ${a.time}`
+                            const db = `${b.date} ${b.time}`
+                            return db.localeCompare(da)
+                          })[0]
+                        : null
+                      const cronTimes = serverStatus.drive_cron_times || ''
+                      const cronList = cronTimes.split(',').map(s => s.trim()).filter(Boolean)
+                      const now = new Date()
+                      const nowMinutes = now.getHours() * 60 + now.getMinutes()
+                      let firstCron = cronList[0] || '--:--'
+                      let isNextDay = false
+                      if (cronList.length > 0) {
+                        isNextDay = true
+                        for (const ct of cronList) {
+                          const parts = ct.split(':')
+                          if (parts.length === 2) {
+                            const cronMin = parseInt(parts[0]) * 60 + parseInt(parts[1])
+                            if (cronMin > nowMinutes) {
+                              firstCron = ct
+                              isNextDay = false
+                              break
+                            }
+                          }
+                        }
+                      }
+                      const nextScheduleDisplay = firstCron !== '--:--' ? `${firstCron}${isNextDay ? (lang === 'vi' ? ' (ngày mai)' : ' (next day)') : ''}` : '--:--'
+
+                      if (!lastBackup) {
+                        return (
+                          <div style={{ textAlign: 'center', color: theme.textSecondary, padding: '20px', fontSize: '12px' }}>
+                            {tr(lang, 'noBackupYet')}
+                          </div>
+                        )
+                      }
+
+                      const isSuccess = lastBackup.status === 'Successful'
+                      const durationStr = formatDuration(Number(lastBackup.duration))
+
+                      return (
+                        <div style={{ fontSize: '12px' }}>
+                          <div
+                            style={{
+                              marginBottom: '10px',
+                              padding: '8px 0',
+                              borderBottom: `1px solid ${theme.gridLine}`,
+                            }}
+                          >
+                            <strong style={{ fontSize: '13px', color: isSuccess ? theme.successText : theme.errorText, display: 'block' }}>
+                              {isSuccess ? tr(lang, 'backupSuccessful') : tr(lang, 'backupFailed')}
+                            </strong>
+                            <span style={{ color: theme.textSecondary, fontSize: '11px' }}>
+                              {lastBackup.date} {lastBackup.time}
+                            </span>
+                          </div>
+                          <div style={{ lineHeight: '1.9' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px dashed ${theme.gridLine}`, paddingBottom: '1px' }}>
+                              <span style={{ color: theme.textSecondary }}>{tr(lang, 'job')}</span>
+                              <strong>Lưu trữ bản backup lên Google Drive</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px dashed ${theme.gridLine}`, paddingBottom: '1px' }}>
+                              <span style={{ color: theme.textSecondary }}>{tr(lang, 'duration')}</span>
+                              <strong>{durationStr}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px dashed ${theme.gridLine}`, paddingBottom: '1px' }}>
+                              <span style={{ color: theme.textSecondary }}>{tr(lang, 'destination')}</span>
+                              <strong>Google Drive</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '1px' }}>
+                              <span style={{ color: theme.textSecondary }}>{tr(lang, 'nextSchedule')}</span>
+                              <strong style={{ color: theme.titleColor }}>{nextScheduleDisplay}</strong>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                </div>
+
+                {/* GROWTH CHART */}
+                <div key="growth" style={cardStyle}>
+                  <div className="drag-handle" style={dragHandleStyle}>
+                    {tr(lang, 'dataGrowth')}
+                  </div>
+                  <div style={{ padding: '0 10px 10px 10px', flex: 1, minHeight: 0 }}>
+                    {chartData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke={theme.gridLine} vertical={false} />
+                          <XAxis
+                            dataKey="date"
+                            stroke={theme.textSecondary}
+                            fontSize={10}
+                            tickLine={false}
+                            axisLine={false}
+                            padding={{ left: 20, right: 20 }}
+                            tickFormatter={tickFormatter}
+                            minTickGap={5}
+                          />
+                          <YAxis
+                            stroke={theme.textSecondary}
+                            fontSize={10}
+                            tickLine={false}
+                            axisLine={false}
+                            tickFormatter={(tick) => formatBytes(tick)}
+                          />
+                          <Tooltip content={<ChartTooltip unit="bytes" palette={{ bg: theme.cardBg, border: theme.cardBorder, text: theme.textPrimary }} />} cursor={{ fill: theme.gridLine }} />
+                          <Bar dataKey="diffSize" fill="#29b6f6" barSize={15} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div style={{ textAlign: 'center', marginTop: '60px', fontSize: '12px', color: theme.textSecondary }}>
+                        {tr(lang, 'noData')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* HISTORY CHART */}
+                <div key="history" style={cardStyle}>
+                  <div className="drag-handle" style={dragHandleStyle}>
+                    {tr(lang, 'backupsHistory')}
+                  </div>
+                  <div style={{ padding: '0 10px 10px 10px', flex: 1, minHeight: 0 }}>
+                    {chartData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke={theme.gridLine} vertical={false} />
+                          <XAxis
+                            dataKey="date"
+                            stroke={theme.textSecondary}
+                            fontSize={10}
+                            tickLine={false}
+                            axisLine={false}
+                            padding={{ left: 20, right: 20 }}
+                            tickFormatter={tickFormatter}
+                            minTickGap={5}
+                          />
+                          <YAxis
+                            stroke={theme.textSecondary}
+                            fontSize={10}
+                            tickLine={false}
+                            axisLine={false}
+                            tickFormatter={(tick) => formatBytes(tick)}
+                          />
+                          <Tooltip content={<ChartTooltip unit="bytes" palette={{ bg: theme.cardBg, border: theme.cardBorder, text: theme.textPrimary }} />} />
+                          <defs>
+                            <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor={theme.successText} stopOpacity={0.8} />
+                              <stop offset="95%" stopColor={theme.successText} stopOpacity={0.1} />
+                            </linearGradient>
+                          </defs>
+                          <Area type="monotone" dataKey="totalSize" stroke={theme.successText} strokeWidth={2} fill="url(#colorTotal)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div style={{ textAlign: 'center', marginTop: '60px', fontSize: '12px', color: theme.textSecondary }}>
+                        {tr(lang, 'noData')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* SUCCESS CHART */}
+                <div key="success" style={cardStyle}>
+                  <div className="drag-handle" style={dragHandleStyle}>
+                    {tr(lang, 'successTrend')}
+                  </div>
+                  <div style={{ padding: '0 10px 10px 10px', flex: 1, minHeight: 0 }}>
+                    {chartData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke={theme.gridLine} vertical={false} />
+                          <XAxis
+                            dataKey="date"
+                            stroke={theme.textSecondary}
+                            fontSize={10}
+                            tickLine={false}
+                            axisLine={false}
+                            padding={{ left: 20, right: 20 }}
+                            tickFormatter={tickFormatter}
+                            minTickGap={5}
+                          />
+                          <YAxis stroke={theme.textSecondary} fontSize={10} tickLine={false} axisLine={false} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: theme.cardBg, border: `1px solid ${theme.cardBorder}`, fontSize: '12px' }}
+                            cursor={{ fill: theme.gridLine }}
+                          />
+                          <Bar dataKey="success" stackId="a" fill={theme.successText} barSize={20} name={tr(lang, 'filesCount')} />
+                          <Bar dataKey="failed" stackId="a" fill={theme.errorText} barSize={20} name={tr(lang, 'failed')} />
+                          <Bar dataKey="noBackup" stackId="a" fill="#555555" barSize={20} name={tr(lang, 'noBackups')} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div style={{ textAlign: 'center', marginTop: '60px', fontSize: '12px', color: theme.textSecondary }}>
+                        {tr(lang, 'noData')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+
+                {/* LOCAL BACKUP ON SERVER */}
+
+
+
+                {/* CLOUD STORAGE */}
+                <div key="cloud" style={cardStyle}>
+                  <div className="drag-handle" style={dragHandleStyle}>
+                    {tr(lang, 'storageDrive')}
+                  </div>
+                  <div style={{ padding: '0 10px 10px 10px', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '5px' }}>
+                      <span style={{ fontSize: 'clamp(0px, 15cqmin, 18px)', fontWeight: 'bold' }}>{formatBytes(backupFolderSize)}</span>
+                      <span style={{ fontSize: 'clamp(3px, 8cqmin, 10px)', color: theme.textSecondary }}>
+                        {tr(lang, 'storageUtilization')}
+                      </span>
+                      <span style={{ fontSize: 'clamp(0px, 15cqmin, 18px)', fontWeight: 'bold' }}>{formatBytes(driveTotal)}</span>
+                    </div>
+                    <div style={{ width: '100%', backgroundColor: theme.gridLine, height: '12px', marginBottom: '5px', borderRadius: '2px', overflow: 'hidden' }}>
+                      <div style={{ width: `${Math.max(rawDrivePercent, backupFolderSize > 0 ? 1.5 : 0)}%`, minWidth: backupFolderSize > 0 ? '6px' : '0', backgroundColor: '#2196f3', height: '100%' }} />
+                    </div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        fontSize: 'clamp(3px, 8cqmin, 10px)',
+                        color: theme.textSecondary,
+                        marginBottom: 'clamp(0px, 5cqh, 20px)',
+                      }}
+                    >
+                      <span>
+                        {tr(lang, 'used')} ({driveUsedPercent}%)
+                      </span>
+                      <span>
+                        {tr(lang, 'free')} ({driveFreePercent}%)
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '12px' }}>
+                      <div style={{ width: '100%' }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            borderBottom: `1px solid ${theme.gridLine}`,
+                            paddingBottom: '3px',
+                            marginBottom: 'clamp(0px, 1cqh, 3px)',
+                            fontSize: 'clamp(4px, 8cqmin, 13px)',
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          <span>{lang === 'vi' ? 'Tổng số thư mục' : 'Total Folders'}</span>
+                          <strong style={{ color: theme.successText }}>
+                            {backupStatus.totalFolders || 0}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </Responsive>
+            </ErrorBoundary>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
