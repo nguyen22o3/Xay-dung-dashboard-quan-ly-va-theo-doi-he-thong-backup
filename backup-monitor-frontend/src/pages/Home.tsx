@@ -149,13 +149,6 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
   const breakdownBytes = (backupStatus as any)?.todayBreakdownBytes || { site: 0, database: 0, panel: 0 }
   const totalPieBytes = breakdownBytes.site + breakdownBytes.database + breakdownBytes.panel
   
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
   
   const pieData =
     totalPieBytes === 0
@@ -186,10 +179,10 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
         const bytes = histData.bytes
         
       let diff = 0
-      if (i > 0) {
-        const prevBytes = (historyMap.get(last14Days[i - 1]) || { bytes: 0 }).bytes
-        diff = Math.abs(bytes - prevBytes)
-      }
+        if (i > 0) {
+          const prevBytes = (historyMap.get(last14Days[i - 1]) || { bytes: 0 }).bytes
+          diff = bytes - prevBytes
+        }
 
       let success = 0
       const failed = 0
@@ -290,56 +283,55 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                       alignItems: 'center',
                     }}
                   >
-                    <div style={{ flex: 1, position: 'relative', height: '130px' }}>
-                      <ResponsiveContainer>
-                        <PieChart>
-                          <Pie
-                            data={pieData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius="65%"
-                            outerRadius="85%"
-                            paddingAngle={2}
-                            dataKey="value"
-                            stroke="none"
-                          >
-                            {pieData.map((_, index) => (
-                              <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip
-                            formatter={(value) => formatBytes(value as number)}
-                            contentStyle={{
-                              backgroundColor: theme.cardBg,
-                              border: `1px solid ${theme.cardBorder}`,
-                              fontSize: '12px',
-                            }}
-                          />
-                        </PieChart>
-                      </ResponsiveContainer>
+                    
+                        <div style={{ flex: 1, position: 'relative', height: '130px' }}>
+                          <ResponsiveContainer>
+                            <PieChart>
+                              <Pie
+                                data={pieData}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius="65%"
+                                outerRadius="85%"
+                                paddingAngle={2}
+                                dataKey="value"
+                                stroke="none"
+                              >
+                                {pieData.map((_, index) => (
+                                  <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                                ))}
+                              </Pie>
+                              <Tooltip
+                                formatter={(value) => formatBytes(value as number)}
+                                contentStyle={{
+                                  backgroundColor: theme.cardBg,
+                                  border: `1px solid ${theme.cardBorder}`,
+                                  fontSize: '12px',
+                                }}
+                              />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div style={{ flex: 1.5, fontSize: '12px' }}>
+                          {[
+                            { label: 'Site', value: breakdownBytes.site, color: '#4caf50' },
+                            { label: 'Database', value: breakdownBytes.database, color: '#2196f3' },
+                            { label: 'aaPanel', value: breakdownBytes.panel, color: '#ff9800' },
+                          ].map((item) => {
+                            const pct = totalPieBytes > 0 ? Math.round((item.value / totalPieBytes) * 100) : 0
+                            return (
+                              <div key={item.label} style={{ display: 'flex', alignItems: 'center', marginBottom: '12px' }}>
+                                <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: item.color, marginRight: '8px', flexShrink: 0 }} />
+                                <div style={{ flex: 1 }}>{item.label}</div>
+                                <div style={{ marginRight: '10px', color: theme.textSecondary }}>{pct}%</div>
+                                <strong style={{ color: theme.textPrimary }}>{formatBytes(item.value)}</strong>
+                              </div>
+                            )
+                          })}
+                        </div>
                       
-                    </div>
-                    <div style={{ flex: 1.5, fontSize: '12px' }}>
-                      {[
-                        { label: 'Site', value: breakdownBytes.site, color: '#4caf50' },
-                        { label: 'Database', value: breakdownBytes.database, color: '#2196f3' },
-                        { label: 'aaPanel', value: breakdownBytes.panel, color: '#ff9800' },
-                      ].map((item) => {
-                        const pct = totalPieBytes > 0 ? Math.round((item.value / totalPieBytes) * 100) : 0
-                        return (
-                          <div key={item.label} style={{ display: 'flex', alignItems: 'center', marginBottom: '12px' }}>
-                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: item.color, marginRight: '8px', flexShrink: 0 }} />
-                            <div style={{ flex: 1 }}>{item.label}</div>
-                            <div style={{ marginRight: '10px', color: theme.textSecondary }}>{pct}%</div>
-                            <strong style={{ color: theme.textPrimary }}>{formatBytes(item.value)}</strong>
-                          </div>
-                        )
-                      })}
-                    </div>
                   </div>
                 </div>
-
-
 
                 {/* LAST BACKUP */}
                 <div key="last-backup" style={cardStyle}>
@@ -456,7 +448,11 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                             tickFormatter={(tick) => formatBytes(tick)}
                           />
                           <Tooltip content={<ChartTooltip unit="bytes" palette={{ bg: theme.cardBg, border: theme.cardBorder, text: theme.textPrimary }} />} cursor={{ fill: theme.gridLine }} />
-                          <Bar dataKey="diffSize" fill="#29b6f6" barSize={15} />
+                          <Bar dataKey="diffSize" barSize={15}>
+                            {chartData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.diffSize < 0 ? '#ef5350' : '#29b6f6'} />
+                            ))}
+                          </Bar>
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
@@ -492,6 +488,8 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                             fontSize={10}
                             tickLine={false}
                             axisLine={false}
+                            allowDataOverflow={false}
+                            domain={[0, 'auto']}
                             tickFormatter={(tick) => formatBytes(tick)}
                           />
                           <Tooltip content={<ChartTooltip unit="bytes" palette={{ bg: theme.cardBg, border: theme.cardBorder, text: theme.textPrimary }} />} />
@@ -532,7 +530,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                             tickFormatter={tickFormatter}
                             minTickGap={5}
                           />
-                          <YAxis stroke={theme.textSecondary} fontSize={10} tickLine={false} axisLine={false} />
+                          <YAxis stroke={theme.textSecondary} fontSize={10} tickLine={false} axisLine={false} domain={[0, 'auto']} allowDecimals={false} />
                           <Tooltip
                             contentStyle={{ backgroundColor: theme.cardBg, border: `1px solid ${theme.cardBorder}`, fontSize: '12px' }}
                             cursor={{ fill: theme.gridLine }}
