@@ -107,7 +107,14 @@ function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number): PollState<T>
   const reload = useCallback(() => setTick((t) => t + 1), [])
 
   useEffect(() => {
+    const handleForceReload = () => setTick((t) => t + 1)
+    window.addEventListener('force-refresh', handleForceReload)
+    return () => window.removeEventListener('force-refresh', handleForceReload)
+  }, [])
+
+  useEffect(() => {
     let alive = true
+    setLoading(true) // Trigger loading state on mount or manual refresh
     const load = async () => {
       try {
         const d = await fetcher()

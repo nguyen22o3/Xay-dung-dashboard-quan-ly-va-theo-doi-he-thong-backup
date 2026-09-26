@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { Database, Cloud, Server, Activity, Settings, LogOut } from 'lucide-react'
+import { type ReactNode, useState } from 'react'
+import { Database, Cloud, Server, Activity, Settings, LogOut, RefreshCw } from 'lucide-react'
 import { useServerStatus } from '../api'
 import type { Lang } from '../language'
 import { tr } from '../language'
@@ -64,6 +64,7 @@ export default function Layout({
   children: ReactNode
   onLogout?: () => void
 }) {
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const theme = makeTheme(isDark)
   const server = useServerStatus(30000)
   const uptime = server.data?.uptime
@@ -96,7 +97,40 @@ export default function Layout({
           <Database size={20} /> {tr(lang, 'appTitle')}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          {/* UPTIME CORNER BADGE - ONLY SHOW ON SERVER TAB */}
+            <button
+              disabled={isRefreshing}
+              onClick={async () => {
+                if (isRefreshing) return;
+                setIsRefreshing(true);
+                try {
+                  const t = localStorage.getItem('auth_token');
+                  const baseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+                    ? 'http://localhost:8080' 
+                    : window.location.origin;
+                  await fetch(`${baseUrl}/api/refresh`, { method: 'POST', headers: { Authorization: `Bearer ${t}` } });
+                  window.dispatchEvent(new Event('force-refresh'));
+                } catch (e) {
+                  console.error(e);
+                }
+                setTimeout(() => setIsRefreshing(false), 1500); // Visual feedback
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'white',
+                cursor: isRefreshing ? 'wait' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                opacity: isRefreshing ? 0.5 : 0.8,
+                transition: 'opacity 0.2s'
+              }}
+              onMouseEnter={(e) => { if(!isRefreshing) e.currentTarget.style.opacity = '1' }}
+              onMouseLeave={(e) => { if(!isRefreshing) e.currentTarget.style.opacity = '0.8' }}
+              title={lang === 'vi' ? 'Làm mới dữ liệu' : 'Refresh data'}
+            >
+              <RefreshCw size={18} style={{ transform: isRefreshing ? 'rotate(180deg)' : 'none', transition: 'transform 0.5s' }} />
+            </button>
+            {/* UPTIME CORNER BADGE - ONLY SHOW ON SERVER TAB */}
           {activeTab === 'server' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
               <span style={{ color: '#aaaaaa', textTransform: 'uppercase', fontSize: '10px', fontWeight: 'bold' }}>

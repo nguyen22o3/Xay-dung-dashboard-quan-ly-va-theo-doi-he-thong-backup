@@ -174,7 +174,13 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
   }
 
   return (
-    <div style={{ width: '100%' }}>
+    <div style={{ 
+      width: '100%', 
+      opacity: server.loading ? 0.5 : 1, 
+      pointerEvents: server.loading ? 'none' : 'auto', 
+      transition: 'opacity 0.2s',
+      filter: server.loading ? 'grayscale(0.3)' : 'none'
+    }}>
       <h2 style={{ margin: '0 0 15px 0', fontSize: '22px', fontWeight: 'normal', color: theme.titleColor }}>
         {tr(lang, 'homeDashboard')}
       </h2>

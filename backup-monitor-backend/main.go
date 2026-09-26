@@ -954,6 +954,13 @@ find /www/backup -type f -mtime -14 \( -name "*.tar.gz" -o -name "*.sql" -o -nam
 
 		fmt.Println("Backend đang chạy tại http://localhost:8080")
 		// API 10: Xoa nhat ky
+		r.POST("/api/refresh", func(c *gin.Context) {
+			cacheMu.Lock()
+			cache = make(map[string]cacheEntry)
+			cacheMu.Unlock()
+			c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Cache cleared"})
+		})
+
 		r.POST("/api/clear-log", func(c *gin.Context) {
 			var req struct {
 				Target string `json:"target"`

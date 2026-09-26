@@ -12,11 +12,14 @@ import type { Lang } from './language'
 
 export default function App() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth_token'))
-  const [activeTab, setActiveTab] = useState<TabKey>('server')
+  const [activeTab, setActiveTab] = useState<TabKey>(() => (localStorage.getItem('activeTab') as TabKey) || 'server')
   const [isDark, setIsDark] = useState<boolean>(() => localStorage.getItem('isDarkMode') === 'true')
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('language') === 'en' ? 'en' : 'vi'))
 
-  const onNavigate = (tab: TabKey) => setActiveTab(tab)
+  const onNavigate = (tab: TabKey) => {
+    setActiveTab(tab)
+    localStorage.setItem('activeTab', tab)
+  }
   
   const onToggleDark = () => {
     const next = !isDark

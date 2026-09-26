@@ -233,7 +233,13 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
   }
 
   return (
-    <div style={{ width: '100%' }}>
+    <div style={{ 
+      width: '100%', 
+      opacity: backup.loading ? 0.5 : 1, 
+      pointerEvents: backup.loading ? 'none' : 'auto', 
+      transition: 'opacity 0.2s',
+      filter: backup.loading ? 'grayscale(0.3)' : 'none'
+    }}>
       <h2 style={{ margin: '0 0 15px 0', fontSize: '22px', fontWeight: 'normal', color: theme.titleColor }}>
         {tr(lang, 'homeDashboard')}
       </h2>
