@@ -129,12 +129,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
   // Disk Storage Math
         
   // Drive Storage Math
-  const { dirs, about } = backupStatus
-  const folders = dirs ? dirs.split(',').filter(Boolean) : []
-  const finishedBackupsCount = folders.length
-  const hasSiteBackup = folders.some((f) => f.toLowerCase().includes('site'))
-  const hasDbBackup = folders.some((f) => f.toLowerCase().includes('database') || f.toLowerCase().includes('db'))
-  const hasPanelBackup = folders.some((f) => f.toLowerCase().includes('panel'))
+  const { about } = backupStatus
 
   const backupFolderSize = backupStatus.size?.bytes || 0
   const driveTotal = about?.total || 5 * 1024 * 1024 * 1024 * 1024
@@ -149,23 +144,28 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
     return `${year}-${month}-${day}`
   }
 
-  // PIE CHART DATA (DAILY BACKUPS) — thực tế từ activity hôm nay
-  const today = getLocalDateString(new Date())
+  // PIE CHART DATA — phân loại dung lượng theo loại (site/database/panel)
   const activities = backupStatus.activity ?? []
-  const todayActivity = activities.filter((a) => a.date === today)
-  const failedToday = todayActivity.filter((a) => a.status !== 'Successful').length
-
-  const totalPie = finishedBackupsCount + failedToday
+  const breakdownBytes = (backupStatus as any)?.todayBreakdownBytes || { site: 0, database: 0, panel: 0 }
+  const totalPieBytes = breakdownBytes.site + breakdownBytes.database + breakdownBytes.panel
+  
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
+  
   const pieData =
-    totalPie === 0
+    totalPieBytes === 0
       ? [{ name: 'idle', value: 1 }]
       : [
-          { name: tr(lang, 'successful'), value: finishedBackupsCount },
-          { name: tr(lang, 'failed'), value: failedToday },
+          { name: 'Site', value: breakdownBytes.site },
+          { name: 'Database', value: breakdownBytes.database },
+          { name: 'aaPanel', value: breakdownBytes.panel },
         ]
-  const PIE_COLORS = [theme.successText, theme.errorText, theme.gridLine]
-  const successPercent = totalPie > 0 ? Math.round((finishedBackupsCount / totalPie) * 100) : 0
-  const failedPercent = totalPie > 0 ? Math.round((failedToday / totalPie) * 100) : 0
+  const PIE_COLORS = ['#4caf50', '#2196f3', '#ff9800']
 
   // Parse History to get charts data
   let chartData: ChartDatum[] = []
@@ -290,15 +290,15 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                       alignItems: 'center',
                     }}
                   >
-                    <div style={{ flex: 1, position: 'relative', height: '100px' }}>
+                    <div style={{ flex: 1, position: 'relative', height: '130px' }}>
                       <ResponsiveContainer>
                         <PieChart>
                           <Pie
                             data={pieData}
                             cx="50%"
                             cy="50%"
-                            innerRadius="60%"
-                            outerRadius="90%"
+                            innerRadius="65%"
+                            outerRadius="85%"
                             paddingAngle={2}
                             dataKey="value"
                             stroke="none"
@@ -308,6 +308,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                             ))}
                           </Pie>
                           <Tooltip
+                            formatter={(value) => formatBytes(value as number)}
                             contentStyle={{
                               backgroundColor: theme.cardBg,
                               border: `1px solid ${theme.cardBorder}`,
@@ -316,65 +317,24 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                           />
                         </PieChart>
                       </ResponsiveContainer>
-                      <div
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          width: '100%',
-                          height: '100%',
-                          display: 'flex',
-                          justifyContent: 'center',
-                          alignItems: 'center',
-                          fontWeight: 'bold',
-                          fontSize: '18px',
-                        }}
-                      >
-                        {totalPie}
-                      </div>
+                      
                     </div>
                     <div style={{ flex: 1.5, fontSize: '12px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
-                        <div style={{ width: '40px', fontSize: '18px', textAlign: 'right', marginRight: '10px' }}>{successPercent}%</div>
-                        <div style={{ flex: 1, height: '4px', backgroundColor: theme.successText, marginRight: '10px' }} />
-                        <div style={{ width: '80px' }}>
-                          {finishedBackupsCount} {tr(lang, 'successful')}
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
-                        <div style={{ width: '40px', fontSize: '18px', textAlign: 'right', marginRight: '10px' }}>{failedPercent}%</div>
-                        <div style={{ flex: 1, height: '4px', backgroundColor: theme.errorText, marginRight: '10px' }} />
-                        <div style={{ width: '80px' }}>
-                          {failedToday} {tr(lang, 'failed')}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-around',
-                          marginTop: '10px',
-                          paddingTop: '6px',
-                          borderTop: `1px solid ${theme.gridLine}`,
-                          fontSize: '11px',
-                          color: theme.textSecondary,
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                          <span>Site:</span>
-                          <strong style={{ color: theme.titleColor, fontSize: '12px' }}>{hasSiteBackup ? 1 : 0}</strong>
-                        </div>
-                        <div style={{ width: '1px', height: '10px', backgroundColor: theme.gridLine }} />
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            <span>Database:</span>
-                            <strong style={{ color: theme.titleColor, fontSize: '12px' }}>{hasDbBackup ? 1 : 0}</strong>
+                      {[
+                        { label: 'Site', value: breakdownBytes.site, color: '#4caf50' },
+                        { label: 'Database', value: breakdownBytes.database, color: '#2196f3' },
+                        { label: 'aaPanel', value: breakdownBytes.panel, color: '#ff9800' },
+                      ].map((item) => {
+                        const pct = totalPieBytes > 0 ? Math.round((item.value / totalPieBytes) * 100) : 0
+                        return (
+                          <div key={item.label} style={{ display: 'flex', alignItems: 'center', marginBottom: '12px' }}>
+                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: item.color, marginRight: '8px', flexShrink: 0 }} />
+                            <div style={{ flex: 1 }}>{item.label}</div>
+                            <div style={{ marginRight: '10px', color: theme.textSecondary }}>{pct}%</div>
+                            <strong style={{ color: theme.textPrimary }}>{formatBytes(item.value)}</strong>
                           </div>
-                          <div style={{ width: '1px', height: '10px', backgroundColor: theme.gridLine }} />
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            <span>aaPanel:</span>
-                            <strong style={{ color: theme.titleColor, fontSize: '12px' }}>{hasPanelBackup ? 1 : 0}</strong>
-                          </div>
-                      </div>
+                        )
+                      })}
                     </div>
                   </div>
                 </div>
@@ -578,7 +538,6 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                             cursor={{ fill: theme.gridLine }}
                           />
                           <Bar dataKey="success" stackId="a" fill={theme.successText} barSize={20} name={tr(lang, 'filesCount')} />
-                          <Bar dataKey="failed" stackId="a" fill={theme.errorText} barSize={20} name={tr(lang, 'failed')} />
                           <Bar dataKey="noBackup" stackId="a" fill="#555555" barSize={20} name={tr(lang, 'noBackups')} />
                         </BarChart>
                       </ResponsiveContainer>

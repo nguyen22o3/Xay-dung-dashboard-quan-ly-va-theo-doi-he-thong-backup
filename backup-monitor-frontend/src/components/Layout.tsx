@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Database, Cloud, Server, Activity, Settings } from 'lucide-react'
+import { Database, Cloud, Server, Activity, Settings, LogOut } from 'lucide-react'
 import { useServerStatus } from '../api'
 import type { Lang } from '../language'
 import { tr } from '../language'
@@ -55,12 +55,14 @@ export default function Layout({
   isDark,
   lang,
   children,
+  onLogout,
 }: {
   activeTab: TabKey
   onNavigate: (tab: TabKey) => void
   isDark: boolean
   lang: Lang
   children: ReactNode
+  onLogout?: () => void
 }) {
   const theme = makeTheme(isDark)
   const server = useServerStatus(30000)
@@ -115,19 +117,52 @@ export default function Layout({
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* LEFT SIDEBAR */}
-        <div style={{ width: '220px', backgroundColor: theme.sidebarBg, display: 'flex', flexDirection: 'column', overflowY: 'auto', flexShrink: 0 }}>
-          <SidebarSection title={tr(lang, 'dashboardSection')} />
-          <SidebarItem icon={Server} text={lang === 'vi' ? 'Máy chủ' : 'Server'} tabName="server" activeTab={activeTab} onNavigate={onNavigate} />
-          <SidebarItem icon={Cloud} text={tr(lang, 'home')} tabName="home" activeTab={activeTab} onNavigate={onNavigate} />
-          
-          <SidebarSection title={tr(lang, 'manage')} />
-          <SidebarItem icon={Settings} text={tr(lang, 'settings')} tabName="settings" activeTab={activeTab} onNavigate={onNavigate} />
+        <div style={{ width: '220px', backgroundColor: theme.sidebarBg, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            <SidebarSection title={tr(lang, 'dashboardSection')} />
+            <SidebarItem icon={Server} text={lang === 'vi' ? 'Máy chủ' : 'Server'} tabName="server" activeTab={activeTab} onNavigate={onNavigate} />
+            <SidebarItem icon={Cloud} text={tr(lang, 'home')} tabName="home" activeTab={activeTab} onNavigate={onNavigate} />
+            
+            <SidebarSection title={tr(lang, 'manage')} />
+            <SidebarItem icon={Settings} text={tr(lang, 'settings')} tabName="settings" activeTab={activeTab} onNavigate={onNavigate} />
 
-          <SidebarSection title={tr(lang, 'backup')} />
-          <SidebarItem icon={Activity} text={tr(lang, 'activity')} tabName="activity" activeTab={activeTab} onNavigate={onNavigate} />
+            <SidebarSection title={tr(lang, 'backup')} />
+            <SidebarItem icon={Activity} text={tr(lang, 'activity')} tabName="activity" activeTab={activeTab} onNavigate={onNavigate} />
 
-          <SidebarSection title={tr(lang, 'recover')} />
-          <SidebarItem icon={Database} text={tr(lang, 'available')} tabName="available" activeTab={activeTab} onNavigate={onNavigate} />
+            <SidebarSection title={tr(lang, 'recover')} />
+            <SidebarItem icon={Database} text={tr(lang, 'available')} tabName="available" activeTab={activeTab} onNavigate={onNavigate} />
+          </div>
+
+          {onLogout && (
+            <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+              <div
+                onClick={onLogout}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  color: '#ff6b6b',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  padding: '9px 14px',
+                  borderRadius: '6px',
+                  backgroundColor: 'rgba(255, 107, 107, 0.08)',
+                  transition: 'all 0.15s',
+                  userSelect: 'none',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'rgba(255, 107, 107, 0.16)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'rgba(255, 107, 107, 0.08)'
+                }}
+              >
+                <LogOut size={16} />
+                <span>{lang === 'vi' ? 'Đăng xuất' : 'Logout'}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* MAIN CONTENT */}

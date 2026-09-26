@@ -13,6 +13,27 @@ export const API_BASE: string = import.meta.env.VITE_API_BASE || 'http://localho
 
 const client = axios.create({ baseURL: API_BASE, timeout: 200000 })
 
+// Tự động đính kèm token vào mọi request
+client.interceptors.request.use((config) => {
+  const token = localStorage.getItem('auth_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// Nếu token hết hạn hoặc không hợp lệ, tự động đăng xuất
+client.interceptors.response.use(
+  (res) => res,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('auth_token')
+      window.location.reload()
+    }
+    return Promise.reject(error)
+  }
+)
+
 export async function fetchServerStatus(): Promise<ServerStatus> {
   const { data } = await client.get<ServerStatus>('/api/server-status')
   return data

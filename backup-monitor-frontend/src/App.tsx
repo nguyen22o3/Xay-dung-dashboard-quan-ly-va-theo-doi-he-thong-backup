@@ -5,11 +5,13 @@ import Settings from './pages/Settings'
 import Activity from './pages/Activity'
 import Available from './pages/Available'
 import ServerPage from './pages/Server'
+import Login from './pages/Login'
 
 import type { TabKey } from './types'
 import type { Lang } from './language'
 
 export default function App() {
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth_token'))
   const [activeTab, setActiveTab] = useState<TabKey>('server')
   const [isDark, setIsDark] = useState<boolean>(() => localStorage.getItem('isDarkMode') === 'true')
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('language') === 'en' ? 'en' : 'vi'))
@@ -28,12 +30,23 @@ export default function App() {
     localStorage.setItem('language', next)
   }
 
+  const onLogout = () => {
+    localStorage.removeItem('auth_token')
+    setToken(null)
+  }
+
+  // Chưa đăng nhập → hiển thị trang Login
+  if (!token) {
+    return <Login isDark={isDark} onLogin={(t) => setToken(t)} />
+  }
+
   return (
     <Layout
       activeTab={activeTab}
       onNavigate={onNavigate}
       isDark={isDark}
       lang={lang}
+      onLogout={onLogout}
     >
       <div className="animate-fade-in" style={{ height: '100%' }}>
         <div style={{ display: activeTab === 'home' ? 'block' : 'none', height: '100%' }}>
