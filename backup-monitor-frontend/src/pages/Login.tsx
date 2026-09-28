@@ -64,9 +64,9 @@ export default function Login({ isDark, onLogin }: LoginProps) {
           }}>
             🛡️
           </div>
-          <h1 style={{ color: textPrimary, fontSize: 22, fontWeight: 700, margin: 0 }}>
-            aaPanel Backup ER
-          </h1>
+          {/* <h1 style={{ color: textPrimary, fontSize: 22, fontWeight: 700, margin: 0 }}>
+            aaPanel
+          </h1> */}
           <p style={{ color: textSecondary, fontSize: 14, marginTop: 6 }}>
             Đăng nhập để tiếp tục
           </p>

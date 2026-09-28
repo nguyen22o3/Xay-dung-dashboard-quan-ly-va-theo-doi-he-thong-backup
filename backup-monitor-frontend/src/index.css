@@ -113,6 +113,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .app-search-results button:hover { background: var(--app-soft-accent); color: var(--app-accent); }
 .app-search-results > span { display: block; padding: 10px; color: var(--app-muted); font-size: 12px; }
 .app-icon-button { width: 37px; height: 37px; flex: 0 0 37px; }
+.app-user-card .app-logout-button { width: auto; height: 32px; min-width: 0; flex: 0 0 auto; }
 .app-connection { display: flex; align-items: center; gap: 8px; color: var(--app-muted); font-size: 12px; white-space: nowrap; }
 .app-connection i, .overview-live-dot { width: 7px; height: 7px; display: inline-block; border-radius: 50%; background: #00bd82; box-shadow: 0 0 0 4px rgba(0,189,130,.12); }
 .app-connection.is-offline i { background: #f97373; box-shadow: 0 0 0 4px rgba(249,115,115,.12); }
