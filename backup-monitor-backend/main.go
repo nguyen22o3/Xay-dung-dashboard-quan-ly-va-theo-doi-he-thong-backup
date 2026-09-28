@@ -799,11 +799,24 @@ exec 9>/run/backup-monitor-inotify.lock
 flock -n 9 || exit 0
 inotifywait -m -r -e delete --format '%%w%%f' /www/backup/ 2>/dev/null | while IFS= read -r FILE
 do
+    FILE_DATE=$(echo "$FILE" | grep -oP '20\d{2}-?\d{2}-?\d{2}' | head -1)
+    if [ ! -z "$FILE_DATE" ]; then
+        NORMALIZED_DATE=$(date -d "${FILE_DATE//-/}" +%%Y-%%m-%%d 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            FILE_EPOCH=$(date -d "$NORMALIZED_DATE" +%%s)
+            TODAY_EPOCH=$(date +%%s)
+            DIFF_DAYS=$(( (TODAY_EPOCH - FILE_EPOCH) / 86400 ))
+            if [ "$DIFF_DAYS" -ge %d ]; then
+                continue
+            fi
+        fi
+    fi
+
     MSG="BAO DONG KHAN CAP: File backup [$FILE] vua bi XOA khoi may chu! Thoi gian: $(date)"
     if [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$MSG\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
     if [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$MSG" >/dev/null; fi
     if [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [URGENT] File Deleted\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$MSG" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
-done`, variables)
+done`, variables, settings.Threshold)
 
 	return integrityScript, realtimeScript
 }
@@ -906,7 +919,9 @@ func setupRouter(cfg AppConfig) *gin.Engine {
 	auth.Use(authMiddleware(cfg.JWTSecret))
 	{
 		auth.POST("/download-ticket", func(c *gin.Context) {
-			var req struct { Path string `json:"path"` }
+			var req struct {
+				Path string `json:"path"`
+			}
 			if err := c.ShouldBindJSON(&req); err != nil || !validSnapshotPath(req.Path) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Đường dẫn không hợp lệ"})
 				return
@@ -938,9 +953,13 @@ LOCAL_CRON_TIMES=$(crontab -l 2>/dev/null | grep "/www/server/cron" | while read
 
 LOCAL_BACKUP_DIR="/www/backup"
 if [ -d "$LOCAL_BACKUP_DIR" ]; then
-  LOCAL_SIZE=$(du -sh "$LOCAL_BACKUP_DIR" 2>/dev/null | awk '{print $1}')
-  LOCAL_COUNT=$(find "$LOCAL_BACKUP_DIR" -type f 2>/dev/null | wc -l)
-  LOCAL_LATEST=$(find "$LOCAL_BACKUP_DIR" -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | awk '{print $2}')
+  # Only count backup artifacts belonging to websites, databases, or aaPanel.
+  # Ignore temporary files and unrelated content kept in /www/backup.
+  LOCAL_FILES=$(find "$LOCAL_BACKUP_DIR" -type f \( -path "$LOCAL_BACKUP_DIR/site/*" -o -path "$LOCAL_BACKUP_DIR/database/*" -o -path "$LOCAL_BACKUP_DIR/panel/*" \) -printf '%p\n' 2>/dev/null || true)
+  LOCAL_COUNT=$(printf '%s\n' "$LOCAL_FILES" | sed '/^$/d' | wc -l)
+  LOCAL_SIZE=$(printf '%s\n' "$LOCAL_FILES" | sed '/^$/d' | xargs -r du -ch 2>/dev/null | tail -1 | awk '{print $1}')
+  LOCAL_SIZE=${LOCAL_SIZE:-0}
+  LOCAL_LATEST=$(printf '%s\n' "$LOCAL_FILES" | sed '/^$/d' | xargs -r -n1 stat -c '%Y %n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
   LOCAL_LATEST_DATE=$(stat -c '%y' "$LOCAL_LATEST" 2>/dev/null | cut -d' ' -f1)
   LOCAL_LATEST_NAME=$(basename "$LOCAL_LATEST" 2>/dev/null)
 else

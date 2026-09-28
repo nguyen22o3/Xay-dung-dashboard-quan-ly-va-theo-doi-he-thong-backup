@@ -92,7 +92,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
 
 
   return (
-    <div className="animate-fade-in" style={{ padding: '20px' }}>
+    <div className="animate-fade-in legacy-page" style={{ padding: '20px' }}>
       <h2 style={{ margin: '0 0 20px 0', fontSize: '20px', fontWeight: '500', color: isDark ? t.titleColor : '#1a4175' }}>
         {isVi ? 'Hoạt động sao lưu' : 'Backup activity'}
       </h2>
@@ -104,7 +104,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
       )}
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-        <button
+        <button className={`legacy-tab-button ${activeTab === 'server' ? 'is-active' : ''}`}
           onClick={() => setActiveTab('server')}
           style={{
             backgroundColor: activeTab === 'server' ? '#3b75af' : (isDark ? '#333' : '#e0e0e0'),
@@ -119,7 +119,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
         >
           {isVi ? 'Trên máy chủ' : 'On Server'}
         </button>
-        <button
+        <button className={`legacy-tab-button ${activeTab === 'drive' ? 'is-active' : ''}`}
           onClick={() => setActiveTab('drive')}
           style={{
             backgroundColor: activeTab === 'drive' ? '#3b75af' : (isDark ? '#333' : '#e0e0e0'),
@@ -135,7 +135,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
           {isVi ? 'Trên Google Drive' : 'On Google Drive'}
         </button>
         <div style={{ flex: 1 }} />
-        <button
+        <button className="legacy-danger-button"
           onClick={handleClear}
           disabled={isClearing}
           style={{

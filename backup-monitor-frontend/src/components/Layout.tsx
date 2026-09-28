@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react'
-import { Activity, ArrowUpRight, Archive, Cloud, Database, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Server, Settings, ShieldCheck, Sun, X } from 'lucide-react'
+import { Activity, ArrowUpRight, Archive, Cloud, Database, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Server, Settings, Sun, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { apiErrorMessage, refreshData, useServerStatus } from '../api'
 import type { Lang } from '../language'
@@ -95,7 +95,7 @@ export default function Layout({ activeTab, onNavigate, isDark, onToggleDark, la
       <aside className={`app-sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
         <div className="app-brand">
           <span className="app-brand-mark"><Database size={22} strokeWidth={2.2} /></span>
-          <div className="app-brand-copy"><strong>Backup ER</strong><span>CONTROL CENTER</span></div>
+          <div className="app-brand-copy"><strong>Backup ER</strong></div>
           <button className="app-collapse-button" type="button" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setCollapsed(!collapsed)}>
             {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </button>
@@ -103,18 +103,15 @@ export default function Layout({ activeTab, onNavigate, isDark, onToggleDark, la
         </div>
 
         <nav className="app-sidebar-nav" aria-label={vi ? 'Điều hướng chính' : 'Main navigation'}>
-          <div className="app-nav-section">{vi ? 'TỔNG QUAN' : 'OVERVIEW'}</div>
+          <div className="app-nav-section">{vi ? 'DASHBOARD' : 'DASHBOARD'}</div>
           {renderItems(overviewItems)}
           <div className="app-nav-section app-nav-section--spaced">{vi ? 'QUẢN LÝ' : 'MANAGEMENT'}</div>
           {renderItems(managementItems)}
         </nav>
 
         <div className="app-sidebar-bottom">
-          <div className="app-source-badge"><ShieldCheck size={17} /><span>{vi ? 'Server + Drive đang theo dõi' : 'Monitoring Server + Drive'}</span></div>
           <div className="app-user-card">
-            <span className="app-avatar">AD</span>
-            <div className="app-user-details"><strong>Administrator</strong><span>Backup Monitor</span></div>
-            {onLogout && <button type="button" className="app-icon-button app-logout-button" onClick={onLogout} title={vi ? 'Đăng xuất' : 'Logout'} aria-label={vi ? 'Đăng xuất' : 'Logout'}><LogOut size={18} /></button>}
+            {onLogout && <button type="button" className="app-icon-button app-logout-button" onClick={onLogout} title={vi ? 'Đăng xuất' : 'Logout'} aria-label={vi ? 'Đăng xuất' : 'Logout'}><LogOut className="app-logout-icon" size={18} aria-hidden="true" /><span>{vi ? 'Đăng xuất' : 'Logout'}</span></button>}
           </div>
         </div>
       </aside>
@@ -143,7 +140,6 @@ export default function Layout({ activeTab, onNavigate, isDark, onToggleDark, la
             <button className="app-topbar-primary" type="button" onClick={() => navigate('available')}><Archive size={17} />{vi ? 'Bản sao lưu' : 'Backups'}</button>
             <button className={`app-icon-button ${isRefreshing ? 'is-spinning' : ''}`} type="button" onClick={refresh} disabled={isRefreshing} title={vi ? 'Làm mới dữ liệu' : 'Refresh data'} aria-label={vi ? 'Làm mới dữ liệu' : 'Refresh data'}><RefreshCw size={19} /></button>
             <button className="app-icon-button" type="button" onClick={onToggleDark} title={isDark ? (vi ? 'Giao diện sáng' : 'Light theme') : (vi ? 'Giao diện tối' : 'Dark theme')} aria-label={isDark ? (vi ? 'Giao diện sáng' : 'Light theme') : (vi ? 'Giao diện tối' : 'Dark theme')}>{isDark ? <Sun size={19} /> : <Moon size={19} />}</button>
-            <span className="app-topbar-avatar">AD</span>
           </div>
         </header>
         {refreshError && <div className="app-global-error" role="alert">{refreshError}</div>}

@@ -39,12 +39,12 @@ export default function Available({ isDark, lang }: { isDark: boolean; lang: Lan
   }
 
   return (
-    <div className="animate-fade-in" style={{ padding: '20px' }}>
+    <div className="animate-fade-in legacy-page available-page" style={{ padding: '20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '8px' }}>
         <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '500', color: t.titleColor }}>
           {isVi ? 'Bản sao lưu có sẵn' : 'Available Backups'}
         </h2>
-        <button
+        <button className="legacy-secondary-button"
           type="button"
           onClick={snapshots.reload}
           disabled={snapshots.loading}

@@ -73,8 +73,7 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
     <div className="dashboard-overview">
       <div className="overview-heading">
         <div>
-          <div className="overview-eyebrow"><span className="overview-live-dot" /> BACKUP CONTROL CENTER</div>
-          <h1>{vi ? 'Tổng quan hệ thống' : 'System overview'}</h1>
+          <h1>Dashboard</h1>
           <p>{vi ? 'Theo dõi tình trạng sao lưu trên máy chủ và Google Drive.' : 'Monitor backups across your server and Google Drive.'}</p>
         </div>
         <button className="overview-secondary-action" type="button" onClick={() => onNavigate('available')}>
@@ -92,7 +91,7 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
       <div className="overview-kpi-grid">
         <KpiCard label={vi ? 'Tệp trên Google Drive' : 'Files on Google Drive'} value={backupData?.size?.count?.toLocaleString() ?? '—'} detail={vi ? 'Tổng số tệp sao lưu' : 'Total backup files'} tone="green" icon={Cloud} data={chartData.map((item) => item.files)} />
         <KpiCard label={vi ? 'Dung lượng sao lưu' : 'Backup storage'} value={backupData?.size?.bytes != null ? formatBytes(backupData.size.bytes) : '—'} detail="Google Drive / Backup" tone="blue" icon={DatabaseBackup} data={chartData.map((item) => item.bytes)} />
-        <KpiCard label={vi ? 'Bản sao lưu cục bộ' : 'Local backup files'} value={serverData?.local_backup?.count?.toLocaleString() ?? '—'} detail={serverData?.local_backup?.size ? `${vi ? 'Dung lượng' : 'Storage'} ${serverData.local_backup.size}` : (vi ? 'Trên máy chủ' : 'On server')} tone="amber" icon={HardDrive} />
+        <KpiCard label={vi ? 'File backup cục bộ' : 'Local backup files'} value={serverData?.local_backup?.count?.toLocaleString() ?? '—'} detail={serverData?.local_backup?.size ? `${vi ? 'Dung lượng' : 'Storage'} ${serverData.local_backup.size}` : (vi ? 'Trên máy chủ' : 'On server')} tone="amber" icon={HardDrive} />
         <KpiCard label={vi ? 'Lịch sao lưu' : 'Scheduled jobs'} value={serverData?.crons?.toLocaleString() ?? '—'} detail={latestDate ? `${vi ? 'Có backup ngày' : 'Latest backup'} ${latestDate}` : (vi ? 'Chưa có lịch sử trên Drive' : 'No Drive history yet')} tone="purple" icon={CalendarClock} />
       </div>
 

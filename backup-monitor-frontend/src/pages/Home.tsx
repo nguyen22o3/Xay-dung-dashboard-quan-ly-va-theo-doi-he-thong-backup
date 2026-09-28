@@ -233,7 +233,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
   }
 
   return (
-    <div style={{ width: '100%' }}>
+    <div className="legacy-page" style={{ width: '100%' }}>
       <h2 style={{ margin: '0 0 15px 0', fontSize: '22px', fontWeight: 'normal', color: theme.titleColor }}>
         {tr(lang, 'homeDashboard')}
       </h2>

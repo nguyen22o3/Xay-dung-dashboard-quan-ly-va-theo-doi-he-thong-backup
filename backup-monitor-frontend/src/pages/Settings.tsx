@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, CheckCircle2, ChevronDown, CircleAlert, Cloud, Hash, Languages, LockKeyhole, Mail, MessageCircle, Moon, Save, ShieldCheck, Sun } from 'lucide-react'
+import { Check, CheckCircle2, ChevronDown, CircleAlert, Cloud, Hash, Languages, Mail, MessageCircle, Moon, Save, ShieldCheck, Sun } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { apiErrorMessage, fetchAlertSettings, saveAlertSettings } from '../api'
 import type { Lang } from '../language'
@@ -83,10 +83,10 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
     : example
 
   const saveFooter = <div className="apex-settings-footer">
-    <div className={`apex-settings-feedback ${messageType === 'error' ? 'is-error' : ''}`} role={messageType === 'error' ? 'alert' : 'status'}>
-      {message ? (messageType === 'error' ? <CircleAlert size={16} /> : <CheckCircle2 size={16} />) : <LockKeyhole size={16} />}
-      <span>{message || (vi ? 'Giá trị bí mật không hiển thị lại sau khi lưu.' : 'Saved secrets are never shown again.')}</span>
-    </div>
+    {message && <div className={`apex-settings-feedback ${messageType === 'error' ? 'is-error' : ''}`} role={messageType === 'error' ? 'alert' : 'status'}>
+      {messageType === 'error' ? <CircleAlert size={16} /> : <CheckCircle2 size={16} />}
+      <span>{message}</span>
+    </div>}
     <button className="apex-settings-save" type="button" onClick={save} disabled={loading || saving}><Save size={16} />{saving ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu thay đổi' : 'Save changes')}</button>
   </div>
 
@@ -139,13 +139,11 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
       {saveFooter}
     </section>}
 
-    {section === 'appearance' && <section className="apex-settings-panel" role="tabpanel" id="settings-panel-appearance" aria-labelledby="settings-tab-appearance">
-      <div className="apex-settings-panel-heading"><h2>{vi ? 'Giao diện' : 'Appearance'}</h2><p>{vi ? 'Cá nhân hóa dashboard. Thay đổi được áp dụng ngay.' : 'Personalize your dashboard. Changes apply immediately.'}</p></div>
+    {section === 'appearance' && <section className="apex-settings-panel apex-settings-panel--appearance" role="tabpanel" id="settings-panel-appearance" aria-labelledby="settings-tab-appearance">
       <div className="apex-settings-list">
         <div className="apex-settings-row"><span className="apex-settings-row-icon"><Languages size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Ngôn ngữ' : 'Language'}</strong><small>{vi ? 'Ngôn ngữ hiển thị trên dashboard' : 'Dashboard display language'}</small></span><div className="apex-settings-segmented" role="group" aria-label={vi ? 'Ngôn ngữ' : 'Language'}><button type="button" className={lang === 'vi' ? 'is-selected' : ''} aria-pressed={lang === 'vi'} onClick={() => { if (lang !== 'vi') onToggleLang() }}>Tiếng Việt</button><button type="button" className={lang === 'en' ? 'is-selected' : ''} aria-pressed={lang === 'en'} onClick={() => { if (lang !== 'en') onToggleLang() }}>English</button></div></div>
         <div className="apex-settings-row"><span className="apex-settings-row-icon">{isDark ? <Moon size={19} /> : <Sun size={19} />}</span><span className="apex-settings-row-copy"><strong>{vi ? 'Chủ đề' : 'Theme'}</strong><small>{vi ? 'Chuyển giữa giao diện sáng và tối' : 'Switch between light and dark appearance'}</small></span><div className="apex-settings-segmented" role="group" aria-label={vi ? 'Chủ đề' : 'Theme'}><button type="button" className={!isDark ? 'is-selected' : ''} aria-pressed={!isDark} onClick={() => { if (isDark) onToggleDark() }}><Sun size={14} />{vi ? 'Sáng' : 'Light'}</button><button type="button" className={isDark ? 'is-selected' : ''} aria-pressed={isDark} onClick={() => { if (!isDark) onToggleDark() }}><Moon size={14} />{vi ? 'Tối' : 'Dark'}</button></div></div>
       </div>
-      <div className="apex-settings-footer apex-settings-footer--note"><CheckCircle2 size={16} /><span>{vi ? 'Tùy chọn giao diện được lưu tự động trên trình duyệt này.' : 'Appearance preferences are saved automatically in this browser.'}</span></div>
     </section>}
   </div>
 }
