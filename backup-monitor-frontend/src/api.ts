@@ -85,9 +85,40 @@ export async function runJobNow(jobId: BackupJobId): Promise<void> {
   await client.post('/api/run-job', { jobId })
 }
 
+let snapshotCache: { token: string; data: SnapshotFile[] } | null = null
+let snapshotInFlight: { token: string; promise: Promise<SnapshotFile[]> } | null = null
+
+function cachedSnapshots(): SnapshotFile[] | null {
+  const token = localStorage.getItem('auth_token')
+  return token && snapshotCache?.token === token ? snapshotCache.data : null
+}
+
 export async function fetchSnapshots(): Promise<SnapshotFile[]> {
-  const { data } = await client.get<SnapshotFile[]>('/api/recovery-snapshots')
-  return data
+  const token = localStorage.getItem('auth_token')
+  if (token && snapshotInFlight?.token === token) {
+    return snapshotInFlight.promise
+  }
+  const request = client.get<SnapshotFile[]>('/api/recovery-snapshots').then(({ data }) => {
+    if (token && token === localStorage.getItem('auth_token')) {
+      snapshotCache = { token, data }
+    }
+    return data
+  })
+  if (token) snapshotInFlight = { token, promise: request }
+  try {
+    return await request
+  } finally {
+    if (snapshotInFlight?.promise === request) snapshotInFlight = null
+  }
+}
+
+export function prefetchSnapshots(): void {
+  if (!cachedSnapshots()) void fetchSnapshots().catch(() => {})
+}
+
+export function clearSnapshotsCache(): void {
+  snapshotCache = null
+  snapshotInFlight = null
 }
 
 export async function fetchLocalSnapshots(): Promise<SnapshotFile[]> {
@@ -164,8 +195,8 @@ export interface PollState<T> {
   reload: () => void
 }
 
-function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number): PollState<T> {
-  const [data, setData] = useState<T | null>(null)
+function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, initialData: () => T | null = () => null): PollState<T> {
+  const [data, setData] = useState<T | null>(initialData)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [tick, setTick] = useState(0)
@@ -232,7 +263,7 @@ export function useConfig(interval = 15000): PollState<AppConfig> {
 }
 
 export function useSnapshots(interval = 30000): PollState<SnapshotFile[]> {
-  return usePoll(fetchSnapshots, interval)
+  return usePoll(fetchSnapshots, interval, cachedSnapshots)
 }
 
 export function useLocalSnapshots(interval = 30000): PollState<SnapshotFile[]> {

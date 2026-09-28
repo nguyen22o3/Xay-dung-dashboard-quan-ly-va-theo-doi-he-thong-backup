@@ -7,6 +7,7 @@ import Available from './pages/Available'
 import ServerPage from './pages/Server'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import { clearSnapshotsCache, prefetchSnapshots } from './api'
 
 import type { TabKey } from './types'
 import type { Lang } from './language'
@@ -23,6 +24,12 @@ export default function App() {
     localStorage.setItem('dashboardLayoutVersion', 'apex-v1')
     localStorage.setItem('activeTab', activeTab)
   }, [activeTab])
+
+  useEffect(() => {
+    if (!token) return
+    const timer = window.setTimeout(prefetchSnapshots, 1500)
+    return () => window.clearTimeout(timer)
+  }, [token])
 
   const onNavigate = (tab: TabKey) => {
     setActiveTab(tab)
@@ -42,6 +49,7 @@ export default function App() {
   }
 
   const onLogout = () => {
+    clearSnapshotsCache()
     localStorage.removeItem('auth_token')
     setToken(null)
   }

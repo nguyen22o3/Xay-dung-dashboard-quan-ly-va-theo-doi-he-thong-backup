@@ -95,7 +95,6 @@ export default function Layout({ activeTab, onNavigate, isDark, onToggleDark, la
       <aside className={`app-sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
         <div className="app-brand">
           <span className="app-brand-mark"><Database size={22} strokeWidth={2.2} /></span>
-          <div className="app-brand-copy"><strong>aaPanel</strong></div>
           <button className="app-collapse-button" type="button" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setCollapsed(!collapsed)}>
             {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </button>

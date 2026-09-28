@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +66,40 @@ type loginRateLimiter struct {
 type downloadTicket struct {
 	path      string
 	expiresAt time.Time
+}
+
+type snapshotFile struct {
+	Path     string `json:"path"`
+	Date     string `json:"date"`
+	Category string `json:"category"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Modified string `json:"modified"`
+}
+
+func parseSnapshotList(output string) []snapshotFile {
+	snapshots := []snapshotFile{}
+	for _, line := range strings.Split(output, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), ";", 3)
+		if len(parts) != 3 || parts[0] == "" || parts[1] == "-1" {
+			continue
+		}
+		size, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		path := strings.TrimSuffix(parts[0], "/")
+		segments := strings.Split(path, "/")
+		category := "root"
+		if len(segments) >= 2 {
+			category = segments[1]
+		}
+		snapshots = append(snapshots, snapshotFile{
+			Path: path, Date: segments[0], Category: category,
+			Name: segments[len(segments)-1], Size: size, Modified: parts[2],
+		})
+	}
+	return snapshots
 }
 
 var downloadTickets = struct {
@@ -526,28 +561,34 @@ func getSSHClient() (*ssh.Client, error) {
 	return sshClient, nil
 }
 
-// Hàm thực thi lệnh SSH trên máy ảo (tái sử dụng kết nối pool, timeout 60s)
-func executeSSHCommand(command string) (string, error) {
+func newSSHSession() (*ssh.Session, error) {
 	client, err := getSSHClient()
 	if err != nil {
-		return "", err
+		return nil, err
+	}
+	session, err := client.NewSession()
+	if err == nil {
+		return session, nil
 	}
 
-	session, err := client.NewSession()
-	if err != nil {
-		// Kết nối có thể bị drop, xóa pool và thử lại 1 lần
-		sshClientMu.Lock()
+	// The pooled connection may have closed between the health check and NewSession.
+	sshClientMu.Lock()
+	if sshClient == client {
 		sshClient = nil
-		sshClientMu.Unlock()
+	}
+	sshClientMu.Unlock()
+	client, err = getSSHClient()
+	if err != nil {
+		return nil, err
+	}
+	return client.NewSession()
+}
 
-		client, err = getSSHClient()
-		if err != nil {
-			return "", err
-		}
-		session, err = client.NewSession()
-		if err != nil {
-			return "", err
-		}
+// Hàm thực thi lệnh SSH trên máy ảo (tái sử dụng kết nối pool, timeout 60s)
+func executeSSHCommand(command string) (string, error) {
+	session, err := newSSHSession()
+	if err != nil {
+		return "", err
 	}
 	defer session.Close()
 
@@ -1360,18 +1401,7 @@ fi
 
 		// API 9: Liệt kê các ảnh chụp sao lưu trên Google Drive
 		auth.GET("/recovery-snapshots", func(c *gin.Context) {
-			cmds := `
-/usr/bin/rclone lsf -R --format "pst" gdrive:Backup --config /root/.config/rclone/rclone.conf --fast-list --timeout 15s --contimeout 5s 2>/dev/null | while IFS=';' read -r p s t; do
-  [ -z "$p" ] && continue
-  if [ "$s" != "-1" ]; then
-    DATE=$(echo "$p" | cut -d/ -f1)
-    SEG=$(echo "$p" | awk -F'/' '{print NF}')
-    if [ "$SEG" -ge 2 ]; then CAT=$(echo "$p" | cut -d/ -f2); else CAT="root"; fi
-    NAME=$(basename "$p")
-    printf '%s|%s|%s|%s|%s|%s\n' "$p" "$DATE" "$CAT" "$NAME" "$s" "$t"
-  fi
-done
-`
+			cmds := `/usr/bin/rclone lsf -R --format "pst" gdrive:Backup --config /root/.config/rclone/rclone.conf --fast-list --timeout 15s --contimeout 5s`
 			output, err := cachedGet("recovery-snapshots", 30*time.Second, func() ([]byte, error) {
 				out, e := executeSSHCommand(cmds)
 				return []byte(out), e
@@ -1381,37 +1411,7 @@ done
 				return
 			}
 
-			lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-			type snap struct {
-				Path     string `json:"path"`
-				Date     string `json:"date"`
-				Category string `json:"category"`
-				Name     string `json:"name"`
-				Size     int64  `json:"size"`
-				Modified string `json:"modified"`
-			}
-			snaps := []snap{}
-			for _, line := range lines {
-				parts := strings.Split(line, "|")
-				if len(parts) < 5 {
-					continue
-				}
-				var size int64
-				fmt.Sscanf(parts[4], "%d", &size)
-				modified := ""
-				if len(parts) >= 6 {
-					modified = parts[5]
-				}
-				snaps = append(snaps, snap{
-					Path:     strings.TrimSpace(parts[0]),
-					Date:     parts[1],
-					Category: parts[2],
-					Name:     parts[3],
-					Size:     size,
-					Modified: modified,
-				})
-			}
-			c.JSON(http.StatusOK, snaps)
+			c.JSON(http.StatusOK, parseSnapshotList(string(output)))
 		})
 
 		// API 10: Liệt kê các file backup cục bộ
@@ -1476,16 +1476,9 @@ find /www/backup -type f -mtime -14 \( -name "*.tar.gz" -o -name "*.sql" -o -nam
 				return
 			}
 
-			client, err := dialSSH()
+			session, err := newSSHSession()
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể kết nối SSH", "detail": err.Error()})
-				return
-			}
-			defer client.Close()
-
-			session, err := client.NewSession()
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể mở phiên SSH"})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể mở phiên SSH", "detail": err.Error()})
 				return
 			}
 			defer session.Close()
@@ -1503,6 +1496,11 @@ find /www/backup -type f -mtime -14 \( -name "*.tar.gz" -o -name "*.sql" -o -nam
 			session.Stderr = &errBuf
 
 			cmd := fmt.Sprintf(`/usr/bin/rclone cat "%s" --config /root/.config/rclone/rclone.conf`, remotePath)
+			// Send response headers immediately so the browser shows the download
+			// while Drive is still opening the remote file.
+			if err := rc.Flush(); err != nil {
+				return
+			}
 			if err := session.Run(cmd); err != nil {
 				fmt.Println("Download error:", err, errBuf.String())
 			}
