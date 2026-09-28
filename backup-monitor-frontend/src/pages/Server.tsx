@@ -3,9 +3,9 @@ import { Responsive } from 'react-grid-layout'
 import type { Layout } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
-import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid } from 'recharts'
+import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts'
 
-import { useServerStatus, useWebsitesStatus, useCronJobs, useLocalSnapshots } from '../api'
+import { useServerStatus, useBackupStatus, useWebsitesStatus, useCronJobs, useLocalSnapshots } from '../api'
 import { formatBytes, formatCronSchedule } from '../utils'
 import { makeTheme } from '../theme'
 import { CheckCircle, AlertTriangle, Clock, Calendar } from 'lucide-react'
@@ -32,6 +32,7 @@ function useCustomContainerWidth() {
 export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: Lang }) {
   const theme = { ...makeTheme(isDark), isDark }
   const server = useServerStatus(15000)
+  const backup = useBackupStatus(60000)
   const cron = useCronJobs(60000)
   const websites = useWebsitesStatus(30000)
   
@@ -94,6 +95,40 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
   
   const s = server.data ?? {}
   const websitesStatus = websites.data ?? []
+  
+  const successFailureData = useMemo(() => {
+    const la = backup.data?.localActivity
+    if (!la || la.length === 0) return []
+    let success = 0
+    let failed = 0
+    la.forEach((a: any) => {
+      if (last14Days.includes(a.date)) {
+        if (a.status === 'Successful' || a.status === 'success') success++
+        else failed++
+      }
+    })
+    if (success === 0 && failed === 0) return []
+    return [
+      { name: lang === 'vi' ? 'Thành công' : 'Success', value: success },
+      { name: lang === 'vi' ? 'Thất bại' : 'Failed', value: failed }
+    ]
+  }, [backup.data, last14Days, lang])
+
+  const durationData = useMemo(() => {
+    if (!backup.data?.localActivity) return []
+    const map = new Map<string, number>()
+    backup.data.localActivity.forEach((a: any) => {
+      if (last14Days.includes(a.date)) {
+        const d = parseFloat(a.duration as string) || 0
+        map.set(a.date, (map.get(a.date) || 0) + d)
+      }
+    })
+    return last14Days.map((dateStr: string) => ({
+      date: dateStr,
+      duration: parseFloat((map.get(dateStr) || 0).toFixed(2))
+    }))
+  }, [backup.data, last14Days])
+
   const diskPercent = s.disk ? (parseFloat(s.disk.used) / parseFloat(s.disk.total)) * 100 : 0
   const cpuPercent = s.cpu ? parseFloat(s.cpu) : 0
   const ramPercent = s.ram && s.ram.usage ? parseFloat(s.ram.usage) : 0
@@ -176,10 +211,10 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
   return (
     <div style={{ 
       width: '100%', 
-      opacity: server.loading ? 0.5 : 1, 
-      pointerEvents: server.loading ? 'none' : 'auto', 
+      opacity: (server.loading || backup.loading) ? 0.5 : 1, 
+      pointerEvents: (server.loading || backup.loading) ? 'none' : 'auto', 
       transition: 'opacity 0.2s',
-      filter: server.loading ? 'grayscale(0.3)' : 'none'
+      filter: (server.loading || backup.loading) ? 'grayscale(0.3)' : 'none'
     }}>
       <h2 style={{ margin: '0 0 15px 0', fontSize: '22px', fontWeight: 'normal', color: theme.titleColor }}>
         {tr(lang, 'homeDashboard')}
@@ -317,7 +352,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                     <span style={{ fontSize: '24px', fontWeight: 'bold', color: theme.titleColor }}>{s.disk.used}</span>
                     <span style={{ fontSize: '24px', fontWeight: 'bold', color: theme.titleColor }}>{s.disk.total}</span>
                   </div>
-                  <div style={{ width: '100%', background: theme.gridLine, height: '24px', borderRadius: '12px',  marginBottom: '10px' }}>
+                  <div style={{ width: '100%', background: theme.gridLine, height: '24px', borderRadius: '12px', overflow: 'hidden', marginBottom: '10px' }}>
                     <div style={{ width: `${diskPercent}%`, background: diskPercent >= 85 ? theme.errorText : theme.successText, height: '100%', transition: 'width 0.4s' }} />
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', color: theme.textSecondary, fontSize: '12px' }}>
@@ -514,6 +549,73 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
             </div>
           </div>
 
+          
+            {/* SUCCESS / FAILURE DONUT CHART */}
+            <div key="success-failure" style={cardStyle}>
+              <div className="drag-handle" style={dragHandleStyle}>
+                {lang === 'vi' ? 'Tỷ lệ Thành công / Thất bại (14 Ngày)' : 'Success / Failure Rate (14 Days)'}
+              </div>
+              <div style={{ padding: '10px', flex: 1, minHeight: 0 }}>
+                {successFailureData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={successFailureData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius="50%"
+                        outerRadius="80%"
+                        paddingAngle={2}
+                        stroke="none"
+                      >
+                        {successFailureData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.name === 'Thành công' || entry.name === 'Success' ? theme.successText : theme.errorText} />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip 
+                        contentStyle={{ backgroundColor: theme.cardBg, borderColor: theme.gridLine, color: theme.titleColor, borderRadius: '8px' }}
+                        itemStyle={{ color: theme.titleColor }}
+                      />
+                      <Legend verticalAlign="bottom" height={24} wrapperStyle={{ fontSize: '11px', color: theme.textSecondary }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ textAlign: 'center', color: theme.textSecondary, padding: '20px', fontSize: '12px' }}>
+                    {tr(lang, 'noData')}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* DURATION BAR CHART */}
+            <div key="duration-chart" style={cardStyle}>
+              <div className="drag-handle" style={dragHandleStyle}>
+                {lang === 'vi' ? 'Thời gian Backup (giây)' : 'Backup Duration (seconds)'}
+              </div>
+              <div style={{ padding: '10px', flex: 1, minHeight: 0 }}>
+                {durationData.length > 0 && durationData.some(d => d.duration > 0) ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={durationData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={theme.gridLine} vertical={false} />
+                      <XAxis dataKey="date" stroke={theme.textSecondary} fontSize={10} tickFormatter={(v) => v.substring(5)} tickLine={false} axisLine={false} />
+                      <YAxis stroke={theme.textSecondary} fontSize={10} tickLine={false} axisLine={false} />
+                      <RechartsTooltip 
+                        contentStyle={{ backgroundColor: theme.cardBg, borderColor: theme.gridLine, color: theme.titleColor, borderRadius: '8px' }}
+                        cursor={{ fill: theme.gridLine }}
+                      />
+                      <Bar dataKey="duration" name={lang === 'vi' ? 'Thời gian (s)' : 'Duration (s)'} fill="#8b5cf6" barSize={15} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ textAlign: 'center', color: theme.textSecondary, padding: '20px', fontSize: '12px' }}>
+                    {tr(lang, 'noData')}
+                  </div>
+                )}
+              </div>
+            </div>
+            
           </Responsive>
         )}
         </div>

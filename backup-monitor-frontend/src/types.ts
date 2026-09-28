@@ -50,6 +50,7 @@ export interface BackupStatus {
   totalFolders?: number
   history?: { date: string; bytes: number; files?: number }[]
   activity?: BackupActivityEntry[]
+  localActivity?: BackupActivityEntry[]
 }
 
 export interface WebsiteStatus {

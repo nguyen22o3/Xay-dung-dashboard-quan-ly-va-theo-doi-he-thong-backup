@@ -290,6 +290,18 @@ func validSnapshotPath(p string) bool {
 	return p != "" && !strings.Contains(p, "..") && snapshotPathRe.MatchString(p)
 }
 
+
+// AlertSettings Struct
+type AlertSettings struct {
+	TelegramToken  string `json:"telegramToken"`
+	TelegramChat   string `json:"telegramChat"`
+	DiscordWebhook string `json:"discordWebhook"`
+	SmtpEmail      string `json:"smtpEmail"`
+	SmtpPassword   string `json:"smtpPassword"`
+	TargetEmail    string `json:"targetEmail"`
+	Threshold      int    `json:"threshold"`
+}
+
 func main() {
 	// Đọc cấu hình từ file .env
 	godotenv.Load()
@@ -954,6 +966,63 @@ find /www/backup -type f -mtime -14 \( -name "*.tar.gz" -o -name "*.sql" -o -nam
 
 		fmt.Println("Backend đang chạy tại http://localhost:8080")
 		// API 10: Xoa nhat ky
+		
+		r.GET("/api/alert-settings", func(c *gin.Context) {
+			b, err := os.ReadFile("alert_settings.json")
+			if err != nil {
+				c.JSON(200, AlertSettings{Threshold: 14})
+				return
+			}
+			var s AlertSettings
+			json.Unmarshal(b, &s)
+			c.JSON(200, s)
+		})
+
+				r.POST("/api/alert-settings", func(c *gin.Context) {
+			var s AlertSettings
+			if err := c.ShouldBindJSON(&s); err != nil {
+				c.JSON(400, gin.H{"error": "Invalid format"})
+				return
+			}
+			b, _ := json.Marshal(s)
+			os.WriteFile("alert_settings.json", b, 0644)
+
+			script := fmt.Sprintf(`#!/bin/bash
+BACKUP_COUNT=$(/usr/bin/rclone lsd gdrive:Backup/ --config /root/.config/rclone/rclone.conf 2>/dev/null | wc -l)
+if [ "$BACKUP_COUNT" -lt %d ]; then
+    MSG="CANH BAO TOAN VEN DU LIEU! So luong ban sao luu tren Drive hien tai la $BACKUP_COUNT/%d. Vui long kiem tra!"
+    
+    if [ "%s" != "" ]; then
+        curl -s -H "Content-Type: application/json" -d "{\"content\": \"🚨 **$MSG**\"}" "%s" > /dev/null
+    fi
+    
+    if [ "%s" != "" ]; then
+        curl -s -X POST "https://api.telegram.org/bot%s/sendMessage" -d chat_id="%s" -d text="🚨 $MSG" > /dev/null
+    fi
+
+    if [ "%s" != "" ]; then
+        curl -s --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from '%s' --mail-rcpt '%s' --user '%s:%s' -T <(echo -e "From: %s\nTo: %s\nSubject: [ALERT] Backup Monitor\n\n$MSG") > /dev/null
+    fi
+fi`, s.Threshold, s.Threshold, 
+    s.DiscordWebhook, s.DiscordWebhook, 
+    s.TelegramToken, s.TelegramToken, s.TelegramChat, 
+    s.SmtpEmail, s.SmtpEmail, s.TargetEmail, s.SmtpEmail, s.SmtpPassword, s.SmtpEmail, s.TargetEmail)
+
+			cmds := fmt.Sprintf(`cat << 'EOF' > /root/check_integrity.sh
+%s
+EOF
+chmod +x /root/check_integrity.sh
+(crontab -l 2>/dev/null | grep -v "check_integrity.sh"; echo "0 12 * * * /bin/bash /root/check_integrity.sh") | crontab -`, script)
+			
+			_, err := executeSSHCommand(cmds)
+			if err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+			
+			c.JSON(200, gin.H{"status": "success"})
+		})
+
 		r.POST("/api/refresh", func(c *gin.Context) {
 			cacheMu.Lock()
 			cache = make(map[string]cacheEntry)

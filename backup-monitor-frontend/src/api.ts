@@ -11,7 +11,7 @@ import type {
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE || 'http://localhost:8080'
 
-const client = axios.create({ baseURL: API_BASE, timeout: 200000 })
+export const client = axios.create({ baseURL: API_BASE, timeout: 200000 })
 
 // Tự động đính kèm token vào mọi request
 client.interceptors.request.use((config) => {
