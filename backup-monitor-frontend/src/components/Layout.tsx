@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from 'react'
 import { Database, Cloud, Server, Activity, Settings, LogOut, RefreshCw } from 'lucide-react'
-import { useServerStatus } from '../api'
+import type { LucideIcon } from 'lucide-react'
+import { apiErrorMessage, refreshData, useServerStatus } from '../api'
 import type { Lang } from '../language'
 import { tr } from '../language'
 import type { TabKey } from '../types'
@@ -13,7 +14,7 @@ const SidebarItem = ({
   activeTab,
   onNavigate,
 }: {
-  icon: any
+  icon: LucideIcon
   text: string
   tabName: TabKey
   activeTab: TabKey
@@ -65,6 +66,7 @@ export default function Layout({
   onLogout?: () => void
 }) {
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState('')
   const theme = makeTheme(isDark)
   const server = useServerStatus(30000)
   const uptime = server.data?.uptime
@@ -100,19 +102,16 @@ export default function Layout({
             <button
               disabled={isRefreshing}
               onClick={async () => {
-                if (isRefreshing) return;
-                setIsRefreshing(true);
+                if (isRefreshing) return
+                setIsRefreshing(true)
+                setRefreshError('')
                 try {
-                  const t = localStorage.getItem('auth_token');
-                  const baseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-                    ? 'http://localhost:8080' 
-                    : window.location.origin;
-                  await fetch(`${baseUrl}/api/refresh`, { method: 'POST', headers: { Authorization: `Bearer ${t}` } });
-                  window.dispatchEvent(new Event('force-refresh'));
-                } catch (e) {
-                  console.error(e);
+                  await refreshData()
+                  window.dispatchEvent(new Event('force-refresh'))
+                } catch (error: unknown) {
+                  setRefreshError(apiErrorMessage(error, lang === 'vi' ? 'Không thể làm mới dữ liệu.' : 'Could not refresh data.'))
                 }
-                setTimeout(() => setIsRefreshing(false), 1500); // Visual feedback
+                setTimeout(() => setIsRefreshing(false), 1500)
               }}
               style={{
                 background: 'transparent',
@@ -130,6 +129,11 @@ export default function Layout({
             >
               <RefreshCw size={18} style={{ transform: isRefreshing ? 'rotate(180deg)' : 'none', transition: 'transform 0.5s' }} />
             </button>
+            {refreshError && (
+              <span role="alert" title={refreshError} style={{ color: '#fecaca', fontSize: '11px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {refreshError}
+              </span>
+            )}
             {/* UPTIME CORNER BADGE - ONLY SHOW ON SERVER TAB */}
           {activeTab === 'server' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>

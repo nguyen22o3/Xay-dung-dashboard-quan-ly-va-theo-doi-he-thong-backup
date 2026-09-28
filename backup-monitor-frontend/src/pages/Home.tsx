@@ -132,10 +132,10 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
   const { about } = backupStatus
 
   const backupFolderSize = backupStatus.size?.bytes || 0
-  const driveTotal = about?.total || 5 * 1024 * 1024 * 1024 * 1024
+  const driveTotal = about?.total || 0
   const rawDrivePercent = driveTotal ? (backupFolderSize / driveTotal) * 100 : 0
-  const driveUsedPercent = rawDrivePercent > 0 && rawDrivePercent < 0.01 ? '< 0.01' : rawDrivePercent.toFixed(1)
-  const driveFreePercent = (100 - (rawDrivePercent > 0 && rawDrivePercent < 0.01 ? 0.01 : rawDrivePercent)).toFixed(1)
+  const driveUsedPercent = driveTotal ? (rawDrivePercent > 0 && rawDrivePercent < 0.01 ? '< 0.01' : rawDrivePercent.toFixed(1)) : '—'
+  const driveFreePercent = driveTotal ? (100 - (rawDrivePercent > 0 && rawDrivePercent < 0.01 ? 0.01 : rawDrivePercent)).toFixed(1) : '—'
 
   const getLocalDateString = (d: Date) => {
     const year = d.getFullYear()
@@ -146,7 +146,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
 
   // PIE CHART DATA — phân loại dung lượng theo loại (site/database/panel)
   const activities = backupStatus.activity ?? []
-  const breakdownBytes = (backupStatus as any)?.todayBreakdownBytes || { site: 0, database: 0, panel: 0 }
+  const breakdownBytes = backupStatus.todayBreakdownBytes || { site: 0, database: 0, panel: 0 }
   const totalPieBytes = breakdownBytes.site + breakdownBytes.database + breakdownBytes.panel
   
   
@@ -233,16 +233,13 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
   }
 
   return (
-    <div style={{ 
-      width: '100%', 
-      opacity: backup.loading ? 0.5 : 1, 
-      pointerEvents: backup.loading ? 'none' : 'auto', 
-      transition: 'opacity 0.2s',
-      filter: backup.loading ? 'grayscale(0.3)' : 'none'
-    }}>
+    <div style={{ width: '100%' }}>
       <h2 style={{ margin: '0 0 15px 0', fontSize: '22px', fontWeight: 'normal', color: theme.titleColor }}>
         {tr(lang, 'homeDashboard')}
       </h2>
+      {backup.loading && !backup.data && <p role="status" style={{ color: theme.textSecondary }}>{lang === 'vi' ? 'Đang đọc dữ liệu Google Drive…' : 'Loading Google Drive data…'}</p>}
+      {backup.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc Google Drive: ${backup.error}` : `Could not load Google Drive: ${backup.error}`}</p>}
+      {server.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc máy chủ: ${server.error}` : `Could not load server: ${server.error}`}</p>}
 
       <div style={{ margin: '0 -15px' }}>
         <style
@@ -569,7 +566,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                       <span style={{ fontSize: 'clamp(3px, 8cqmin, 10px)', color: theme.textSecondary }}>
                         {tr(lang, 'storageUtilization')}
                       </span>
-                      <span style={{ fontSize: 'clamp(0px, 15cqmin, 18px)', fontWeight: 'bold' }}>{formatBytes(driveTotal)}</span>
+                      <span style={{ fontSize: 'clamp(0px, 15cqmin, 18px)', fontWeight: 'bold' }}>{driveTotal ? formatBytes(driveTotal) : '—'}</span>
                     </div>
                     <div style={{ width: '100%', backgroundColor: theme.gridLine, height: '12px', marginBottom: '5px', borderRadius: '2px', overflow: 'hidden' }}>
                       <div style={{ width: `${Math.max(rawDrivePercent, backupFolderSize > 0 ? 1.5 : 0)}%`, minWidth: backupFolderSize > 0 ? '6px' : '0', backgroundColor: '#2196f3', height: '100%' }} />

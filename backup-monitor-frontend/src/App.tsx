@@ -43,6 +43,29 @@ export default function App() {
     return <Login isDark={isDark} onLogin={(t) => setToken(t)} />
   }
 
+  const activePage = (() => {
+    switch (activeTab) {
+      case 'home':
+        return <Home isDark={isDark} lang={lang} />
+      case 'server':
+        return <ServerPage isDark={isDark} lang={lang} />
+      case 'settings':
+        return <Settings isDark={isDark} onToggleDark={onToggleDark} lang={lang} onToggleLang={onToggleLang} />
+      case 'activity':
+        return <Activity isDark={isDark} lang={lang} />
+      case 'available':
+        return <Available isDark={isDark} lang={lang} />
+      default:
+        return (
+          <div className="animate-fade-in" style={{ padding: '40px', textAlign: 'center', color: isDark ? '#a0a0a0' : '#666' }}>
+            <div style={{ fontSize: '48px', marginBottom: '20px' }}>🚧</div>
+            <h2 style={{ margin: '0 0 10px 0', color: isDark ? '#e0e0e0' : '#333' }}>Under Construction</h2>
+            <p>This module is currently not implemented in this demo.</p>
+          </div>
+        )
+    }
+  })()
+
   return (
     <Layout
       activeTab={activeTab}
@@ -52,33 +75,7 @@ export default function App() {
       onLogout={onLogout}
     >
       <div className="animate-fade-in" style={{ height: '100%' }}>
-        <div style={{ display: activeTab === 'home' ? 'block' : 'none', height: '100%' }}>
-          <Home isDark={isDark} lang={lang} />
-        </div>
-        
-        <div style={{ display: activeTab === 'settings' ? 'block' : 'none', height: '100%' }}>
-          <Settings isDark={isDark} onToggleDark={onToggleDark} lang={lang} onToggleLang={onToggleLang} />
-        </div>
-        
-        <div style={{ display: activeTab === 'activity' ? 'block' : 'none', height: '100%' }}>
-          <Activity isDark={isDark} lang={lang} />
-        </div>
-        
-        <div style={{ display: activeTab === 'available' ? 'block' : 'none', height: '100%' }}>
-          <Available isDark={isDark} lang={lang} />
-        </div>
-
-        <div style={{ display: activeTab === 'server' ? 'block' : 'none', height: '100%' }}>
-          <ServerPage isDark={isDark} lang={lang} />
-        </div>
-
-        {activeTab !== 'home' && activeTab !== 'server' && activeTab !== 'settings' && activeTab !== 'activity' && activeTab !== 'available' && (
-          <div className="animate-fade-in" style={{ padding: '40px', textAlign: 'center', color: isDark ? '#a0a0a0' : '#666' }}>
-            <div style={{ fontSize: '48px', marginBottom: '20px' }}>🚧</div>
-            <h2 style={{ margin: '0 0 10px 0', color: isDark ? '#e0e0e0' : '#333' }}>Under Construction</h2>
-            <p>This module is currently not implemented in this demo.</p>
-          </div>
-        )}
+        {activePage}
       </div>
     </Layout>
   )

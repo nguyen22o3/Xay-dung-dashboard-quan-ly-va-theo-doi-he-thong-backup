@@ -70,7 +70,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
     }
     
     return Array.from(map.entries()).map(([name, value]) => ({ name, value }))
-  }, [localSnapshots.data, lang])
+  }, [localSnapshots.data, lang, last14Days])
 
     const growthData = useMemo(() => {
     if (!localSnapshots.data) return []
@@ -89,7 +89,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
     }))
     
     return arr
-  }, [localSnapshots.data])
+  }, [localSnapshots.data, last14Days])
 
   const chartColors = ['#10b981', '#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6']
   
@@ -101,7 +101,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
     if (!la || la.length === 0) return []
     let success = 0
     let failed = 0
-    la.forEach((a: any) => {
+    la.forEach((a) => {
       if (last14Days.includes(a.date)) {
         if (a.status === 'Successful' || a.status === 'success') success++
         else failed++
@@ -117,7 +117,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
   const durationData = useMemo(() => {
     if (!backup.data?.localActivity) return []
     const map = new Map<string, number>()
-    backup.data.localActivity.forEach((a: any) => {
+    backup.data.localActivity.forEach((a) => {
       if (last14Days.includes(a.date)) {
         const d = parseFloat(a.duration as string) || 0
         map.set(a.date, (map.get(a.date) || 0) + d)
@@ -193,7 +193,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
     boxShadow: isDark ? 'none' : '0 1px 3px rgba(0,0,0,0.1)',
     display: 'flex',
     flexDirection: 'column',
-    containerType: 'size' as any,
+    containerType: 'size' as unknown as 'size',
   }
 
     const dragHandleStyle: React.CSSProperties = {
@@ -209,16 +209,14 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
   }
 
   return (
-    <div style={{ 
-      width: '100%', 
-      opacity: (server.loading || backup.loading) ? 0.5 : 1, 
-      pointerEvents: (server.loading || backup.loading) ? 'none' : 'auto', 
-      transition: 'opacity 0.2s',
-      filter: (server.loading || backup.loading) ? 'grayscale(0.3)' : 'none'
-    }}>
+    <div style={{ width: '100%' }}>
       <h2 style={{ margin: '0 0 15px 0', fontSize: '22px', fontWeight: 'normal', color: theme.titleColor }}>
         {tr(lang, 'homeDashboard')}
       </h2>
+      {server.loading && !server.data && <p role="status" style={{ color: theme.textSecondary }}>{lang === 'vi' ? 'Đang đọc thông số máy chủ…' : 'Loading server status…'}</p>}
+      {server.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc máy chủ: ${server.error}` : `Could not load server: ${server.error}`}</p>}
+      {backup.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc lịch sử backup từ Drive: ${backup.error}` : `Could not load Drive backup history: ${backup.error}`}</p>}
+      {localSnapshots.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc bản backup cục bộ: ${localSnapshots.error}` : `Could not load local backups: ${localSnapshots.error}`}</p>}
       <div style={{ margin: '0 -15px' }}>
         <div ref={containerRef} style={{ minHeight: '100vh', width: '100%' }}>
           {containerWidth > 0 && (
@@ -377,7 +375,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                     <XAxis dataKey="date" stroke={theme.textSecondary} fontSize={10} tickFormatter={(v) => v.substring(5)} />
                     <YAxis stroke={theme.textSecondary} fontSize={10} tickFormatter={(v) => (v / (1024*1024)).toFixed(0) + 'M'} width={45} />
                     <RechartsTooltip 
-                      formatter={(val: any) => formatBytes(val)}
+                      formatter={(value) => formatBytes(Number(value))}
                       contentStyle={{ backgroundColor: theme.cardBg, borderColor: theme.gridLine, color: theme.titleColor, borderRadius: '8px' }}
                     />
                     <Line type="monotone" dataKey="size" name={lang === 'vi' ? 'Dung lượng' : 'Size'} stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
@@ -415,7 +413,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                       ))}
                     </Pie>
                     <RechartsTooltip 
-                      formatter={(value: any) => formatBytes(value)}
+                      formatter={(value) => formatBytes(Number(value))}
                       contentStyle={{ backgroundColor: theme.cardBg, borderColor: theme.gridLine, color: theme.titleColor, borderRadius: '8px' }}
                       itemStyle={{ color: theme.titleColor }}
                     />
@@ -515,7 +513,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                   <span>{lang === 'vi' ? 'Tiến trình hẹn giờ' : 'Cron Jobs'}</span>
                   <div style={{ padding: '2px 8px', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.gridLine}`, borderRadius: '12px', fontSize: '10px', display: 'flex', alignItems: 'center', gap: '6px', color: theme.successText, textTransform: 'none' }}>
                     <CheckCircle size={12} />
-                    <span style={{ color: theme.titleColor, fontWeight: 'bold' }}>{cron.data ? cron.data.filter((j: any) => j.name.includes('Backup') && !j.name.includes('Drive')).length + ' Jobs' : '0'}</span>
+                    <span style={{ color: theme.titleColor, fontWeight: 'bold' }}>{cron.data ? cron.data.filter((job) => job.name.includes('Backup') && !job.name.includes('Drive')).length + ' Jobs' : '0'}</span>
                   </div>
                 </div>
               </div>

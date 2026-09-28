@@ -1,5 +1,5 @@
 import { useState } from 'react'
-
+import { apiErrorMessage, login } from '../api'
 
 interface LoginProps {
   isDark: boolean
@@ -22,20 +22,11 @@ export default function Login({ isDark, onLogin }: LoginProps) {
     setError('')
     setLoading(true)
     try {
-      const res = await fetch('http://localhost:8080/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.error || 'Đăng nhập thất bại')
-        return
-      }
-      localStorage.setItem('auth_token', data.token)
-      onLogin(data.token)
-    } catch {
-      setError('Không thể kết nối đến máy chủ')
+      const token = await login(username, password)
+      localStorage.setItem('auth_token', token)
+      onLogin(token)
+    } catch (loginError: unknown) {
+      setError(apiErrorMessage(loginError, 'Không thể kết nối đến máy chủ'))
     } finally {
       setLoading(false)
     }

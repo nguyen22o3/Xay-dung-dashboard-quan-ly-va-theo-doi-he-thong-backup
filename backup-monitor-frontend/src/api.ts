@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import axios from 'axios'
 import type {
+  AlertSettings,
+  AlertSettingsUpdate,
   AppConfig,
+  BackupJobId,
   BackupStatus,
   CronJob,
+  LoginResponse,
   ServerStatus,
   SnapshotFile,
   WebsiteStatus,
@@ -12,6 +16,13 @@ import type {
 export const API_BASE: string = import.meta.env.VITE_API_BASE || 'http://localhost:8080'
 
 export const client = axios.create({ baseURL: API_BASE, timeout: 200000 })
+
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError<{ error?: string }>(error)) {
+    return error.response?.data?.error || error.message || fallback
+  }
+  return error instanceof Error ? error.message : fallback
+}
 
 // Tự động đính kèm token vào mọi request
 client.interceptors.request.use((config) => {
@@ -26,13 +37,19 @@ client.interceptors.request.use((config) => {
 client.interceptors.response.use(
   (res) => res,
   (error) => {
-    if (error.response?.status === 401) {
+    const token = localStorage.getItem('auth_token')
+    if (error.response?.status === 401 && token) {
       localStorage.removeItem('auth_token')
       window.location.reload()
     }
     return Promise.reject(error)
   }
 )
+
+export async function login(username: string, password: string): Promise<string> {
+  const { data } = await client.post<LoginResponse>('/api/login', { username, password })
+  return data.token
+}
 
 export async function fetchServerStatus(): Promise<ServerStatus> {
   const { data } = await client.get<ServerStatus>('/api/server-status')
@@ -64,12 +81,8 @@ export async function saveConfig(config: AppConfig): Promise<AppConfig> {
   return data
 }
 
-export async function runJobNow(script?: string): Promise<void> {
-  if (script) {
-    await client.post('/api/run-job', { script })
-  } else {
-    await client.post('/api/run-job')
-  }
+export async function runJobNow(jobId: BackupJobId): Promise<void> {
+  await client.post('/api/run-job', { jobId })
 }
 
 export async function fetchSnapshots(): Promise<SnapshotFile[]> {
@@ -87,8 +100,61 @@ export async function fetchLogs(type: 'backup' | 'system' | 'secure'): Promise<s
   return data
 }
 
-export function downloadUrl(path: string): string {
-  return `${API_BASE}/api/download-snapshot?path=${encodeURIComponent(path)}`
+export async function clearLog(target: 'server' | 'drive'): Promise<void> {
+  await client.post('/api/clear-log', { target })
+}
+
+export async function refreshData(): Promise<void> {
+  await client.post('/api/refresh')
+}
+
+export async function fetchAlertSettings(): Promise<AlertSettings> {
+  const { data } = await client.get<AlertSettings>('/api/alert-settings')
+  return data
+}
+
+export async function saveAlertSettings(settings: AlertSettingsUpdate): Promise<AlertSettings> {
+  const { data } = await client.post<AlertSettings>('/api/alert-settings', settings)
+  return data
+}
+
+export async function downloadSnapshot(snapshot: SnapshotFile): Promise<void> {
+  const path = snapshot.path || (snapshot.category === 'root'
+    ? [snapshot.date, snapshot.name].join('/')
+    : [snapshot.date, snapshot.category, snapshot.name].join('/'))
+  const token = localStorage.getItem('auth_token')
+  const createDirectUrl = async (): Promise<URL> => {
+    const { data } = await client.post<{ ticket: string }>('/api/download-ticket', { path })
+    const url = new URL('/api/download-snapshot', API_BASE)
+    url.searchParams.set('ticket', data.ticket)
+    return url
+  }
+
+  // Ask for the destination before downloading, then stream directly to disk
+  // when the browser supports the File System Access API. This avoids buffering
+  // large backups in memory and makes the save dialog appear immediately.
+  const picker = (window as Window & {
+    showSaveFilePicker?: (options?: {
+      suggestedName?: string
+    }) => Promise<{ createWritable: () => Promise<WritableStream<Uint8Array>> }>
+  }).showSaveFilePicker
+  if (picker && typeof window.fetch === 'function') {
+    const handle = await picker({ suggestedName: snapshot.name })
+    const directUrl = await createDirectUrl()
+    const response = await fetch(directUrl, { headers: token ? { Authorization: `Bearer ${token}` } : undefined })
+    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
+    const writable = await handle.createWritable()
+    await response.body.pipeTo(writable)
+    return
+  }
+
+  const directUrl = await createDirectUrl()
+  const anchor = document.createElement('a')
+  anchor.href = directUrl.toString()
+  anchor.download = snapshot.name
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
 }
 
 export interface PollState<T> {
@@ -114,7 +180,6 @@ function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number): PollState<T>
 
   useEffect(() => {
     let alive = true
-    setLoading(true) // Trigger loading state on mount or manual refresh
     const load = async () => {
       try {
         const d = await fetcher()
@@ -124,8 +189,7 @@ function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number): PollState<T>
         }
       } catch (e) {
         if (alive) {
-          const status = (e as { response?: { status?: number } }).response?.status
-          setError(status ? `HTTP ${status}` : (e as Error).message || 'Lỗi kết nối')
+          setError(apiErrorMessage(e, 'Lỗi kết nối'))
         }
       } finally {
         if (alive) setLoading(false)

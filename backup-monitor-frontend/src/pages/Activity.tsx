@@ -2,64 +2,73 @@ import { useState, useMemo } from 'react'
 import { Check, X, Trash2 } from 'lucide-react'
 import type { Lang } from '../language'
 import { makeTheme } from '../theme'
-import { useBackupStatus } from '../api'
+import { apiErrorMessage, clearLog, useBackupStatus } from '../api'
+
+interface GroupedActivity {
+  key: string
+  name: string
+  date: string
+  time: string
+  duration: number
+  status: string
+  count: number
+}
 
 
 const formatTime24 = (timeStr: string) => {
-  if (!timeStr) return '';
-  const isPM = timeStr.toUpperCase().includes('PM');
-  const isAM = timeStr.toUpperCase().includes('AM');
-  if (!isPM && !isAM) return timeStr;
+  if (!timeStr) return ''
+  const isPM = timeStr.toUpperCase().includes('PM')
+  const isAM = timeStr.toUpperCase().includes('AM')
+  if (!isPM && !isAM) return timeStr
   
-  let [time] = timeStr.split(' ');
-  let [h, m, s] = time.split(':');
-  let hour = parseInt(h, 10);
+  const [time] = timeStr.split(' ')
+  const [h, m, s] = time.split(':')
+  let hour = parseInt(h, 10)
   
-  if (isPM && hour < 12) hour += 12;
-  if (isAM && hour === 12) hour = 0;
+  if (isPM && hour < 12) hour += 12
+  if (isAM && hour === 12) hour = 0
   
-  return `${hour.toString().padStart(2, '0')}:${m}:${s}`;
-};
+  return `${hour.toString().padStart(2, '0')}:${m}:${s}`
+}
 export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang }) {
   const t = makeTheme(isDark)
   const isVi = lang === 'vi'
   const { data: driveData, reload } = useBackupStatus(60000)
   const [isClearing, setIsClearing] = useState(false)
+  const [clearError, setClearError] = useState('')
+  const [activeTab, setActiveTab] = useState<'server' | 'drive'>('drive')
+
   const handleClear = async () => {
     if (window.confirm(isVi ? 'Bạn có chắc muốn xóa toàn bộ nhật ký?' : 'Are you sure you want to clear logs?')) {
       setIsClearing(true)
+      setClearError('')
       try {
-        await fetch('http://localhost:8080/api/clear-log', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ target: activeTab })
-        })
+        await clearLog(activeTab)
         reload()
+      } catch (error: unknown) {
+        setClearError(apiErrorMessage(error, isVi ? 'Không thể xóa nhật ký.' : 'Could not clear logs.'))
       } finally {
         setIsClearing(false)
       }
     }
   }
 
-  const [activeTab, setActiveTab] = useState<'server' | 'drive'>('drive')
-
   const driveActivities = driveData?.activity || []
-  
-  // Empty array for server logs until backend provides them
-  const localActivities: any[] = (driveData as any)?.localActivity || []
+  const localActivities = useMemo(() => driveData?.localActivity ?? [], [driveData?.localActivity])
 
   const groupedLocal = useMemo(() => {
-    const groups: any[] = []
-    localActivities.forEach(act => {
-       const isSite = act.name.includes('Website')
-       const isDb = act.name.includes('Database')
-       const type = isSite ? 'Backup Site' : (isDb ? 'Backup Database' : act.name)
+    const groups = new Map<string, GroupedActivity>()
+    localActivities.forEach((act) => {
+       const name = act.name || 'aaPanel Job'
+       const isSite = name.includes('Website')
+       const isDb = name.includes('Database')
+       const type = isSite ? 'Backup Site' : (isDb ? 'Backup Database' : name)
        
        // Use hour and minute for grouping
        const timePrefix = act.time.split(':').slice(0, 2).join(':')
        const groupKey = act.date + ' ' + timePrefix + ' ' + type
        
-       let existing = groups.find(g => g.key === groupKey)
+       let existing = groups.get(groupKey)
        if (!existing) {
          existing = {
            key: groupKey,
@@ -70,18 +79,15 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
            status: 'Successful',
            count: 0
          }
-         groups.push(existing)
+         groups.set(groupKey, existing)
        }
-       existing.duration += parseFloat(act.duration || '0')
+       existing.duration += Number.parseFloat(String(act.duration || '0')) || 0
        existing.count += 1
        if (act.status !== 'Successful' && act.status !== 'Ok') {
          existing.status = 'Failed'
        }
     })
-    groups.forEach(g => {
-      g.duration = parseFloat(g.duration).toFixed(2)
-    })
-    return groups.sort((a, b) => b.key.localeCompare(a.key))
+    return Array.from(groups.values()).sort((a, b) => b.key.localeCompare(a.key))
   }, [localActivities])
 
 
@@ -90,6 +96,12 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
       <h2 style={{ margin: '0 0 20px 0', fontSize: '20px', fontWeight: '500', color: isDark ? t.titleColor : '#1a4175' }}>
         {isVi ? 'Hoạt động sao lưu' : 'Backup activity'}
       </h2>
+
+      {clearError && (
+        <div role="alert" style={{ marginBottom: '12px', color: '#ef4444', fontSize: '13px' }}>
+          {clearError}
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
         <button
@@ -215,7 +227,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
                         {act.date} {formatTime24(act.time)}
                       </td>
                       <td style={{ padding: '16px', color: t.textSecondary }}>
-                        {act.duration}s
+                        {act.duration.toFixed(2)}s
                       </td>
                     </tr>
                   )

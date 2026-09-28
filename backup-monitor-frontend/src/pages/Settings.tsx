@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
-import { Sun, Moon, Languages, Bell, Save,  } from 'lucide-react'
+import { Sun, Moon, Languages, Bell, Save } from 'lucide-react'
 import type { Lang } from '../language'
 import { makeTheme } from '../theme'
 import { tr } from '../language'
-import { client } from '../api'
+import { apiErrorMessage, fetchAlertSettings, saveAlertSettings } from '../api'
+
+type AlertPlatform = 'telegram' | 'discord' | 'email'
 
 export default function Settings({
   isDark,
@@ -19,7 +21,7 @@ export default function Settings({
   const t = makeTheme(isDark)
   const language = lang
 
-  const [activeTab, setActiveTab] = useState<'telegram' | 'discord' | 'email'>('telegram')
+  const [activeTab, setActiveTab] = useState<AlertPlatform>('telegram')
 
   const [telegramToken, setTelegramToken] = useState('')
   const [telegramChat, setTelegramChat] = useState('')
@@ -33,26 +35,34 @@ export default function Settings({
   const [threshold, setThreshold] = useState(14)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [messageType, setMessageType] = useState<'success' | 'error' | null>(null)
+  const [telegramConfigured, setTelegramConfigured] = useState(false)
+  const [discordConfigured, setDiscordConfigured] = useState(false)
+  const [smtpConfigured, setSmtpConfigured] = useState(false)
 
   useEffect(() => {
-    client.get('/api/alert-settings').then((res: any) => {
-      if (res.data) {
-        setTelegramToken(res.data.telegramToken || '')
-        setTelegramChat(res.data.telegramChat || '')
-        setDiscordWebhook(res.data.discordWebhook || '')
-        setSmtpEmail(res.data.smtpEmail || '')
-        setSmtpPassword(res.data.smtpPassword || '')
-        setTargetEmail(res.data.targetEmail || '')
-        setThreshold(res.data.threshold || 14)
-      }
-    }).catch((err: any) => console.error(err))
-  }, [])
+    fetchAlertSettings()
+      .then((settings) => {
+        setTelegramChat(settings.telegramChat || '')
+        setSmtpEmail(settings.smtpEmail || '')
+        setTargetEmail(settings.targetEmail || '')
+        setThreshold(settings.threshold || 14)
+        setTelegramConfigured(settings.telegramConfigured)
+        setDiscordConfigured(settings.discordConfigured)
+        setSmtpConfigured(settings.smtpConfigured)
+      })
+      .catch((error: unknown) => {
+        setMessageType('error')
+        setMessage(apiErrorMessage(error, lang === 'vi' ? 'Không thể tải cấu hình cảnh báo.' : 'Could not load alert settings.'))
+      })
+  }, [lang])
 
   const handleSaveAlerts = async () => {
     setSaving(true)
     setMessage('')
+    setMessageType(null)
     try {
-      await client.post('/api/alert-settings', {
+      const settings = await saveAlertSettings({
         telegramToken,
         telegramChat,
         discordWebhook,
@@ -61,12 +71,21 @@ export default function Settings({
         targetEmail,
         threshold: Number(threshold)
       })
+      setTelegramToken('')
+      setDiscordWebhook('')
+      setSmtpPassword('')
+      setTelegramConfigured(settings.telegramConfigured)
+      setDiscordConfigured(settings.discordConfigured)
+      setSmtpConfigured(settings.smtpConfigured)
+      setMessageType('success')
       setMessage(lang === 'vi' ? 'Đã lưu cấu hình và khởi tạo Cảnh báo thành công!' : 'Saved and initialized alert successfully!')
-    } catch (error: any) {
-      const errorMsg = error.response?.data?.error || error.message || 'Unknown error'
+    } catch (error: unknown) {
+      const errorMsg = apiErrorMessage(error, lang === 'vi' ? 'Lỗi không xác định' : 'Unknown error')
+      setMessageType('error')
       setMessage(lang === 'vi' ? 'Có lỗi xảy ra khi lưu: ' + errorMsg : 'Failed to save settings: ' + errorMsg)
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
   const inputStyle = {
@@ -118,7 +137,7 @@ export default function Settings({
               <label style={labelStyle}>{lang === 'vi' ? 'Nền tảng nhận thông báo' : 'Notification Platform'}</label>
               <select 
                 value={activeTab} 
-                onChange={e => setActiveTab(e.target.value as any)}
+                onChange={e => setActiveTab(e.target.value as AlertPlatform)}
                 style={{
                   ...inputStyle,
                   cursor: 'pointer',
@@ -142,9 +161,12 @@ export default function Settings({
                   </p>
                   <label style={labelStyle}>Bot Token</label>
                   <input 
-                    type="text" 
+                    type="password"
+                    autoComplete="new-password"
                     style={inputStyle}
-                    placeholder="123456789:ABCdefGHIjklMNOpqr..." 
+                    placeholder={telegramConfigured
+                      ? (lang === 'vi' ? 'Đã cấu hình — để trống để giữ nguyên' : 'Configured — leave blank to keep it')
+                      : '123456789:ABCdefGHIjklMNOpqr...'}
                     value={telegramToken}
                     onChange={e => setTelegramToken(e.target.value)}
                   />
@@ -167,9 +189,12 @@ export default function Settings({
                   </p>
                   <label style={labelStyle}>Webhook URL</label>
                   <input 
-                    type="text" 
+                    type="password"
+                    autoComplete="new-password"
                     style={{...inputStyle, marginBottom: 0}}
-                    placeholder="https://discord.com/api/webhooks/..." 
+                    placeholder={discordConfigured
+                      ? (lang === 'vi' ? 'Đã cấu hình — để trống để giữ nguyên' : 'Configured — leave blank to keep it')
+                      : 'https://discord.com/api/webhooks/...'}
                     value={discordWebhook}
                     onChange={e => setDiscordWebhook(e.target.value)}
                   />
@@ -193,8 +218,11 @@ export default function Settings({
                   <label style={labelStyle}>Mật khẩu ứng dụng (App Password)</label>
                   <input 
                     type="password" 
+                    autoComplete="new-password"
                     style={inputStyle}
-                    placeholder="xxxx xxxx xxxx xxxx" 
+                    placeholder={smtpConfigured
+                      ? (lang === 'vi' ? 'Đã cấu hình — để trống để giữ nguyên' : 'Configured — leave blank to keep it')
+                      : 'xxxx xxxx xxxx xxxx'}
                     value={smtpPassword}
                     onChange={e => setSmtpPassword(e.target.value)}
                   />
@@ -221,7 +249,7 @@ export default function Settings({
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
-                <div style={{ color: message.includes('lỗi') || message.includes('Failed') ? '#ef5350' : '#4caf50', fontSize: '13px', maxWidth: '60%' }}>
+                <div role={messageType === 'error' ? 'alert' : undefined} style={{ color: messageType === 'error' ? '#ef5350' : '#4caf50', fontSize: '13px', maxWidth: '60%' }}>
                   {message}
                 </div>
                 <button

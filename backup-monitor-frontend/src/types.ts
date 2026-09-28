@@ -51,6 +51,11 @@ export interface BackupStatus {
   history?: { date: string; bytes: number; files?: number }[]
   activity?: BackupActivityEntry[]
   localActivity?: BackupActivityEntry[]
+  todayBreakdownBytes?: {
+    site: number
+    database: number
+    panel: number
+  }
 }
 
 export interface WebsiteStatus {
@@ -79,11 +84,38 @@ export interface AppConfig {
 }
 
 export interface SnapshotFile {
+  path?: string
   date: string
   category: string
   name: string
   size: number
   modified: string
+}
+
+export type BackupJobId = 'drive-sync' | 'site-backup' | 'database-backup'
+
+export interface LoginResponse {
+  token: string
+}
+
+export interface AlertSettings {
+  telegramChat: string
+  smtpEmail: string
+  targetEmail: string
+  threshold: number
+  telegramConfigured: boolean
+  discordConfigured: boolean
+  smtpConfigured: boolean
+}
+
+export interface AlertSettingsUpdate {
+  telegramToken: string
+  telegramChat: string
+  discordWebhook: string
+  smtpEmail: string
+  smtpPassword: string
+  targetEmail: string
+  threshold: number
 }
 
 export type TabKey = 'home' | 'server' | 'settings' | 'jobs' | 'activity' | 'available' | 'options' | 'logs' | 'registration' | 'crypto'
