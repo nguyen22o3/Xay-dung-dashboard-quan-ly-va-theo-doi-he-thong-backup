@@ -840,6 +840,10 @@ exec 9>/run/backup-monitor-inotify.lock
 flock -n 9 || exit 0
 inotifywait -m -r -e delete --format '%%w%%f' /www/backup/ 2>/dev/null | while IFS= read -r FILE
 do
+    if [[ ! "$FILE" =~ \.(zip|tar\.gz|gz|sql)$ ]]; then
+        continue
+    fi
+
     FILE_DATE=$(echo "$FILE" | grep -oP '20\d{2}-?\d{2}-?\d{2}' | head -1)
     if [ ! -z "$FILE_DATE" ]; then
         NORMALIZED_DATE=$(date -d "${FILE_DATE//-/}" +%%Y-%%m-%%d 2>/dev/null)
