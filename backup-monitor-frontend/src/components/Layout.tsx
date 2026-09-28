@@ -1,212 +1,153 @@
-import { type ReactNode, useState } from 'react'
-import { Database, Cloud, Server, Activity, Settings, LogOut, RefreshCw } from 'lucide-react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { Activity, ArrowUpRight, Archive, Cloud, Database, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Server, Settings, ShieldCheck, Sun, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { apiErrorMessage, refreshData, useServerStatus } from '../api'
 import type { Lang } from '../language'
-import { tr } from '../language'
 import type { TabKey } from '../types'
-import { makeTheme } from '../theme'
 
-const SidebarItem = ({
-  icon: Icon,
-  text,
-  tabName,
-  activeTab,
-  onNavigate,
-}: {
-  icon: LucideIcon
-  text: string
-  tabName: TabKey
-  activeTab: TabKey
-  onNavigate: (tab: TabKey) => void
-}) => {
-  const active = activeTab === tabName
-  return (
-    <div
-      onClick={() => onNavigate(tabName)}
-      style={{
-        padding: '10px 20px',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px',
-        backgroundColor: active ? '#ffffff' : 'transparent',
-        color: active ? '#333333' : '#dddddd',
-        fontWeight: active ? 'bold' : 'normal',
-        fontSize: '13px',
-        borderLeft: active ? '4px solid #1a4175' : '4px solid transparent',
-        transition: 'all 0.15s',
-        userSelect: 'none',
-      }}
-    >
-      <Icon size={16} color={active ? '#1a4175' : '#dddddd'} /> {text}
-    </div>
-  )
-}
+type NavItem = { tab: TabKey; icon: LucideIcon; vi: string; en: string }
 
-const SidebarSection = ({ title }: { title: string }) => (
-  <div style={{ padding: '15px 20px 5px 20px', fontSize: '11px', fontWeight: 'bold', color: '#aaaaaa', textTransform: 'uppercase' }}>
-    {title}
-  </div>
-)
+const overviewItems: NavItem[] = [
+  { tab: 'dashboard', icon: LayoutDashboard, vi: 'Tổng quan', en: 'Overview' },
+  { tab: 'server', icon: Server, vi: 'Máy chủ', en: 'Server' },
+  { tab: 'home', icon: Cloud, vi: 'Google Drive', en: 'Google Drive' },
+]
 
-export default function Layout({
-  activeTab,
-  onNavigate,
-  isDark,
-  lang,
-  children,
-  onLogout,
-}: {
+const managementItems: NavItem[] = [
+  { tab: 'activity', icon: Activity, vi: 'Nhật ký hoạt động', en: 'Activity log' },
+  { tab: 'available', icon: Archive, vi: 'Bản sao lưu', en: 'Backups' },
+  { tab: 'settings', icon: Settings, vi: 'Cài đặt', en: 'Settings' },
+]
+
+export default function Layout({ activeTab, onNavigate, isDark, onToggleDark, lang, children, onLogout }: {
   activeTab: TabKey
   onNavigate: (tab: TabKey) => void
   isDark: boolean
+  onToggleDark: () => void
   lang: Lang
   children: ReactNode
   onLogout?: () => void
 }) {
+  const [collapsed, setCollapsed] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const [search, setSearch] = useState('')
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState('')
-  const theme = makeTheme(isDark)
+  const searchRef = useRef<HTMLInputElement>(null)
   const server = useServerStatus(30000)
-  const uptime = server.data?.uptime
+  const vi = lang === 'vi'
+  const allItems = [...overviewItems, ...managementItems]
+  const activeItem = allItems.find((item) => item.tab === activeTab)
+  const results = search.trim()
+    ? allItems.filter((item) => `${item.vi} ${item.en}`.toLowerCase().includes(search.trim().toLowerCase()))
+    : []
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        searchRef.current?.focus()
+      }
+      if (event.key === 'Escape') searchRef.current?.blur()
+    }
+    window.addEventListener('keydown', handleShortcut)
+    return () => window.removeEventListener('keydown', handleShortcut)
+  }, [])
+
+  const navigate = (tab: TabKey) => {
+    onNavigate(tab)
+    setMobileOpen(false)
+    setSearch('')
+  }
+
+  const refresh = async () => {
+    if (isRefreshing) return
+    setIsRefreshing(true)
+    setRefreshError('')
+    try {
+      await refreshData()
+      window.dispatchEvent(new Event('force-refresh'))
+    } catch (error: unknown) {
+      setRefreshError(apiErrorMessage(error, vi ? 'Không thể làm mới dữ liệu.' : 'Could not refresh data.'))
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  const renderItems = (items: NavItem[]) => items.map(({ tab, icon: Icon, vi: viLabel, en }) => (
+    <button
+      className={`app-nav-item ${activeTab === tab ? 'is-active' : ''}`}
+      type="button"
+      title={vi ? viLabel : en}
+      aria-current={activeTab === tab ? 'page' : undefined}
+      key={tab}
+      onClick={() => navigate(tab)}
+    >
+      <Icon size={19} strokeWidth={1.8} />
+      <span>{vi ? viLabel : en}</span>
+      {activeTab === tab && <span className="app-nav-active-dot" />}
+    </button>
+  ))
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        overflow: 'hidden',
-        fontFamily: '"Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-      }}
-    >
-      {/* TOP HEADER */}
-      <div
-        style={{
-          height: '45px',
-          backgroundColor: theme.headerBg,
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 20px',
-          color: 'white',
-          justifyContent: 'space-between',
-          zIndex: 10,
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ fontSize: '18px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Database size={20} /> {tr(lang, 'appTitle')}
+    <div className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''}`} data-theme={isDark ? 'dark' : 'light'}>
+      {mobileOpen && <button type="button" className="app-mobile-overlay" aria-label={vi ? 'Đóng menu' : 'Close menu'} onClick={() => setMobileOpen(false)} />}
+      <aside className={`app-sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
+        <div className="app-brand">
+          <span className="app-brand-mark"><Database size={22} strokeWidth={2.2} /></span>
+          <div className="app-brand-copy"><strong>Backup ER</strong><span>CONTROL CENTER</span></div>
+          <button className="app-collapse-button" type="button" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setCollapsed(!collapsed)}>
+            {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
+          <button className="app-icon-button app-mobile-close" type="button" aria-label={vi ? 'Đóng menu' : 'Close menu'} onClick={() => setMobileOpen(false)}><X size={20} /></button>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-            <button
-              disabled={isRefreshing}
-              onClick={async () => {
-                if (isRefreshing) return
-                setIsRefreshing(true)
-                setRefreshError('')
-                try {
-                  await refreshData()
-                  window.dispatchEvent(new Event('force-refresh'))
-                } catch (error: unknown) {
-                  setRefreshError(apiErrorMessage(error, lang === 'vi' ? 'Không thể làm mới dữ liệu.' : 'Could not refresh data.'))
-                }
-                setTimeout(() => setIsRefreshing(false), 1500)
-              }}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'white',
-                cursor: isRefreshing ? 'wait' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                opacity: isRefreshing ? 0.5 : 0.8,
-                transition: 'opacity 0.2s'
-              }}
-              onMouseEnter={(e) => { if(!isRefreshing) e.currentTarget.style.opacity = '1' }}
-              onMouseLeave={(e) => { if(!isRefreshing) e.currentTarget.style.opacity = '0.8' }}
-              title={lang === 'vi' ? 'Làm mới dữ liệu' : 'Refresh data'}
-            >
-              <RefreshCw size={18} style={{ transform: isRefreshing ? 'rotate(180deg)' : 'none', transition: 'transform 0.5s' }} />
-            </button>
-            {refreshError && (
-              <span role="alert" title={refreshError} style={{ color: '#fecaca', fontSize: '11px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {refreshError}
-              </span>
-            )}
-            {/* UPTIME CORNER BADGE - ONLY SHOW ON SERVER TAB */}
-          {activeTab === 'server' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-              <span style={{ color: '#aaaaaa', textTransform: 'uppercase', fontSize: '10px', fontWeight: 'bold' }}>
-                {lang === 'vi' ? 'Hoạt động:' : 'Uptime:'}
-              </span>
-              <span style={{ color: 'white', fontWeight: 'bold' }}>
-                {uptime
-                  ? lang === 'vi'
-                    ? uptime.replace(/weeks?/g, 'tuần').replace(/days?/g, 'ngày').replace(/hours?/g, 'giờ').replace(/minutes?/g, 'phút')
-                    : uptime
-                  : '—'}
-              </span>
-              <span className="animate-pulse" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#4caf50', boxShadow: '0 0 6px #4caf50', marginLeft: '4px' }} />
-            </div>
-          )}
-        </div>
-      </div>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* LEFT SIDEBAR */}
-        <div style={{ width: '220px', backgroundColor: theme.sidebarBg, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            <SidebarSection title={tr(lang, 'dashboardSection')} />
-            <SidebarItem icon={Server} text={lang === 'vi' ? 'Máy chủ' : 'Server'} tabName="server" activeTab={activeTab} onNavigate={onNavigate} />
-            <SidebarItem icon={Cloud} text={tr(lang, 'home')} tabName="home" activeTab={activeTab} onNavigate={onNavigate} />
-            
-            <SidebarSection title={tr(lang, 'manage')} />
-            <SidebarItem icon={Settings} text={tr(lang, 'settings')} tabName="settings" activeTab={activeTab} onNavigate={onNavigate} />
+        <nav className="app-sidebar-nav" aria-label={vi ? 'Điều hướng chính' : 'Main navigation'}>
+          <div className="app-nav-section">{vi ? 'TỔNG QUAN' : 'OVERVIEW'}</div>
+          {renderItems(overviewItems)}
+          <div className="app-nav-section app-nav-section--spaced">{vi ? 'QUẢN LÝ' : 'MANAGEMENT'}</div>
+          {renderItems(managementItems)}
+        </nav>
 
-            <SidebarSection title={tr(lang, 'backup')} />
-            <SidebarItem icon={Activity} text={tr(lang, 'activity')} tabName="activity" activeTab={activeTab} onNavigate={onNavigate} />
-
-            <SidebarSection title={tr(lang, 'recover')} />
-            <SidebarItem icon={Database} text={tr(lang, 'available')} tabName="available" activeTab={activeTab} onNavigate={onNavigate} />
+        <div className="app-sidebar-bottom">
+          <div className="app-source-badge"><ShieldCheck size={17} /><span>{vi ? 'Server + Drive đang theo dõi' : 'Monitoring Server + Drive'}</span></div>
+          <div className="app-user-card">
+            <span className="app-avatar">AD</span>
+            <div className="app-user-details"><strong>Administrator</strong><span>Backup Monitor</span></div>
+            {onLogout && <button type="button" className="app-icon-button app-logout-button" onClick={onLogout} title={vi ? 'Đăng xuất' : 'Logout'} aria-label={vi ? 'Đăng xuất' : 'Logout'}><LogOut size={18} /></button>}
           </div>
+        </div>
+      </aside>
 
-          {onLogout && (
-            <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
-              <div
-                onClick={onLogout}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  color: '#ff6b6b',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: 500,
-                  padding: '9px 14px',
-                  borderRadius: '6px',
-                  backgroundColor: 'rgba(255, 107, 107, 0.08)',
-                  transition: 'all 0.15s',
-                  userSelect: 'none',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'rgba(255, 107, 107, 0.16)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'rgba(255, 107, 107, 0.08)'
-                }}
-              >
-                <LogOut size={16} />
-                <span>{lang === 'vi' ? 'Đăng xuất' : 'Logout'}</span>
-              </div>
+      <div className="app-main">
+        <header className="app-topbar">
+          <div className="app-topbar-left">
+            <button type="button" className="app-icon-button app-mobile-menu" aria-label={vi ? 'Mở menu' : 'Open menu'} onClick={() => setMobileOpen(true)}><Menu size={20} /></button>
+            <div className="app-search">
+              <Search size={18} />
+              <input
+                ref={searchRef}
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                onKeyDown={(event) => { if (event.key === 'Enter' && results[0]) navigate(results[0].tab) }}
+                placeholder={vi ? 'Tìm trang trong dashboard...' : 'Search dashboard pages...'}
+                aria-label={vi ? 'Tìm trang' : 'Search pages'}
+              />
+              <kbd>Ctrl K</kbd>
+              {search.trim() && <div className="app-search-results">{results.length ? results.map((item) => <button type="button" key={item.tab} onClick={() => navigate(item.tab)}>{vi ? item.vi : item.en}<ArrowUpRight size={15} /></button>) : <span>{vi ? 'Không tìm thấy trang' : 'No pages found'}</span>}</div>}
             </div>
-          )}
-        </div>
-
-        {/* MAIN CONTENT */}
-        <div style={{ flex: 1, backgroundColor: theme.bg, overflowY: 'auto', padding: '20px', color: theme.textPrimary }}>
-          {children}
-        </div>
+            <span className="app-mobile-title">{vi ? activeItem?.vi : activeItem?.en}</span>
+          </div>
+          <div className="app-topbar-actions">
+            <span className={`app-connection ${server.error ? 'is-offline' : ''}`}><i />{server.error ? (vi ? 'Mất kết nối' : 'Disconnected') : (vi ? 'Đang giám sát' : 'Monitoring')}</span>
+            <button className="app-topbar-primary" type="button" onClick={() => navigate('available')}><Archive size={17} />{vi ? 'Bản sao lưu' : 'Backups'}</button>
+            <button className={`app-icon-button ${isRefreshing ? 'is-spinning' : ''}`} type="button" onClick={refresh} disabled={isRefreshing} title={vi ? 'Làm mới dữ liệu' : 'Refresh data'} aria-label={vi ? 'Làm mới dữ liệu' : 'Refresh data'}><RefreshCw size={19} /></button>
+            <button className="app-icon-button" type="button" onClick={onToggleDark} title={isDark ? (vi ? 'Giao diện sáng' : 'Light theme') : (vi ? 'Giao diện tối' : 'Dark theme')} aria-label={isDark ? (vi ? 'Giao diện sáng' : 'Light theme') : (vi ? 'Giao diện tối' : 'Dark theme')}>{isDark ? <Sun size={19} /> : <Moon size={19} />}</button>
+            <span className="app-topbar-avatar">AD</span>
+          </div>
+        </header>
+        {refreshError && <div className="app-global-error" role="alert">{refreshError}</div>}
+        <main className="app-content">{children}</main>
       </div>
     </div>
   )

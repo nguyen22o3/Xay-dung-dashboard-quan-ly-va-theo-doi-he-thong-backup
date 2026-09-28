@@ -118,4 +118,4 @@ export interface AlertSettingsUpdate {
   threshold: number
 }
 
-export type TabKey = 'home' | 'server' | 'settings' | 'jobs' | 'activity' | 'available' | 'options' | 'logs' | 'registration' | 'crypto'
+export type TabKey = 'dashboard' | 'home' | 'server' | 'settings' | 'jobs' | 'activity' | 'available' | 'options' | 'logs' | 'registration' | 'crypto'

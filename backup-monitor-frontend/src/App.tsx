@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Layout from './components/Layout'
 import Home from './pages/Home'
 import Settings from './pages/Settings'
@@ -6,15 +6,23 @@ import Activity from './pages/Activity'
 import Available from './pages/Available'
 import ServerPage from './pages/Server'
 import Login from './pages/Login'
+import Dashboard from './pages/Dashboard'
 
 import type { TabKey } from './types'
 import type { Lang } from './language'
 
 export default function App() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth_token'))
-  const [activeTab, setActiveTab] = useState<TabKey>(() => (localStorage.getItem('activeTab') as TabKey) || 'server')
-  const [isDark, setIsDark] = useState<boolean>(() => localStorage.getItem('isDarkMode') === 'true')
+  const [activeTab, setActiveTab] = useState<TabKey>(() => localStorage.getItem('dashboardLayoutVersion') === 'apex-v1'
+    ? (localStorage.getItem('activeTab') as TabKey) || 'dashboard'
+    : 'dashboard')
+  const [isDark, setIsDark] = useState<boolean>(() => localStorage.getItem('isDarkMode') !== 'false')
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('language') === 'en' ? 'en' : 'vi'))
+
+  useEffect(() => {
+    localStorage.setItem('dashboardLayoutVersion', 'apex-v1')
+    localStorage.setItem('activeTab', activeTab)
+  }, [activeTab])
 
   const onNavigate = (tab: TabKey) => {
     setActiveTab(tab)
@@ -45,6 +53,8 @@ export default function App() {
 
   const activePage = (() => {
     switch (activeTab) {
+      case 'dashboard':
+        return <Dashboard isDark={isDark} lang={lang} onNavigate={onNavigate} />
       case 'home':
         return <Home isDark={isDark} lang={lang} />
       case 'server':
@@ -71,6 +81,7 @@ export default function App() {
       activeTab={activeTab}
       onNavigate={onNavigate}
       isDark={isDark}
+      onToggleDark={onToggleDark}
       lang={lang}
       onLogout={onLogout}
     >
