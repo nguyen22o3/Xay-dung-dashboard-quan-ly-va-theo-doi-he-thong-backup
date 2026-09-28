@@ -978,7 +978,7 @@ find /www/backup -type f -mtime -14 \( -name "*.tar.gz" -o -name "*.sql" -o -nam
 			c.JSON(200, s)
 		})
 
-				r.POST("/api/alert-settings", func(c *gin.Context) {
+						r.POST("/api/alert-settings", func(c *gin.Context) {
 			var s AlertSettings
 			if err := c.ShouldBindJSON(&s); err != nil {
 				c.JSON(400, gin.H{"error": "Invalid format"})
@@ -987,32 +987,45 @@ find /www/backup -type f -mtime -14 \( -name "*.tar.gz" -o -name "*.sql" -o -nam
 			b, _ := json.Marshal(s)
 			os.WriteFile("alert_settings.json", b, 0644)
 
-			script := fmt.Sprintf(`#!/bin/bash
+			// Script 1: Google Drive (Check 12h trua)
+			script1 := fmt.Sprintf(`#!/bin/bash
 BACKUP_COUNT=$(/usr/bin/rclone lsd gdrive:Backup/ --config /root/.config/rclone/rclone.conf 2>/dev/null | wc -l)
 if [ "$BACKUP_COUNT" -lt %d ]; then
-    MSG="CANH BAO TOAN VEN DU LIEU! So luong ban sao luu tren Drive hien tai la $BACKUP_COUNT/%d. Vui long kiem tra!"
-    
-    if [ "%s" != "" ]; then
-        curl -s -H "Content-Type: application/json" -d "{\"content\": \"🚨 **$MSG**\"}" "%s" > /dev/null
-    fi
-    
-    if [ "%s" != "" ]; then
-        curl -s -X POST "https://api.telegram.org/bot%s/sendMessage" -d chat_id="%s" -d text="🚨 $MSG" > /dev/null
-    fi
+    MSG="🚨 CANH BAO TOAN VEN DU LIEU! So luong ban sao luu tren Drive hien tai la $BACKUP_COUNT/%d. Vui long kiem tra!"
+    if [ "%s" != "" ]; then curl -s -H "Content-Type: application/json" -d "{\"content\": \"$MSG\"}" "%s" > /dev/null; fi
+    if [ "%s" != "" ]; then curl -s -X POST "https://api.telegram.org/bot%s/sendMessage" -d chat_id="%s" -d text="$MSG" > /dev/null; fi
+    if [ "%s" != "" ]; then curl -s --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from '%s' --mail-rcpt '%s' --user '%s:%s' -T <(echo -e "From: %s\nTo: %s\nSubject: [ALERT] Backup Monitor\n\n$MSG") > /dev/null; fi
+fi`, s.Threshold, s.Threshold, s.DiscordWebhook, s.DiscordWebhook, s.TelegramToken, s.TelegramToken, s.TelegramChat, s.SmtpEmail, s.SmtpEmail, s.TargetEmail, s.SmtpEmail, s.SmtpPassword, s.SmtpEmail, s.TargetEmail)
 
-    if [ "%s" != "" ]; then
-        curl -s --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from '%s' --mail-rcpt '%s' --user '%s:%s' -T <(echo -e "From: %s\nTo: %s\nSubject: [ALERT] Backup Monitor\n\n$MSG") > /dev/null
-    fi
-fi`, s.Threshold, s.Threshold, 
-    s.DiscordWebhook, s.DiscordWebhook, 
-    s.TelegramToken, s.TelegramToken, s.TelegramChat, 
-    s.SmtpEmail, s.SmtpEmail, s.TargetEmail, s.SmtpEmail, s.SmtpPassword, s.SmtpEmail, s.TargetEmail)
+			// Script 2: Local Real-time Monitor (inotifywait)
+			script2 := fmt.Sprintf(`#!/bin/bash
+killall inotifywait 2>/dev/null
+inotifywait -m -r -e delete --format '%%w%%f' /www/backup/ 2>/dev/null | while read FILE
+do
+    MSG="🚨 BAO DONG KHA CAP: File backup [$FILE] vua bi XOA khoi may chu! Thoi gian: $(date)"
+    if [ "%s" != "" ]; then curl -s -H "Content-Type: application/json" -d "{\"content\": \"$MSG\"}" "%s" > /dev/null; fi
+    if [ "%s" != "" ]; then curl -s -X POST "https://api.telegram.org/bot%s/sendMessage" -d chat_id="%s" -d text="$MSG" > /dev/null; fi
+    if [ "%s" != "" ]; then curl -s --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from '%s' --mail-rcpt '%s' --user '%s:%s' -T <(echo -e "From: %s\nTo: %s\nSubject: [URGENT] File Deleted\n\n$MSG") > /dev/null; fi
+done`, s.DiscordWebhook, s.DiscordWebhook, s.TelegramToken, s.TelegramToken, s.TelegramChat, s.SmtpEmail, s.SmtpEmail, s.TargetEmail, s.SmtpEmail, s.SmtpPassword, s.SmtpEmail, s.TargetEmail)
 
-			cmds := fmt.Sprintf(`cat << 'EOF' > /root/check_integrity.sh
+			cmds := fmt.Sprintf(`
+dnf install epel-release -y 2>/dev/null
+dnf install inotify-tools -y 2>/dev/null
+
+cat << 'EOF' > /root/check_integrity.sh
 %s
 EOF
 chmod +x /root/check_integrity.sh
-(crontab -l 2>/dev/null | grep -v "check_integrity.sh"; echo "0 12 * * * /bin/bash /root/check_integrity.sh") | crontab -`, script)
+
+cat << 'EOF' > /root/realtime_monitor.sh
+%s
+EOF
+chmod +x /root/realtime_monitor.sh
+
+(crontab -l 2>/dev/null | grep -v "check_integrity.sh" | grep -v "realtime_monitor.sh"; echo "0 12 * * * /bin/bash /root/check_integrity.sh"; echo "@reboot nohup /bin/bash /root/realtime_monitor.sh >/dev/null 2>&1 &") | crontab -
+
+nohup /bin/bash /root/realtime_monitor.sh >/dev/null 2>&1 &
+`, script1, script2)
 			
 			_, err := executeSSHCommand(cmds)
 			if err != nil {

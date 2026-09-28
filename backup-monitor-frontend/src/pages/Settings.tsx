@@ -62,8 +62,9 @@ export default function Settings({
         threshold: Number(threshold)
       })
       setMessage(lang === 'vi' ? 'Đã lưu cấu hình và khởi tạo Cảnh báo thành công!' : 'Saved and initialized alert successfully!')
-    } catch (error) {
-      setMessage(lang === 'vi' ? 'Có lỗi xảy ra khi lưu' : 'Failed to save settings')
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.error || error.message || 'Unknown error'
+      setMessage(lang === 'vi' ? 'Có lỗi xảy ra khi lưu: ' + errorMsg : 'Failed to save settings: ' + errorMsg)
     }
     setSaving(false)
   }
@@ -96,8 +97,7 @@ export default function Settings({
       display: 'flex', 
       flexDirection: 'column', 
       alignItems: 'center', 
-      justifyContent: 'flex-start',
-      overflowY: 'auto'
+      justifyContent: 'flex-start'
     }}>
       
       <div style={{ width: '100%', maxWidth: '600px' }}>

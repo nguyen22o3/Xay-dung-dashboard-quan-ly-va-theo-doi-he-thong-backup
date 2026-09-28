@@ -2,3 +2,5 @@
 *.log
 .env
 .DS_Store
+
+alert_settings.json
