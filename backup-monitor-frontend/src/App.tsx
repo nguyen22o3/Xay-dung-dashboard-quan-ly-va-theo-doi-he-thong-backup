@@ -5,6 +5,7 @@ import Settings from './pages/Settings'
 import Activity from './pages/Activity'
 import Available from './pages/Available'
 import ServerPage from './pages/Server'
+import CronJobs from './pages/CronJobs'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import { clearSnapshotsCache, prefetchSnapshots } from './api'
@@ -67,6 +68,8 @@ export default function App() {
         return <Home isDark={isDark} lang={lang} />
       case 'server':
         return <ServerPage isDark={isDark} lang={lang} />
+      case 'jobs':
+        return <CronJobs lang={lang} />
       case 'settings':
         return <Settings isDark={isDark} onToggleDark={onToggleDark} lang={lang} onToggleLang={onToggleLang} />
       case 'activity':

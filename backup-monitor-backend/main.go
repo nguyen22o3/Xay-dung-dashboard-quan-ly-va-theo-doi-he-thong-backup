@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,6 +76,76 @@ type snapshotFile struct {
 	Name     string `json:"name"`
 	Size     int64  `json:"size"`
 	Modified string `json:"modified"`
+}
+
+type localSnapshot struct {
+	Date     string `json:"date"`
+	Category string `json:"category"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Modified string `json:"modified"`
+}
+
+var backupDateInName = regexp.MustCompile(`(?:^|[^0-9])(20[0-9]{2})-?([0-9]{2})-?([0-9]{2})(?:[_-]([0-9]{2})([0-9]{2})([0-9]{2}))?`)
+
+func backupTimestamp(name, modified string) string {
+	match := backupDateInName.FindStringSubmatch(name)
+	if match == nil {
+		return modified
+	}
+	day := match[1] + "-" + match[2] + "-" + match[3]
+	if _, err := time.Parse("2006-01-02", day); err != nil {
+		return modified
+	}
+	if match[4] != "" {
+		stamp := day + " " + match[4] + ":" + match[5] + ":" + match[6]
+		if _, err := time.Parse("2006-01-02 15:04:05", stamp); err == nil {
+			return stamp
+		}
+	}
+	return day + " 00:00:00"
+}
+
+func parseLocalSnapshots(output string) []localSnapshot {
+	snapshots := make([]localSnapshot, 0)
+	for _, line := range strings.Split(output, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "|", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		size, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		path := strings.TrimPrefix(parts[2], "/www/backup/")
+		segments := strings.Split(path, "/")
+		if len(segments) < 2 {
+			continue
+		}
+		category := segments[0]
+		if category != "site" && category != "database" && category != "panel" {
+			continue
+		}
+		name := segments[len(segments)-1]
+		modified := parts[0]
+		if len(modified) > 19 {
+			modified = modified[:19]
+		}
+		snapshots = append(snapshots, localSnapshot{
+			Date: backupTimestamp(name, modified), Category: category,
+			Name: name, Size: size, Modified: modified,
+		})
+	}
+	sort.Slice(snapshots, func(i, j int) bool {
+		if snapshots[i].Date != snapshots[j].Date {
+			return snapshots[i].Date > snapshots[j].Date
+		}
+		return snapshots[i].Modified > snapshots[j].Modified
+	})
+	if len(snapshots) > 500 {
+		return snapshots[:500]
+	}
+	return snapshots
 }
 
 func parseSnapshotList(output string) []snapshotFile {
@@ -879,6 +950,31 @@ nohup /bin/bash /root/realtime_monitor.sh >/dev/null 2>&1 &`, encodeForShell(int
 
 var runJobSSHCommand = executeSSHCommand
 
+var aaPanelCronIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{1,64}$`)
+
+// Only aaPanel cron wrappers that are still scheduled may be started manually.
+// The client supplies an identifier, never a shell command or filesystem path.
+func commandForCronJob(jobID string) (string, bool) {
+	if !aaPanelCronIDPattern.MatchString(jobID) {
+		return "", false
+	}
+	script := "/www/server/cron/" + jobID
+	logPath := script + ".log"
+	return fmt.Sprintf(`set -eu
+SCRIPT=%q
+LOG=%q
+if ! crontab -l 2>/dev/null | awk -v target="$SCRIPT" 'NF >= 6 && $1 !~ /^#/ && $6 == target { found=1 } END { exit !found }'; then
+  printf 'CRON_NOT_SCHEDULED\n' >&2
+  exit 3
+fi
+if [ ! -f "$SCRIPT" ] || [ -L "$SCRIPT" ] || [ -L "$LOG" ]; then
+  printf 'CRON_SCRIPT_UNAVAILABLE\n' >&2
+  exit 4
+fi
+nohup /bin/bash "$SCRIPT" >> "$LOG" 2>&1 < /dev/null &
+printf 'STARTED\n'`, script, logPath), true
+}
+
 func commandForJob(jobID string) (string, bool) {
 	switch jobID {
 	case "drive-sync":
@@ -1190,6 +1286,60 @@ echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\"
 			c.Data(http.StatusOK, "application/json", []byte(output))
 		})
 
+		// Chạy thủ công đúng wrapper aaPanel còn hiện diện trong crontab.
+		var cronRunMu sync.Mutex
+		lastCronRun := make(map[string]time.Time)
+		auth.POST("/run-cron-job", func(c *gin.Context) {
+			var req struct {
+				JobID string `json:"jobId"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu không hợp lệ"})
+				return
+			}
+			command, ok := commandForCronJob(req.JobID)
+			if !ok {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Mã cronjob không hợp lệ"})
+				return
+			}
+			cronRunMu.Lock()
+			if time.Since(lastCronRun[req.JobID]) < time.Minute {
+				cronRunMu.Unlock()
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "Cronjob vừa được khởi chạy; hãy đợi ít nhất 1 phút"})
+				return
+			}
+			lastCronRun[req.JobID] = time.Now()
+			cronRunMu.Unlock()
+			releaseReservation := func() {
+				cronRunMu.Lock()
+				delete(lastCronRun, req.JobID)
+				cronRunMu.Unlock()
+			}
+			output, err := runJobSSHCommand(command)
+			if err != nil {
+				releaseReservation()
+				if strings.Contains(err.Error(), "CRON_NOT_SCHEDULED") {
+					c.JSON(http.StatusConflict, gin.H{"error": "Cronjob không còn trong lịch chạy aaPanel"})
+					return
+				}
+				if strings.Contains(err.Error(), "CRON_SCRIPT_UNAVAILABLE") {
+					c.JSON(http.StatusConflict, gin.H{"error": "Script cronjob không còn khả dụng"})
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể khởi chạy cronjob"})
+				return
+			}
+			if strings.TrimSpace(output) != "STARTED" {
+				releaseReservation()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xác nhận được cronjob đã khởi chạy"})
+				return
+			}
+			// Triggering is not completion: keep the expensive Drive/snapshot caches
+			// available until their normal TTL expires, so dashboards stay responsive.
+			invalidate("cron-jobs")
+			c.JSON(http.StatusAccepted, gin.H{"status": "started"})
+		})
+
 		// API 4: Giám sát Uptime các website (động theo thư mục /www/wwwroot)
 		auth.GET("/websites-status", func(c *gin.Context) {
 			cmds := `
@@ -1421,19 +1571,7 @@ fi
 		// API 10: Liệt kê các file backup cục bộ
 		auth.GET("/local-snapshots", func(c *gin.Context) {
 			cmds := `
-find /www/backup -type f -mtime -14 \( -name "*.tar.gz" -o -name "*.sql" -o -name "*.zip" -o -name "*.gz" \) -printf '%T@|%s|%P\n' 2>/dev/null | sort -rn | head -n 500 | awk -F'|' '
-{
-  # Convert epoch to date (requires GNU awk or shell date)
-  cmd = "date -d @" int($1) " +\"%Y-%m-%d %H:%M:%S\"";
-  cmd | getline date_str;
-  close(cmd);
-  size=$2;
-  path=$3;
-  # Category is the first dir
-  split(path, p, "/");
-  if(length(p)>1) { cat=p[1]; name=p[length(p)] } else { cat="root"; name=path }
-  printf "%s|%s|%s|%s\n", date_str, cat, name, size
-}'
+find /www/backup/site /www/backup/database /www/backup/panel -type f \( -name "*.tar.gz" -o -name "*.sql" -o -name "*.zip" -o -name "*.gz" \) -printf '%TY-%Tm-%Td %TH:%TM:%TS|%s|%p\n' 2>/dev/null
 `
 			output, err := cachedGet("local-snapshots", 30*time.Second, func() ([]byte, error) {
 				out, e := executeSSHCommand(cmds)
@@ -1444,29 +1582,7 @@ find /www/backup -type f -mtime -14 \( -name "*.tar.gz" -o -name "*.sql" -o -nam
 				return
 			}
 
-			lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-			type localSnap struct {
-				Date     string `json:"date"`
-				Category string `json:"category"`
-				Name     string `json:"name"`
-				Size     int64  `json:"size"`
-			}
-			snaps := []localSnap{}
-			for _, line := range lines {
-				parts := strings.Split(line, "|")
-				if len(parts) < 4 {
-					continue
-				}
-				var size int64
-				fmt.Sscanf(parts[3], "%d", &size)
-				snaps = append(snaps, localSnap{
-					Date:     parts[0],
-					Category: parts[1],
-					Name:     parts[2],
-					Size:     size,
-				})
-			}
-			c.JSON(http.StatusOK, snaps)
+			c.JSON(http.StatusOK, parseLocalSnapshots(string(output)))
 		})
 
 		// API 11: Tải về snapshot từ Google Drive về trình duyệt (stream qua SSH)

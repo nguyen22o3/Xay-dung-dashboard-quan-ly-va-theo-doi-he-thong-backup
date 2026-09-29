@@ -44,7 +44,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
     for (let i = 13; i >= 0; i--) {
       const d = new Date()
       d.setDate(d.getDate() - i)
-      days.push(d.toISOString().split('T')[0])
+      days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
     }
     return days
   }, [])
@@ -258,7 +258,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                 <div>
                   <div style={{ fontSize: '12px', color: theme.textSecondary }}>{lang === 'vi' ? 'Sao lưu gần nhất' : 'Last Backup'}</div>
                   <div style={{ fontSize: '14px', fontWeight: 'bold', color: theme.titleColor }}>
-                    {s.local_backup?.latest_date || '--'}
+                    {localSnapshots.data?.[0]?.date.split(' ')[0] || '--'}
                   </div>
                 </div>
               </div>

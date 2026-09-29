@@ -17,6 +17,15 @@ export const API_BASE: string = import.meta.env.VITE_API_BASE || 'http://localho
 
 export const client = axios.create({ baseURL: API_BASE, timeout: 200000 })
 
+type SessionData<T> = { token: string; data: T }
+let serverStatusCache: SessionData<ServerStatus> | null = null
+let backupStatusCache: SessionData<BackupStatus> | null = null
+
+function cachedSessionData<T>(entry: SessionData<T> | null): T | null {
+  const token = localStorage.getItem('auth_token')
+  return token && entry?.token === token ? entry.data : null
+}
+
 export function apiErrorMessage(error: unknown, fallback: string): string {
   if (axios.isAxiosError<{ error?: string }>(error)) {
     return error.response?.data?.error || error.message || fallback
@@ -52,12 +61,16 @@ export async function login(username: string, password: string): Promise<string>
 }
 
 export async function fetchServerStatus(): Promise<ServerStatus> {
+  const token = localStorage.getItem('auth_token')
   const { data } = await client.get<ServerStatus>('/api/server-status')
+  if (token && token === localStorage.getItem('auth_token')) serverStatusCache = { token, data }
   return data
 }
 
 export async function fetchBackupStatus(): Promise<BackupStatus> {
+  const token = localStorage.getItem('auth_token')
   const { data } = await client.get<BackupStatus>('/api/backup-status')
+  if (token && token === localStorage.getItem('auth_token')) backupStatusCache = { token, data }
   return data
 }
 
@@ -69,6 +82,10 @@ export async function fetchWebsitesStatus(): Promise<WebsiteStatus[]> {
 export async function fetchCronJobs(): Promise<CronJob[]> {
   const { data } = await client.get<CronJob[]>('/api/cron-jobs')
   return data
+}
+
+export async function runCronJob(jobId: string): Promise<void> {
+  await client.post('/api/run-cron-job', { jobId })
 }
 
 export async function fetchConfig(): Promise<AppConfig> {
@@ -119,6 +136,8 @@ export function prefetchSnapshots(): void {
 export function clearSnapshotsCache(): void {
   snapshotCache = null
   snapshotInFlight = null
+  serverStatusCache = null
+  backupStatusCache = null
 }
 
 export async function fetchLocalSnapshots(): Promise<SnapshotFile[]> {
@@ -243,11 +262,11 @@ function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, initialData: 
 }
 
 export function useServerStatus(interval = 30000): PollState<ServerStatus> {
-  return usePoll(fetchServerStatus, interval)
+  return usePoll(fetchServerStatus, interval, () => cachedSessionData(serverStatusCache))
 }
 
 export function useBackupStatus(interval = 30000): PollState<BackupStatus> {
-  return usePoll(fetchBackupStatus, interval)
+  return usePoll(fetchBackupStatus, interval, () => cachedSessionData(backupStatusCache))
 }
 
 export function useWebsitesStatus(interval = 30000): PollState<WebsiteStatus[]> {

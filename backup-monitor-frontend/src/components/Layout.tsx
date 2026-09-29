@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react'
-import { Activity, ArrowUpRight, Archive, Cloud, Database, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Server, Settings, Sun, X } from 'lucide-react'
+import { Activity, ArrowUpRight, Archive, CalendarClock, Cloud, Database, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Server, Settings, Sun, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { apiErrorMessage, refreshData, useServerStatus } from '../api'
 import type { Lang } from '../language'
@@ -14,8 +14,9 @@ const overviewItems: NavItem[] = [
 ]
 
 const managementItems: NavItem[] = [
-  { tab: 'activity', icon: Activity, vi: 'Nhật ký hoạt động', en: 'Activity log' },
   { tab: 'available', icon: Archive, vi: 'Bản sao lưu', en: 'Backups' },
+  { tab: 'jobs', icon: CalendarClock, vi: 'Cronjob', en: 'Cron Jobs' },
+  { tab: 'activity', icon: Activity, vi: 'Nhật ký hoạt động', en: 'Activity log' },
   { tab: 'settings', icon: Settings, vi: 'Cài đặt', en: 'Settings' },
 ]
 
