@@ -348,15 +348,43 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .cron-feedback { padding: 13px 24px; color: var(--app-accent); background: var(--app-soft-accent); font-size: 13px; }
 .cron-feedback--error { color: #ef6c78; background: rgba(239,108,120,.08); }
 .cron-table-wrap { overflow-x: auto; }
-.cron-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+.cron-table { width: 100%; min-width: 1080px; border-collapse: collapse; font-size: 13px; text-align: left; }
 .cron-table th { padding: 13px 24px; color: var(--app-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
-.cron-table td { padding: 17px 24px; border-top: 1px solid var(--app-border); color: var(--app-text); white-space: nowrap; }
+.cron-table td { padding: 17px 24px; border-top: 1px solid var(--app-border); color: var(--app-text); white-space: nowrap; vertical-align: middle; }
+.cron-table th:last-child { text-align: center; }
+.cron-table td:last-child { width: 1%; }
+.cron-table tbody tr:hover { background: color-mix(in srgb, var(--app-accent) 3%, var(--app-card)); }
 .cron-table td strong, .cron-table td small { display: block; }
 .cron-table td strong { font-weight: 650; }
 .cron-table td small { margin-top: 5px; color: var(--app-muted); font-size: 11px; }
 .cron-run { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--app-accent) 30%, transparent); border-radius: 8px; background: var(--app-soft-accent); color: var(--app-accent); font-size: 12px; font-weight: 700; white-space: nowrap; }
 .cron-run:hover:not(:disabled) { border-color: var(--app-accent); }
 .cron-run:disabled { opacity: .55; cursor: not-allowed; }
+.cron-actions { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.cron-actions .cron-run { min-width: 130px; }
+.cron-actions .cron-view-log { min-width: 112px; }
+.cron-view-log { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 0 12px; border: 1px solid var(--app-border); border-radius: 8px; background: transparent; color: var(--app-text); font-size: 12px; font-weight: 650; white-space: nowrap; }
+.cron-view-log:hover { color: var(--app-accent); border-color: var(--app-accent); }
+.cron-log-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.7); }
+.cron-log-dialog { display: flex; flex-direction: column; width: min(880px, 100%); max-height: min(80vh, 780px); border: 1px solid var(--app-border); border-radius: 16px; background: var(--app-card); box-shadow: 0 24px 70px rgba(0,0,0,.35); }
+.cron-log-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 19px 22px; border-bottom: 1px solid var(--app-border); }
+.cron-log-heading h2 { margin: 0 0 5px; color: var(--app-text); font-size: 17px; }
+.cron-log-heading p { margin: 0; color: var(--app-muted); font-size: 12px; }
+.cron-log-controls { display: flex; gap: 7px; }
+.cron-log-controls button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--app-border); border-radius: 8px; background: transparent; color: var(--app-muted); }
+.cron-log-controls button:hover:not(:disabled) { color: var(--app-accent); border-color: var(--app-accent); }
+.cron-log-controls button:disabled { opacity: .5; cursor: not-allowed; }
+.cron-log-body { min-height: 130px; overflow: auto; padding: 20px 22px; color: var(--app-muted); font-size: 13px; }
+.cron-log-body pre { width: max-content; min-width: 100%; margin: 0; color: var(--app-text); font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre; }
+.cron-log-error { color: #ef6c78; }
+.cron-schedule-dialog { width: min(520px, 100%); }
+.cron-schedule-body { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 22px; }
+.cron-schedule-body label { color: var(--app-text); font-size: 13px; font-weight: 650; }
+.cron-schedule-body input { min-height: 42px; padding: 0 12px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-card); color: var(--app-text); font: inherit; }
+.cron-schedule-body input:focus { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+.cron-schedule-body small { color: var(--app-muted); font-size: 12px; }
+.cron-schedule-body p { margin: 0; font-size: 12px; }
+.cron-schedule-footer { display: flex; justify-content: flex-end; gap: 9px; padding: 14px 22px; border-top: 1px solid var(--app-border); }
 @media (max-width: 760px) {
   .cron-page-heading { align-items: flex-start; }
   .cron-page-heading h1 { font-size: 27px; }

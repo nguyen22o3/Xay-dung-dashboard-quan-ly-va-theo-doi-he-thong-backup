@@ -65,7 +65,13 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
   const activity = [...(backupData?.activity ?? []), ...(backupData?.localActivity ?? [])]
     .sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`))
     .slice(0, 4)
-  const latestDate = [...history].reverse().find((item) => (item.files ?? 0) > 0)?.date
+  const cronTimes = (serverData?.cron_times ?? '').split(',').map((time) => time.trim()).filter((time) => /^\d{2}:\d{2}$/.test(time))
+  const now = new Date()
+  const currentMinute = now.getHours() * 60 + now.getMinutes()
+  const nextCronTime = cronTimes.find((time) => {
+    const [hours, minutes] = time.split(':').map(Number)
+    return hours * 60 + minutes > currentMinute
+  }) ?? cronTimes[0]
   const gridColor = isDark ? '#28302c' : '#e8eeea'
   const mutedColor = isDark ? '#91a19a' : '#718076'
 
@@ -92,7 +98,7 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
         <KpiCard label={vi ? 'Tệp trên Google Drive' : 'Files on Google Drive'} value={backupData?.size?.count?.toLocaleString() ?? '—'} detail={vi ? 'Tổng số tệp sao lưu' : 'Total backup files'} tone="green" icon={Cloud} data={chartData.map((item) => item.files)} />
         <KpiCard label={vi ? 'Dung lượng sao lưu' : 'Backup storage'} value={backupData?.size?.bytes != null ? formatBytes(backupData.size.bytes) : '—'} detail="Google Drive / Backup" tone="blue" icon={DatabaseBackup} data={chartData.map((item) => item.bytes)} />
         <KpiCard label={vi ? 'File backup cục bộ' : 'Local backup files'} value={serverData?.local_backup?.count?.toLocaleString() ?? '—'} detail={serverData?.local_backup?.size ? `${vi ? 'Dung lượng' : 'Storage'} ${serverData.local_backup.size}` : (vi ? 'Trên máy chủ' : 'On server')} tone="amber" icon={HardDrive} />
-        <KpiCard label={vi ? 'Lịch sao lưu' : 'Scheduled jobs'} value={serverData?.crons?.toLocaleString() ?? '—'} detail={latestDate ? `${vi ? 'Có backup ngày' : 'Latest backup'} ${latestDate}` : (vi ? 'Chưa có lịch sử trên Drive' : 'No Drive history yet')} tone="purple" icon={CalendarClock} />
+        <KpiCard label={vi ? 'Tác vụ định kỳ' : 'Scheduled jobs'} value={serverData?.crons?.toLocaleString() ?? '—'} detail={nextCronTime ? `${vi ? 'Giờ chạy kế tiếp' : 'Next run'}: ${nextCronTime}` : (vi ? 'Chưa có lịch chạy' : 'No schedule yet')} tone="purple" icon={CalendarClock} />
       </div>
 
       <div className="overview-main-grid">

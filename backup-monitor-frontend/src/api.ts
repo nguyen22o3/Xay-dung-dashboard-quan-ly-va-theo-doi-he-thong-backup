@@ -7,6 +7,7 @@ import type {
   BackupJobId,
   BackupStatus,
   CronJob,
+  CronJobLog,
   LoginResponse,
   ServerStatus,
   SnapshotFile,
@@ -20,6 +21,32 @@ export const client = axios.create({ baseURL: API_BASE, timeout: 200000 })
 type SessionData<T> = { token: string; data: T }
 let serverStatusCache: SessionData<ServerStatus> | null = null
 let backupStatusCache: SessionData<BackupStatus> | null = null
+type HealthyBackup = SessionData<BackupStatus> & { fetchedAt: string }
+const HEALTHY_BACKUP_KEY = 'backup_status_last_healthy_v1'
+let healthyBackupCache: HealthyBackup | null = null
+
+function lastHealthyBackup(): HealthyBackup | null {
+  const token = localStorage.getItem('auth_token')
+  if (!token) return null
+  if (healthyBackupCache?.token === token) return healthyBackupCache
+  try {
+    const saved = sessionStorage.getItem(HEALTHY_BACKUP_KEY)
+    if (!saved) return null
+    const parsed = JSON.parse(saved) as HealthyBackup
+    if (parsed.token !== token || !parsed.fetchedAt || !parsed.data?.size || !Array.isArray(parsed.data.history)) return null
+    healthyBackupCache = parsed
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function cachedBackupStatus(): BackupStatus | null {
+  const cached = cachedSessionData(backupStatusCache)
+  if (cached) return cached
+  const lastGood = lastHealthyBackup()
+  return lastGood ? { ...lastGood.data, driveStale: true, driveDataAt: lastGood.fetchedAt } : null
+}
 
 function cachedSessionData<T>(entry: SessionData<T> | null): T | null {
   const token = localStorage.getItem('auth_token')
@@ -48,6 +75,7 @@ client.interceptors.response.use(
   (error) => {
     const token = localStorage.getItem('auth_token')
     if (error.response?.status === 401 && token) {
+      clearSnapshotsCache()
       localStorage.removeItem('auth_token')
       window.location.reload()
     }
@@ -70,8 +98,38 @@ export async function fetchServerStatus(): Promise<ServerStatus> {
 export async function fetchBackupStatus(): Promise<BackupStatus> {
   const token = localStorage.getItem('auth_token')
   const { data } = await client.get<BackupStatus>('/api/backup-status')
-  if (token && token === localStorage.getItem('auth_token')) backupStatusCache = { token, data }
-  return data
+  const lastGood = lastHealthyBackup()
+  const fetchedAt = new Date().toISOString()
+  const backendDataTime = Date.parse(data.driveDataAt || '')
+  const useBrowserSnapshot = Boolean(data.driveError && lastGood &&
+    (!data.driveStale || !Number.isFinite(backendDataTime) || Date.parse(lastGood.fetchedAt) > backendDataTime))
+  const result: BackupStatus = useBrowserSnapshot && lastGood
+    ? {
+        ...data,
+        about: lastGood.data.about,
+        size: lastGood.data.size,
+        dirs: lastGood.data.dirs,
+        totalFolders: lastGood.data.totalFolders,
+        history: lastGood.data.history,
+        todayBreakdownBytes: lastGood.data.todayBreakdownBytes,
+        driveStale: true,
+        driveDataAt: lastGood.fetchedAt,
+      }
+    : data.driveStale
+      ? { ...data, driveStale: true }
+      : { ...data, driveStale: false, driveDataAt: data.driveError ? undefined : (data.driveDataAt || fetchedAt) }
+  if (token && token === localStorage.getItem('auth_token')) {
+    backupStatusCache = { token, data: result }
+    if (!data.driveError && !data.driveStale && data.size && Array.isArray(data.history)) {
+      healthyBackupCache = { token, data: result, fetchedAt: result.driveDataAt || fetchedAt }
+      try {
+        sessionStorage.setItem(HEALTHY_BACKUP_KEY, JSON.stringify(healthyBackupCache))
+      } catch {
+        // The in-memory snapshot still works when session storage is unavailable.
+      }
+    }
+  }
+  return result
 }
 
 export async function fetchWebsitesStatus(): Promise<WebsiteStatus[]> {
@@ -86,6 +144,15 @@ export async function fetchCronJobs(): Promise<CronJob[]> {
 
 export async function runCronJob(jobId: string): Promise<void> {
   await client.post('/api/run-cron-job', { jobId })
+}
+
+export async function fetchCronJobLog(jobId: string): Promise<CronJobLog> {
+  const { data } = await client.get<CronJobLog>(`/api/cron-jobs/${encodeURIComponent(jobId)}/log`)
+  return data
+}
+
+export async function updateCronJobSchedule(jobId: string, time: string, expectedSchedule: string): Promise<void> {
+  await client.put(`/api/cron-jobs/${encodeURIComponent(jobId)}/schedule`, { time, expectedSchedule })
 }
 
 export async function fetchConfig(): Promise<AppConfig> {
@@ -129,15 +196,17 @@ export async function fetchSnapshots(): Promise<SnapshotFile[]> {
   }
 }
 
-export function prefetchSnapshots(): void {
-  if (!cachedSnapshots()) void fetchSnapshots().catch(() => {})
-}
-
 export function clearSnapshotsCache(): void {
   snapshotCache = null
   snapshotInFlight = null
   serverStatusCache = null
   backupStatusCache = null
+  healthyBackupCache = null
+  try {
+    sessionStorage.removeItem(HEALTHY_BACKUP_KEY)
+  } catch {
+    // Storage may be disabled by the browser.
+  }
 }
 
 export async function fetchLocalSnapshots(): Promise<SnapshotFile[]> {
@@ -266,7 +335,12 @@ export function useServerStatus(interval = 30000): PollState<ServerStatus> {
 }
 
 export function useBackupStatus(interval = 30000): PollState<BackupStatus> {
-  return usePoll(fetchBackupStatus, interval, () => cachedSessionData(backupStatusCache))
+  const state = usePoll(fetchBackupStatus, interval, cachedBackupStatus)
+  return {
+    ...state,
+    data: state.error && state.data ? { ...state.data, driveStale: true } : state.data,
+    error: state.error ?? state.data?.driveError ?? null,
+  }
 }
 
 export function useWebsitesStatus(interval = 30000): PollState<WebsiteStatus[]> {

@@ -513,7 +513,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                   <span>{lang === 'vi' ? 'Tiến trình hẹn giờ' : 'Cron Jobs'}</span>
                   <div style={{ padding: '2px 8px', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.gridLine}`, borderRadius: '12px', fontSize: '10px', display: 'flex', alignItems: 'center', gap: '6px', color: theme.successText, textTransform: 'none' }}>
                     <CheckCircle size={12} />
-                    <span style={{ color: theme.titleColor, fontWeight: 'bold' }}>{cron.data ? cron.data.filter((job) => job.name.includes('Backup') && !job.name.includes('Drive')).length + ' Jobs' : '0'}</span>
+                    <span style={{ color: theme.titleColor, fontWeight: 'bold' }}>{cron.data ? cron.data.filter((job) => job.id === 'backup-site' || job.id === 'backup-database').length + ' Jobs' : '0'}</span>
                   </div>
                 </div>
               </div>
@@ -526,11 +526,11 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                   </tr>
                 </thead>
                 <tbody>
-                  {(cron.data || []).filter(j => j.name.includes('Backup') && !j.name.includes('Drive')).length > 0 ? (
-                    (cron.data || []).filter(j => j.name.includes('Backup') && !j.name.includes('Drive')).map((cJob, i) => (
-                      <tr key={i} style={{ borderBottom: `1px solid ${theme.gridLine}` }}>
+                  {(cron.data || []).filter(j => j.id === 'backup-site' || j.id === 'backup-database').length > 0 ? (
+                    (cron.data || []).filter(j => j.id === 'backup-site' || j.id === 'backup-database').map((cJob) => (
+                      <tr key={`${cJob.id}:${cJob.schedule}`} style={{ borderBottom: `1px solid ${theme.gridLine}` }}>
                         <td style={{ padding: '6px 4px', whiteSpace: 'nowrap',  textOverflow: 'ellipsis', maxWidth: '120px' }} title={cJob.name}>
-                          {cJob.name}
+                          {cJob.id === 'backup-site' ? (lang === 'vi' ? 'Sao lưu website' : 'Backup websites') : (lang === 'vi' ? 'Sao lưu database' : 'Backup databases')}
                         </td>
                         <td style={{ padding: '6px 4px', color: theme.textSecondary }}>{formatCronSchedule(cJob.schedule)}</td>
                       </tr>

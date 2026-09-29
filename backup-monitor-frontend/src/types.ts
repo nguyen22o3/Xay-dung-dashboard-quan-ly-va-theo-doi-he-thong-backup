@@ -44,6 +44,9 @@ export interface BackupActivityEntry {
 }
 
 export interface BackupStatus {
+  driveError?: string
+  driveStale?: boolean
+  driveDataAt?: string
   about?: { total?: number; used?: number; free?: number }
   size?: { count?: number; bytes?: number }
   dirs?: string
@@ -65,14 +68,20 @@ export interface WebsiteStatus {
   time: string
 }
 
-export type CronJobStatus = 'success' | 'failed' | 'never'
+export type CronJobStatus = 'success' | 'failed' | 'never' | 'unknown'
 
 export interface CronJob {
+  id: string
   name: string
   script: string
   schedule: string
   last_run: string
   status: CronJobStatus
+}
+
+export interface CronJobLog {
+  content: string
+  exists: boolean
 }
 
 export interface AppConfig {

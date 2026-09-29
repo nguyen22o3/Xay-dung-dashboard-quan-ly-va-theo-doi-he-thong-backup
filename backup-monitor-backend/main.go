@@ -458,6 +458,18 @@ var (
 )
 
 func cachedGet(key string, ttl time.Duration, producer func() ([]byte, error)) ([]byte, error) {
+	return cachedGetWithPolicy(key, ttl, producer, nil, nil)
+}
+
+func cachedGetWithPolicy(key string, ttl time.Duration, producer func() ([]byte, error), ttlForValue func([]byte) time.Duration, staleValue func([]byte) []byte) ([]byte, error) {
+	showStale := func(value []byte) []byte {
+		if staleValue != nil {
+			if marked := staleValue(value); len(marked) > 0 {
+				return marked
+			}
+		}
+		return value
+	}
 	cacheMu.Lock()
 	entry, hasEntry := cache[key]
 	isFresh := hasEntry && time.Now().Before(entry.expiresAt)
@@ -472,7 +484,7 @@ func cachedGet(key string, ttl time.Duration, producer func() ([]byte, error)) (
 	if isRunning {
 		flightMu.Unlock()
 		if hasEntry && len(entry.value) > 0 {
-			return entry.value, nil
+			return showStale(entry.value), nil
 		}
 		<-call.done
 		return call.val, call.err
@@ -485,8 +497,12 @@ func cachedGet(key string, ttl time.Duration, producer func() ([]byte, error)) (
 	doWork := func() ([]byte, error) {
 		b, err := producer()
 		if err == nil {
+			valueTTL := ttl
+			if ttlForValue != nil {
+				valueTTL = ttlForValue(b)
+			}
 			cacheMu.Lock()
-			cache[key] = cacheEntry{value: b, expiresAt: time.Now().Add(ttl)}
+			cache[key] = cacheEntry{value: b, expiresAt: time.Now().Add(valueTTL)}
 			cacheMu.Unlock()
 		}
 
@@ -504,12 +520,12 @@ func cachedGet(key string, ttl time.Duration, producer func() ([]byte, error)) (
 	// Nếu đã có cache cũ, trả về luôn và làm mới ngầm (Stale-While-Revalidate)
 	if hasEntry && len(entry.value) > 0 {
 		go doWork()
-		return entry.value, nil
+		return showStale(entry.value), nil
 	}
 
 	b, err := doWork()
 	if err != nil && hasEntry && len(entry.value) > 0 {
-		return entry.value, nil
+		return showStale(entry.value), nil
 	}
 	return b, err
 }
@@ -877,6 +893,64 @@ func encodeForShell(value string) string {
 	return base64.StdEncoding.EncodeToString([]byte(value))
 }
 
+const localRetentionCopies = 14
+
+// A deletion is expected only when at least keep newer backup artifacts for
+// the same target still exist. The timestamp comes from the backup filename,
+// not mtime, so copying an old backup back cannot make it look new.
+const rotationDecisionShell = `backup_key() {
+    local name="${1##*/}"
+    if [[ "$name" =~ ^(.*)(20[0-9]{2}-?[0-9]{2}-?[0-9]{2})([_-]([0-9]{6}))? ]]; then
+        local prefix="${BASH_REMATCH[1]}"
+        local day="${BASH_REMATCH[2]//-/}"
+        local backup_time="${BASH_REMATCH[4]:-000000}"
+        printf '%s|%s%s\n' "$prefix" "$day" "$backup_time"
+        return 0
+    fi
+    return 1
+}
+
+is_expected_rotation() {
+    local deleted="$1" keep="$2"
+    local dir="${deleted%/*}" name="${deleted##*/}"
+    local key prefix stamp candidate other other_prefix other_stamp
+    local newer=0
+    key=$(backup_key "$name") || return 1
+    IFS='|' read -r prefix stamp <<< "$key"
+
+    for candidate in "$dir"/*; do
+        [[ -f "$candidate" && -s "$candidate" && ! -L "$candidate" ]] || continue
+        case "$candidate" in
+            *.zip|*.tar.gz|*.sql.gz|*.gz|*.sql) ;;
+            *) continue ;;
+        esac
+        other=$(backup_key "${candidate##*/}") || continue
+        IFS='|' read -r other_prefix other_stamp <<< "$other"
+        if [[ "$other_prefix" == "$prefix" && "$other_stamp" > "$stamp" ]]; then
+            ((newer += 1))
+            if ((newer >= keep)); then
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+# Only the local backup script writes these path-specific, short-lived markers.
+# Consume the marker once so an unrelated later deletion still raises an alert.
+is_script_rotation() {
+    local deleted="$1" digest marker issued now
+    digest=$(printf '%s' "$deleted" | sha256sum)
+    digest="${digest%% *}"
+    marker="${BACKUP_MONITOR_ROTATION_DIR:-/run/backup-monitor-rotations}/$digest"
+    [[ -f "$marker" && ! -L "$marker" ]] || return 1
+    issued=$(<"$marker")
+    rm -f -- "$marker"
+    [[ "$issued" =~ ^[0-9]+$ ]] || return 1
+    now=$(date +%s)
+    (( now >= issued && now - issued <= 120 ))
+}`
+
 func buildAlertScripts(settings AlertSettings) (string, string) {
 	variables := fmt.Sprintf(`decode_value() { printf '%%s' "$1" | base64 -d; }
 DISCORD_WEBHOOK=$(decode_value '%s')
@@ -907,6 +981,7 @@ fi`, variables, settings.Threshold, settings.Threshold)
 	realtimeScript := fmt.Sprintf(`#!/bin/bash
 set -u
 %s
+%s
 exec 9>/run/backup-monitor-inotify.lock
 flock -n 9 || exit 0
 inotifywait -m -r -e delete --format '%%w%%f' /www/backup/ 2>/dev/null | while IFS= read -r FILE
@@ -915,24 +990,16 @@ do
         continue
     fi
 
-    FILE_DATE=$(echo "$FILE" | grep -oP '20\d{2}-?\d{2}-?\d{2}' | head -1)
-    if [ ! -z "$FILE_DATE" ]; then
-        NORMALIZED_DATE=$(date -d "${FILE_DATE//-/}" +%%Y-%%m-%%d 2>/dev/null)
-        if [ $? -eq 0 ]; then
-            FILE_EPOCH=$(date -d "$NORMALIZED_DATE" +%%s)
-            TODAY_EPOCH=$(date +%%s)
-            DIFF_DAYS=$(( (TODAY_EPOCH - FILE_EPOCH) / 86400 ))
-            if [ "$DIFF_DAYS" -ge %d ]; then
-                continue
-            fi
-        fi
+    # Script-controlled same-day replacement or aaPanel's count-based rotation.
+    if is_script_rotation "$FILE" || is_expected_rotation "$FILE" %d; then
+        continue
     fi
 
     MSG="BAO DONG KHAN CAP: File backup [$FILE] vua bi XOA khoi may chu! Thoi gian: $(date)"
     if [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$MSG\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
     if [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$MSG" >/dev/null; fi
     if [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [URGENT] File Deleted\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$MSG" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
-done`, variables, settings.Threshold)
+ done`, variables, rotationDecisionShell, localRetentionCopies)
 
 	return integrityScript, realtimeScript
 }
@@ -941,66 +1008,55 @@ func buildAlertInstallCommand(integrityScript, realtimeScript string) string {
 	return fmt.Sprintf(`set -eu
 umask 077
 command -v inotifywait >/dev/null 2>&1 || { dnf install epel-release -y >/dev/null 2>&1 && dnf install inotify-tools -y >/dev/null 2>&1; }
-printf '%%s' '%s' | base64 -d > /root/check_integrity.sh
-printf '%%s' '%s' | base64 -d > /root/realtime_monitor.sh
-chmod 600 /root/check_integrity.sh /root/realtime_monitor.sh
-(crontab -l 2>/dev/null | grep -v 'check_integrity.sh' | grep -v 'realtime_monitor.sh'; printf '%%s\n' '0 12 * * * /bin/bash /root/check_integrity.sh' '@reboot nohup /bin/bash /root/realtime_monitor.sh >/dev/null 2>&1 &') | crontab -
-nohup /bin/bash /root/realtime_monitor.sh >/dev/null 2>&1 &`, encodeForShell(integrityScript), encodeForShell(realtimeScript))
+SCRIPTS_DIR=/root/scripts
+[ ! -L "$SCRIPTS_DIR" ] || { printf 'Scripts directory must not be a symlink\n' >&2; exit 1; }
+install -d -m 700 "$SCRIPTS_DIR"
+[ "$(stat -c '%%u' "$SCRIPTS_DIR")" = 0 ] || { printf 'Scripts directory must be root-owned\n' >&2; exit 1; }
+INTEGRITY_TMP=$(mktemp "$SCRIPTS_DIR/.check_integrity.XXXXXXXX")
+REALTIME_TMP=$(mktemp "$SCRIPTS_DIR/.realtime_monitor.XXXXXXXX")
+trap 'rm -f -- "$INTEGRITY_TMP" "$REALTIME_TMP"' EXIT
+printf '%%s' '%s' | base64 -d > "$INTEGRITY_TMP"
+printf '%%s' '%s' | base64 -d > "$REALTIME_TMP"
+chmod 600 "$INTEGRITY_TMP" "$REALTIME_TMP"
+mv -f -- "$INTEGRITY_TMP" "$SCRIPTS_DIR/check_integrity.sh"
+mv -f -- "$REALTIME_TMP" "$SCRIPTS_DIR/realtime_monitor.sh"
+(crontab -l 2>/dev/null | grep -v 'check_integrity.sh' | grep -v 'realtime_monitor.sh'; printf '%%s\n' '0 12 * * * /bin/bash /root/scripts/check_integrity.sh' '@reboot nohup /bin/bash /root/scripts/realtime_monitor.sh >/dev/null 2>&1 &') | crontab -
+OLD_MONITORS=$(pgrep -f '^(/bin/)?bash /root/(scripts/)?realtime_monitor[.]sh$' || true)
+for PID in $OLD_MONITORS; do
+  pkill -TERM -P "$PID" 2>/dev/null || true
+  kill -TERM "$PID" 2>/dev/null || true
+done
+for attempt in 1 2 3 4 5; do
+  if flock -n /run/backup-monitor-inotify.lock -c true; then
+    nohup /bin/bash /root/scripts/realtime_monitor.sh >/dev/null 2>&1 &
+    exit 0
+  fi
+  sleep 1
+done
+printf 'Previous backup monitor still holds the lock\n' >&2
+exit 1
+`, encodeForShell(integrityScript), encodeForShell(realtimeScript))
 }
 
 var runJobSSHCommand = executeSSHCommand
 
-var aaPanelCronIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{1,64}$`)
-
-// Only aaPanel cron wrappers that are still scheduled may be started manually.
-// The client supplies an identifier, never a shell command or filesystem path.
+// Only allowlisted scripts still scheduled in root's crontab may be started.
+// The client never supplies a command or path.
 func commandForCronJob(jobID string) (string, bool) {
-	if !aaPanelCronIDPattern.MatchString(jobID) {
-		return "", false
+	if task, ok := managedCronTaskByID(jobID); ok {
+		return commandForManagedCronJob(task), true
 	}
-	script := "/www/server/cron/" + jobID
-	logPath := script + ".log"
-	return fmt.Sprintf(`set -eu
-SCRIPT=%q
-LOG=%q
-if ! crontab -l 2>/dev/null | awk -v target="$SCRIPT" 'NF >= 6 && $1 !~ /^#/ && $6 == target { found=1 } END { exit !found }'; then
-  printf 'CRON_NOT_SCHEDULED\n' >&2
-  exit 3
-fi
-if [ ! -f "$SCRIPT" ] || [ -L "$SCRIPT" ] || [ -L "$LOG" ]; then
-  printf 'CRON_SCRIPT_UNAVAILABLE\n' >&2
-  exit 4
-fi
-nohup /bin/bash "$SCRIPT" >> "$LOG" 2>&1 < /dev/null &
-printf 'STARTED\n'`, script, logPath), true
+	return "", false
 }
 
 func commandForJob(jobID string) (string, bool) {
 	switch jobID {
 	case "drive-sync":
-		return `SCRIPT_FILE=$(find /www/server/cron -maxdepth 1 -type f ! -name '*.log' -exec grep -IlE 'rclone|gdrive|auto_backup\.sh|/root/backup-monitor' {} + 2>/dev/null | head -n 1)
-if [ -n "$SCRIPT_FILE" ]; then
-  nohup /bin/bash "$SCRIPT_FILE" >/dev/null 2>&1 &
-  printf '{"status":"success","message":"Drive sync triggered"}\n'
-else
-  printf '{"status":"error","message":"Drive sync script not found"}\n'
-fi`, true
+		return commandForCronJob("drive-sync")
 	case "site-backup":
-		return `SCRIPT_FILE=$(find /www/server/cron -maxdepth 1 -type f ! -name '*.log' -exec grep -IlE 'backup\.py[[:space:]]+site' {} + 2>/dev/null | head -n 1)
-if [ -n "$SCRIPT_FILE" ]; then
-  nohup /bin/bash "$SCRIPT_FILE" >/dev/null 2>&1 &
-  printf '{"status":"success","message":"Site backup triggered"}\n'
-else
-  printf '{"status":"error","message":"Site backup script not found"}\n'
-fi`, true
+		return commandForCronJob("backup-site")
 	case "database-backup":
-		return `SCRIPT_FILE=$(find /www/server/cron -maxdepth 1 -type f ! -name '*.log' -exec grep -IlE 'backup\.py[[:space:]]+database' {} + 2>/dev/null | head -n 1)
-if [ -n "$SCRIPT_FILE" ]; then
-  nohup /bin/bash "$SCRIPT_FILE" >/dev/null 2>&1 &
-  printf '{"status":"success","message":"Database backup triggered"}\n'
-else
-  printf '{"status":"error","message":"Database backup script not found"}\n'
-fi`, true
+		return commandForCronJob("backup-database")
 	default:
 		return "", false
 	}
@@ -1083,14 +1139,21 @@ CPU=$(vmstat 1 2 | tail -1 | awk '{printf "%.1f%%", 100 - $15}')
 UPTIME=$(uptime -p | sed 's/up //')
 WEBSITES=$(find /www/wwwroot -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -v "/default$" | wc -l)
 DATABASES=$(find /www/server/data -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -vE "/(mysql|performance_schema|sys|phpmyadmin)$" | wc -l)
-CRONJOBS=$(crontab -l 2>/dev/null | grep "/www/server/cron" | while read -r min hour d m w cmd remainder; do if ! grep -q "acme" "$cmd" 2>/dev/null; then echo 1; fi; done | wc -l)
-CRON_TIMES=$(crontab -l 2>/dev/null | grep "/www/server/cron" | while read -r min hour d m w cmd remainder; do if ! grep -q "acme" "$cmd" 2>/dev/null; then printf "%02d:%02d\n" "$hour" "$min"; fi; done | sort | paste -sd, - | sed 's/,/, /g')
-
-DRIVE_CRONJOBS=$(crontab -l 2>/dev/null | grep "/www/server/cron" | while read -r min hour d m w cmd remainder; do if ! grep -qE "acme|backup\.py" "$cmd" 2>/dev/null; then echo 1; fi; done | wc -l)
-DRIVE_CRON_TIMES=$(crontab -l 2>/dev/null | grep "/www/server/cron" | while read -r min hour d m w cmd remainder; do if ! grep -qE "acme|backup\.py" "$cmd" 2>/dev/null; then printf "%02d:%02d\n" "$hour" "$min"; fi; done | sort | paste -sd, - | sed 's/,/, /g')
-
-LOCAL_CRONJOBS=$(crontab -l 2>/dev/null | grep "/www/server/cron" | while read -r min hour d m w cmd remainder; do if grep -q "backup\.py" "$cmd" 2>/dev/null; then echo 1; fi; done | wc -l)
-LOCAL_CRON_TIMES=$(crontab -l 2>/dev/null | grep "/www/server/cron" | while read -r min hour d m w cmd remainder; do if grep -q "backup\.py" "$cmd" 2>/dev/null; then printf "%02d:%02d\n" "$hour" "$min"; fi; done | sort | paste -sd, - | sed 's/,/, /g')
+CRON_SCHEDULES=$(crontab -l 2>/dev/null | awk '
+  NF >= 7 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $6 == "/bin/bash" {
+    if ($7 == "/root/scripts/backup-site.sh" || $7 == "/root/scripts/backup-database.sh") type = "local"
+    else if ($7 == "/root/scripts/auto_backup.sh") type = "drive"
+    else if ($7 == "/root/scripts/cleanup-panel-backups.sh" || $7 == "/root/scripts/check_integrity.sh") type = "other"
+    else next
+    printf "%s %02d:%02d\n", type, $2, $1
+  }
+')
+CRONJOBS=$(printf '%s\n' "$CRON_SCHEDULES" | sed '/^$/d' | wc -l)
+CRON_TIMES=$(printf '%s\n' "$CRON_SCHEDULES" | awk 'NF == 2 {print $2}' | sort | paste -sd, - | sed 's/,/, /g')
+DRIVE_CRONJOBS=$(printf '%s\n' "$CRON_SCHEDULES" | awk '$1 == "drive" {print 1}' | wc -l)
+DRIVE_CRON_TIMES=$(printf '%s\n' "$CRON_SCHEDULES" | awk '$1 == "drive" {print $2}' | sort | paste -sd, - | sed 's/,/, /g')
+LOCAL_CRONJOBS=$(printf '%s\n' "$CRON_SCHEDULES" | awk '$1 == "local" {print 1}' | wc -l)
+LOCAL_CRON_TIMES=$(printf '%s\n' "$CRON_SCHEDULES" | awk '$1 == "local" {print $2}' | sort | paste -sd, - | sed 's/,/, /g')
 
 LOCAL_BACKUP_DIR="/www/backup"
 if [ -d "$LOCAL_BACKUP_DIR" ]; then
@@ -1129,21 +1192,38 @@ echo "{\"disk\": $DISK, \"ram\": $RAM, \"cpu\": \"$CPU\", \"uptime\": \"$UPTIME\
 		// API 2: Kiểm tra các file Backup trên Google Drive và Dung lượng
 		auth.GET("/backup-status", func(c *gin.Context) {
 			cmds := `
-ABOUT=$(timeout -k 5s 10s /usr/bin/rclone about gdrive: --config /root/.config/rclone/rclone.conf --log-level ERROR --fast-list --json 2>/dev/null)
-if [ -n "$ABOUT" ]; then
-  echo "$ABOUT" > /tmp/rclone_about.json
-elif [ -f /tmp/rclone_about.json ]; then
-  ABOUT=$(cat /tmp/rclone_about.json)
-else
-  ABOUT="{}"
-fi
 TODAY=$(date +"%Y-%m-%d")
 
 LSF_OUT=$(timeout -k 5s 40s /usr/bin/rclone lsf -R --format "ps" gdrive:Backup --config /root/.config/rclone/rclone.conf --log-level ERROR --fast-list 2>&1)
 LSF_STATUS=$?
+DRIVE_ERROR=""
 if [ "$LSF_STATUS" -ne 0 ]; then
-  printf 'Không thể đọc gdrive:Backup bằng rclone (mã lỗi %s): %s\n' "$LSF_STATUS" "$LSF_OUT" >&2
-  exit 1
+  LSF_ERROR_LOWER=$(printf '%s' "$LSF_OUT" | tr '[:upper:]' '[:lower:]')
+  case "$LSF_ERROR_LOWER" in
+    *ratelimitexceeded*|*rate*limit*exceeded*|*quota*exceeded*) DRIVE_ERROR="Google Drive API đang giới hạn truy vấn; cần kiểm tra quota và cấu hình client ID riêng cho rclone" ;;
+    *) DRIVE_ERROR="rclone mã lỗi $LSF_STATUS; kiểm tra DNS, mạng và cấu hình rclone trên máy chủ" ;;
+  esac
+  LSF_OUT=""
+fi
+ABOUT=""
+ABOUT_CACHE=/tmp/rclone_about.json
+if [ -f "$ABOUT_CACHE" ] && [ ! -L "$ABOUT_CACHE" ]; then
+  CACHE_TIME=$(stat -c '%Y' "$ABOUT_CACHE" 2>/dev/null || printf '0')
+  CACHE_AGE=$(( $(date +%s) - CACHE_TIME ))
+  if [ "$CACHE_AGE" -ge 0 ] && [ "$CACHE_AGE" -lt 86400 ]; then
+    ABOUT=$(cat "$ABOUT_CACHE")
+  fi
+fi
+if [ -z "$DRIVE_ERROR" ] && [ -z "$ABOUT" ]; then
+  ABOUT=$(timeout -k 5s 10s /usr/bin/rclone about gdrive: --config /root/.config/rclone/rclone.conf --log-level ERROR --fast-list --json 2>/dev/null)
+  if [ -n "$ABOUT" ]; then
+    ABOUT_TMP=$(mktemp /tmp/rclone_about.XXXXXXXX)
+    printf '%s\n' "$ABOUT" > "$ABOUT_TMP"
+    mv -f -- "$ABOUT_TMP" "$ABOUT_CACHE"
+  fi
+fi
+if [ -z "$ABOUT" ] && [ -f "$ABOUT_CACHE" ] && [ ! -L "$ABOUT_CACHE" ]; then
+  ABOUT=$(cat "$ABOUT_CACHE")
 fi
 EVAL_OUT=$(printf '%s\n' "$LSF_OUT" | awk -F';' -v today="$TODAY" '
 $2 != "-1" && $2 != "" {
@@ -1204,6 +1284,10 @@ if [ -z "$HISTORY" ] || [ "$HISTORY" = "]" ]; then HISTORY="[]"; fi
 if [ -z "$ABOUT" ]; then ABOUT="{}"; fi
 
 SIZE="{\"bytes\": $TOTAL_BYTES, \"count\": $TOTAL_FILES}"
+if [ -n "$DRIVE_ERROR" ]; then
+  SIZE="null"
+  HISTORY="[]"
+fi
 
 ACTIVITY="["
 FIRST=1
@@ -1246,16 +1330,52 @@ LOCAL_LOGS=$(awk '
         printf "{\"name\":\"%s\",\"date\":\"%s\",\"time\":\"%s\",\"duration\":\"%s\",\"status\":\"%s\"},", name, date, time, duration, status
     }
     ' /www/server/cron/*.log 2>/dev/null | sed 's/,$//')
-LOCAL_ACTIVITY="[$LOCAL_LOGS]"
+CUSTOM_LOCAL_LOGS=$(tail -n 500 /root/backup-site.log /root/backup-database.log 2>/dev/null | awk '
+    /^CREATED \/www\/backup\/site\// {
+        path = $2
+        count = split(path, parts, "/")
+        name = parts[count]
+        if (match(name, /^web_(web[1-4]\.local)_([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})_site\.tar\.gz$/, dt)) {
+            printf "{\"name\":\"Backup Website: %s\",\"date\":\"%s-%s-%s\",\"time\":\"%s:%s:%s\",\"duration\":\"0\",\"status\":\"Successful\"},", dt[1], dt[2], dt[3], dt[4], dt[5], dt[6], dt[7]
+        }
+    }
+    /^CREATED \/www\/backup\/database\/mysql\// {
+        path = $2
+        count = split(path, parts, "/")
+        name = parts[count]
+        if (match(name, /^db_(sql_web[1-4]_local)_([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})_mysql_data\.sql\.gz$/, dt)) {
+            printf "{\"name\":\"Backup Database: %s\",\"date\":\"%s-%s-%s\",\"time\":\"%s:%s:%s\",\"duration\":\"0\",\"status\":\"Successful\"},", dt[1], dt[2], dt[3], dt[4], dt[5], dt[6], dt[7]
+        }
+    }
+' | sed 's/,$//')
+if [ -n "$LOCAL_LOGS" ] && [ -n "$CUSTOM_LOCAL_LOGS" ]; then
+  LOCAL_ACTIVITY="[$LOCAL_LOGS,$CUSTOM_LOCAL_LOGS]"
+else
+  LOCAL_ACTIVITY="[$LOCAL_LOGS$CUSTOM_LOCAL_LOGS]"
+fi
 
-echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\": $TOTAL_FOLDERS, \"history\": $HISTORY, \"activity\": $ACTIVITY, \"localActivity\": $LOCAL_ACTIVITY, \"todayBreakdown\": {\"site\": ${TODAY_SITE:-0}, \"database\": ${TODAY_DB:-0}, \"panel\": ${TODAY_PANEL:-0}}, \"todayBreakdownBytes\": {\"site\": ${TODAY_SITE_BYTES:-0}, \"database\": ${TODAY_DB_BYTES:-0}, \"panel\": ${TODAY_PANEL_BYTES:-0}}}"
+echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\": $TOTAL_FOLDERS, \"history\": $HISTORY, \"activity\": $ACTIVITY, \"localActivity\": $LOCAL_ACTIVITY, \"driveError\": \"$DRIVE_ERROR\", \"todayBreakdown\": {\"site\": ${TODAY_SITE:-0}, \"database\": ${TODAY_DB:-0}, \"panel\": ${TODAY_PANEL:-0}}, \"todayBreakdownBytes\": {\"site\": ${TODAY_SITE_BYTES:-0}, \"database\": ${TODAY_DB_BYTES:-0}, \"panel\": ${TODAY_PANEL_BYTES:-0}}}"
 `
-			output, err := cachedGet("backup-status", 120*time.Second, func() ([]byte, error) {
+			output, err := cachedGetWithPolicy("backup-status", 120*time.Second, func() ([]byte, error) {
 				out, e := executeSSHCommand(cmds)
-				return []byte(out), e
-			})
+				if e != nil {
+					return nil, e
+				}
+				response, good, e := mergeDriveStatus([]byte(out), currentGoodDriveStatus(), time.Now())
+				if e != nil {
+					return nil, e
+				}
+				if len(good) > 0 {
+					rememberGoodDriveStatus(good)
+				}
+				return response, nil
+			}, backupStatusTTL, markDriveStatusStale)
 
 			if err != nil {
+				if unavailable, ok := err.(driveUnavailableError); ok {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": unavailable.Error()})
+					return
+				}
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi đọc Google Drive", "detail": err.Error()})
 				return
 			}
@@ -1263,7 +1383,7 @@ echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\"
 			c.Data(http.StatusOK, "application/json", output)
 		})
 
-		// API 3: Kích hoạt một loại backup cố định. Client không được gửi lệnh/đường dẫn.
+		// API 3: Kích hoạt một loại backup cố định bằng script được quản lý.
 		auth.POST("/run-job", func(c *gin.Context) {
 			var req struct {
 				JobID string `json:"jobId"`
@@ -1279,14 +1399,18 @@ echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\"
 			}
 			output, err := runJobSSHCommand(command)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "SSH error", "detail": err.Error()})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể khởi chạy backup"})
 				return
 			}
-			invalidate("backup-status", "cron-jobs", "recovery-snapshots")
-			c.Data(http.StatusOK, "application/json", []byte(output))
+			if strings.TrimSpace(output) != "STARTED" {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xác nhận được backup đã khởi chạy"})
+				return
+			}
+			invalidate("cron-jobs")
+			c.JSON(http.StatusAccepted, gin.H{"status": "started"})
 		})
 
-		// Chạy thủ công đúng wrapper aaPanel còn hiện diện trong crontab.
+		// Chạy thủ công đúng script được quản lý còn hiện diện trong crontab.
 		var cronRunMu sync.Mutex
 		lastCronRun := make(map[string]time.Time)
 		auth.POST("/run-cron-job", func(c *gin.Context) {
@@ -1319,7 +1443,7 @@ echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\"
 			if err != nil {
 				releaseReservation()
 				if strings.Contains(err.Error(), "CRON_NOT_SCHEDULED") {
-					c.JSON(http.StatusConflict, gin.H{"error": "Cronjob không còn trong lịch chạy aaPanel"})
+					c.JSON(http.StatusConflict, gin.H{"error": "Cronjob không còn trong lịch chạy"})
 					return
 				}
 				if strings.Contains(err.Error(), "CRON_SCRIPT_UNAVAILABLE") {
@@ -1393,7 +1517,7 @@ echo "]"
 echo "══════════════════════════════════════════════════════"
 echo "  LỊCH SỬ CHẠY SCRIPT (Cron Execution Log)"
 echo "══════════════════════════════════════════════════════"
-tail -n 15 /www/server/cron/*.log 2>/dev/null
+tail -n 15 /root/backup-site.log /root/backup-database.log /root/auto_backup.log /root/cleanup-panel-backups.log /root/check_integrity.log /www/server/cron/*.log 2>/dev/null
 echo ""
 echo "══════════════════════════════════════════════════════"
 echo "  CHI TIẾT BẢN SAO LƯU TRÊN GOOGLE DRIVE"
@@ -1433,64 +1557,72 @@ done
 			c.String(http.StatusOK, string(output))
 		})
 
-		// API 6: Liệt kê các tiến trình định kỳ (Cron Jobs) với trạng thái thật
+		// API 6: Liệt kê các script được quản lý trong root crontab.
 		auth.GET("/cron-jobs", func(c *gin.Context) {
-			cmds := `
-CRONTAB=$(crontab -l 2>/dev/null | grep "/www/server/cron" | grep -v "acme")
-echo "["
-FIRST=1
-printf '%s\n' "$CRONTAB" | while IFS= read -r line; do
-  [ -z "$line" ] && continue
-  # Tách lịch trình cron (5 trường đầu)
-  SCHED=$(echo "$line" | awk '{print $1" "$2" "$3" "$4" "$5}')
-  
-  # Tìm đường dẫn script (ví dụ: /www/server/cron/a50afd8f7d0e95dc2fd7bbbccfdcccd82)
-  SCRIPT=$(echo "$line" | grep -oE '/www/server/cron/[a-zA-Z0-9]+' | head -n 1)
-  [ -z "$SCRIPT" ] && continue
-  
-  # Tên script (chính là chuỗi mã băm)
-  HASHNAME=$(basename "$SCRIPT")
-  LOG="/www/server/cron/${HASHNAME}.log"
-    # Detect common aaPanel cron types
-    CONTENT=$(cat "$SCRIPT" 2>/dev/null)
-    if echo "$CONTENT" | grep -q "acme_v2.py"; then
-        NAME="Gia hạn SSL"
-    elif echo "$CONTENT" | grep -q "backup.py database"; then
-        NAME="Backup Database"
-    elif echo "$CONTENT" | grep -q "backup.py site"; then
-        NAME="Backup Site"
-    elif echo "$CONTENT" | grep -q "G-Drive" || echo "$CONTENT" | grep -q "rclone" || echo "$CONTENT" | grep -q "gdrive" || echo "$CONTENT" | grep -q "/root/backup-monitor" || echo "$CONTENT" | grep -q "auto_backup.sh"; then
-        NAME="Lưu trữ bản backup lên Google Drive"
-    else
-        NAME="Cron Task ($HASHNAME)"
-    fi
-
-  LAST_RUN=""
-  STATUS="never"
-  if [ -f "$LOG" ]; then
-    LAST_RUN=$(stat -c '%y' "$LOG" 2>/dev/null | cut -d'.' -f1)
-    if grep -qiE 'error|fail|failed|exception|panic' "$LOG" 2>/dev/null; then
-      STATUS="failed"
-    elif [ -s "$LOG" ]; then
-      STATUS="success"
-    fi
-  fi
-  
-  if [ "$FIRST" -ne 1 ]; then printf ","; fi
-  FIRST=0
-  printf '{"name":"%s","script":"%s","schedule":"%s","last_run":"%s","status":"%s"}' "$NAME" "$SCRIPT" "$SCHED" "$LAST_RUN" "$STATUS"
-done
-echo "]"
-`
 			output, err := cachedGet("cron-jobs", 15*time.Second, func() ([]byte, error) {
-				out, e := executeSSHCommand(cmds)
-				return []byte(out), e
+				return fetchManagedCronJobs()
 			})
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể đọc tiến trình định kỳ", "detail": err.Error()})
 				return
 			}
 			c.Data(http.StatusOK, "application/json", output)
+		})
+
+		auth.GET("/cron-jobs/:id/log", func(c *gin.Context) {
+			task, ok := managedCronTaskByID(c.Param("id"))
+			if !ok {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Cronjob không hợp lệ"})
+				return
+			}
+			c.Header("Cache-Control", "no-store")
+			result, err := fetchManagedCronJobLog(task)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể đọc log cronjob"})
+				return
+			}
+			c.JSON(http.StatusOK, result)
+		})
+
+		auth.PUT("/cron-jobs/:id/schedule", func(c *gin.Context) {
+			task, ok := managedCronTaskByID(c.Param("id"))
+			if !ok {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Cronjob không hợp lệ"})
+				return
+			}
+			var req struct {
+				Time             string `json:"time"`
+				ExpectedSchedule string `json:"expectedSchedule"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu không hợp lệ"})
+				return
+			}
+			command, valid := commandForCronScheduleUpdate(task, req.Time, req.ExpectedSchedule)
+			if !valid {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Giờ chạy hoặc lịch hiện tại không hợp lệ"})
+				return
+			}
+			output, err := executeSSHCommand(command)
+			if err != nil {
+				switch {
+				case strings.Contains(err.Error(), "CRON_NOT_SCHEDULED"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Cronjob không còn trong lịch chạy"})
+				case strings.Contains(err.Error(), "CRON_DUPLICATE"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Có nhiều dòng cron cho cùng script; cần kiểm tra trên máy chủ"})
+				case strings.Contains(err.Error(), "CRON_SCHEDULE_CHANGED"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Lịch chạy đã thay đổi; hãy làm mới danh sách và thử lại"})
+				default:
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lưu lịch chạy cronjob"})
+				}
+				return
+			}
+			if strings.TrimSpace(output) != "UPDATED" {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xác nhận được lịch chạy đã lưu"})
+				return
+			}
+			invalidate("cron-jobs", "server-status")
+			c.JSON(http.StatusOK, gin.H{"schedule": fmt.Sprintf("%s %s %s", req.Time[3:], req.Time[:2], strings.Join(strings.Fields(req.ExpectedSchedule)[2:], " "))})
 		})
 
 		// API 7: Đọc cấu hình hệ thống (lưu trên máy ảo)
@@ -1670,12 +1802,21 @@ find /www/backup/site /www/backup/database /www/backup/panel -type f \( -name "*
 				return
 			}
 
+			invalidate("cron-jobs", "server-status")
 			c.JSON(http.StatusOK, safeAlertSettings(settings))
 		})
 
 		auth.POST("/refresh", func(c *gin.Context) {
 			cacheMu.Lock()
+			backupEntry, hasBackup := cache["backup-status"]
 			cache = make(map[string]cacheEntry)
+			if hasBackup && len(backupEntry.value) > 0 {
+				if stale := markDriveStatusStale(backupEntry.value); len(stale) > 0 {
+					backupEntry.value = stale
+					backupEntry.expiresAt = time.Time{}
+					cache["backup-status"] = backupEntry
+				}
+			}
 			cacheMu.Unlock()
 			c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Cache cleared"})
 		})
@@ -1699,7 +1840,15 @@ find /www/backup/site /www/backup/database /www/backup/panel -type f \( -name "*
 					return
 				}
 				cacheMu.Lock()
-				delete(cache, "backup-status")
+				if entry, ok := cache["backup-status"]; ok {
+					if stale := markDriveStatusStale(entry.value); len(stale) > 0 {
+						entry.value = stale
+						entry.expiresAt = time.Time{}
+						cache["backup-status"] = entry
+					} else {
+						delete(cache, "backup-status")
+					}
+				}
 				cacheMu.Unlock()
 				c.JSON(http.StatusOK, gin.H{"message": "Đã xóa nhật ký trên Google Drive"})
 				return
@@ -1720,6 +1869,7 @@ func main() {
 		log.Fatalf("invalid configuration: %v", err)
 	}
 
+	warmDriveStatusCache()
 	router := setupRouter(cfg)
 	log.Printf("Backend listening on %s", cfg.APIBindAddr)
 	if err := router.Run(cfg.APIBindAddr); err != nil {

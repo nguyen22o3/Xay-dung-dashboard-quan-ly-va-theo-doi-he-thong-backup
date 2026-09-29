@@ -125,6 +125,10 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
 
   const serverStatus = server.data ?? {}
   const backupStatus = backup.data ?? {}
+  const driveUnavailable = Boolean(backupStatus.driveError && !backupStatus.driveStale)
+  const driveDataTime = backupStatus.driveDataAt
+    ? new Date(backupStatus.driveDataAt).toLocaleString(lang === 'vi' ? 'vi-VN' : 'en-US')
+    : null
 
   // Disk Storage Math
         
@@ -132,7 +136,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
   const { about } = backupStatus
 
   const backupFolderSize = backupStatus.size?.bytes || 0
-  const driveTotal = about?.total || 0
+  const driveTotal = driveUnavailable ? 0 : (about?.total || 0)
   const rawDrivePercent = driveTotal ? (backupFolderSize / driveTotal) * 100 : 0
   const driveUsedPercent = driveTotal ? (rawDrivePercent > 0 && rawDrivePercent < 0.01 ? '< 0.01' : rawDrivePercent.toFixed(1)) : '—'
   const driveFreePercent = driveTotal ? (100 - (rawDrivePercent > 0 && rawDrivePercent < 0.01 ? 0.01 : rawDrivePercent)).toFixed(1) : '—'
@@ -163,7 +167,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
   // Parse History to get charts data
   let chartData: ChartDatum[] = []
   const history = backupStatus.history
-  if (history && Array.isArray(history)) {
+  if (!driveUnavailable && history && Array.isArray(history)) {
     const historyMap = new Map()
     history.forEach((h) => historyMap.set(h.date, { bytes: h.bytes, files: h.files || 0 }))
 
@@ -239,6 +243,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
       </h2>
       {backup.loading && !backup.data && <p role="status" style={{ color: theme.textSecondary }}>{lang === 'vi' ? 'Đang đọc dữ liệu Google Drive…' : 'Loading Google Drive data…'}</p>}
       {backup.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc Google Drive: ${backup.error}` : `Could not load Google Drive: ${backup.error}`}</p>}
+      {backupStatus.driveStale && <p role="status" style={{ color: theme.textSecondary }}>{lang === 'vi' ? 'Đang hiển thị dữ liệu Drive đã lưu' : 'Showing saved Drive data'}{driveDataTime ? ` (${driveDataTime})` : ''}.</p>}
       {server.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc máy chủ: ${server.error}` : `Could not load server: ${server.error}`}</p>}
 
       <div style={{ margin: '0 -15px' }}>
@@ -286,7 +291,11 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                       alignItems: 'center',
                     }}
                   >
-                    
+                    {driveUnavailable ? (
+                      <div style={{ width: '100%', textAlign: 'center', color: theme.textSecondary, fontSize: '12px' }}>
+                        {lang === 'vi' ? 'Không thể tải dữ liệu Google Drive' : 'Google Drive data is unavailable'}
+                      </div>
+                    ) : (<>
                         <div style={{ flex: 1, position: 'relative', height: '130px' }}>
                           <ResponsiveContainer>
                             <PieChart>
@@ -332,6 +341,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                             )
                           })}
                         </div>
+                    </>)}
                       
                   </div>
                 </div>
@@ -375,7 +385,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                       if (!lastBackup) {
                         return (
                           <div style={{ textAlign: 'center', color: theme.textSecondary, padding: '20px', fontSize: '12px' }}>
-                            {tr(lang, 'noBackupYet')}
+                            {driveUnavailable ? (lang === 'vi' ? 'Không thể tải lịch sử Google Drive' : 'Google Drive history is unavailable') : tr(lang, 'noBackupYet')}
                           </div>
                         )
                       }
@@ -562,7 +572,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                   </div>
                   <div style={{ padding: '0 10px 10px 10px', flex: 1, overflow: 'hidden', minHeight: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '5px' }}>
-                      <span style={{ fontSize: 'clamp(0px, 15cqmin, 18px)', fontWeight: 'bold' }}>{formatBytes(backupFolderSize)}</span>
+                      <span style={{ fontSize: 'clamp(0px, 15cqmin, 18px)', fontWeight: 'bold' }}>{driveUnavailable ? '—' : formatBytes(backupFolderSize)}</span>
                       <span style={{ fontSize: 'clamp(3px, 8cqmin, 10px)', color: theme.textSecondary }}>
                         {tr(lang, 'storageUtilization')}
                       </span>
@@ -602,7 +612,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                         >
                           <span>{lang === 'vi' ? 'Tổng số thư mục' : 'Total Folders'}</span>
                           <strong style={{ color: theme.successText }}>
-                            {backupStatus.totalFolders || 0}
+                            {driveUnavailable ? '—' : (backupStatus.totalFolders || 0)}
                           </strong>
                         </div>
                       </div>
