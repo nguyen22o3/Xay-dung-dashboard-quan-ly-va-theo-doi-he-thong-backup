@@ -174,7 +174,7 @@ export default function CronJobs({ lang }: { lang: Lang }) {
                     </td>
                     <td>
                       <span>{vi ? formatCronSchedule(job.schedule) : job.schedule}</span>
-                      {vi && <small>{job.schedule}</small>}
+                      
                     </td>
                     <td>{job.last_run || (vi ? 'Chưa có dữ liệu' : 'No data')}</td>
                     <td>
