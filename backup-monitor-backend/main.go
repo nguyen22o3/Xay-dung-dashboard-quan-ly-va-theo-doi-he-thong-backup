@@ -971,8 +971,10 @@ TARGET_EMAIL=$(decode_value '%s')`,
 set -u
 %s
 BACKUP_COUNT=$(/usr/bin/rclone lsd gdrive:Backup/ --config /root/.config/rclone/rclone.conf 2>/dev/null | wc -l)
+echo "[$(date '+%%F %%T')] Da kiem tra Drive: $BACKUP_COUNT thu muc Backup"
 if [ "$BACKUP_COUNT" -lt %d ]; then
     MSG="CANH BAO TOAN VEN DU LIEU! So luong ban sao luu tren Drive hien tai la $BACKUP_COUNT/%d. Vui long kiem tra!"
+	echo "[$(date '+%%F %%T')] CẢNH BÁO: $MSG"
     if [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$MSG\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
     if [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$MSG" >/dev/null; fi
     if [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [ALERT] Backup Monitor\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$MSG" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
@@ -982,6 +984,30 @@ fi`, variables, settings.Threshold, settings.Threshold)
 set -u
 %s
 %s
+send_delete_alert() {
+    local file="$1" msg
+    msg="BAO DONG KHAN CAP: File backup [$file] vua bi XOA khoi may chu! Thoi gian: $(date)"
+    if [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$msg\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
+    if [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$msg" >/dev/null; fi
+    if [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [URGENT] File Deleted\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$msg" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
+}
+
+check_panel_zip_replacement() {
+    local file="$1" deleted_at="$2" attempt modified
+    # Do not keep the main monitor lock or inotify pipe open while checking.
+    exec 9>&-
+    for ((attempt = 0; attempt < 12; attempt++)); do
+        sleep 5
+        if [[ -f "$file" && -s "$file" && ! -L "$file" ]]; then
+            modified=$(stat -c %%Y -- "$file" 2>/dev/null || true)
+            if [[ "$modified" =~ ^[0-9]+$ ]] && (( modified >= deleted_at )) && unzip -tqq "$file" >/dev/null 2>&1; then
+                return 0
+            fi
+        fi
+    done
+    send_delete_alert "$file"
+}
+
 exec 9>/run/backup-monitor-inotify.lock
 flock -n 9 || exit 0
 inotifywait -m -r -e delete --format '%%w%%f' /www/backup/ 2>/dev/null | while IFS= read -r FILE
@@ -990,15 +1016,22 @@ do
         continue
     fi
 
+    # aaPanel removes SQL work files after packing its dated ZIP.
+    if [[ "$FILE" =~ ^/www/backup/panel/[0-9]{4}-[0-9]{2}-[0-9]{2}/data/ ]]; then
+        continue
+    fi
+
     # Script-controlled same-day replacement or aaPanel's count-based rotation.
     if is_script_rotation "$FILE" || is_expected_rotation "$FILE" %d; then
         continue
     fi
 
-    MSG="BAO DONG KHAN CAP: File backup [$FILE] vua bi XOA khoi may chu! Thoi gian: $(date)"
-    if [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$MSG\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
-    if [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$MSG" >/dev/null; fi
-    if [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [URGENT] File Deleted\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$MSG" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
+    if [[ "$FILE" == "/www/backup/panel/$(date +%%F).zip" ]]; then
+        check_panel_zip_replacement "$FILE" "$(date +%%s)" </dev/null >/dev/null 2>&1 &
+        continue
+    fi
+
+    send_delete_alert "$FILE"
  done`, variables, rotationDecisionShell, localRetentionCopies)
 
 	return integrityScript, realtimeScript
@@ -1336,7 +1369,8 @@ CUSTOM_LOCAL_LOGS=$(tail -n 500 /root/backup-site.log /root/backup-database.log 
         count = split(path, parts, "/")
         name = parts[count]
         if (match(name, /^web_(web[1-4]\.local)_([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})_site\.tar\.gz$/, dt)) {
-            printf "{\"name\":\"Backup Website: %s\",\"date\":\"%s-%s-%s\",\"time\":\"%s:%s:%s\",\"duration\":\"0\",\"status\":\"Successful\"},", dt[1], dt[2], dt[3], dt[4], dt[5], dt[6], dt[7]
+            duration = ($3 == "DURATION" && $4 ~ /^[0-9]+([.][0-9]+)?$/) ? $4 : "null"
+            printf "{\"name\":\"Backup Website: %s\",\"date\":\"%s-%s-%s\",\"time\":\"%s:%s:%s\",\"duration\":%s,\"status\":\"Successful\"},", dt[1], dt[2], dt[3], dt[4], dt[5], dt[6], dt[7], duration
         }
     }
     /^CREATED \/www\/backup\/database\/mysql\// {
@@ -1344,7 +1378,8 @@ CUSTOM_LOCAL_LOGS=$(tail -n 500 /root/backup-site.log /root/backup-database.log 
         count = split(path, parts, "/")
         name = parts[count]
         if (match(name, /^db_(sql_web[1-4]_local)_([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})_mysql_data\.sql\.gz$/, dt)) {
-            printf "{\"name\":\"Backup Database: %s\",\"date\":\"%s-%s-%s\",\"time\":\"%s:%s:%s\",\"duration\":\"0\",\"status\":\"Successful\"},", dt[1], dt[2], dt[3], dt[4], dt[5], dt[6], dt[7]
+            duration = ($3 == "DURATION" && $4 ~ /^[0-9]+([.][0-9]+)?$/) ? $4 : "null"
+            printf "{\"name\":\"Backup Database: %s\",\"date\":\"%s-%s-%s\",\"time\":\"%s:%s:%s\",\"duration\":%s,\"status\":\"Successful\"},", dt[1], dt[2], dt[3], dt[4], dt[5], dt[6], dt[7], duration
         }
     }
 ' | sed 's/,$//')
@@ -1450,7 +1485,22 @@ echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\"
 					c.JSON(http.StatusConflict, gin.H{"error": "Script cronjob không còn khả dụng"})
 					return
 				}
+				if req.JobID == "cleanup-panel" {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Dọn dẹp aaPanel chưa hoàn tất; hãy kiểm tra log cronjob"})
+					return
+				}
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể khởi chạy cronjob"})
+				return
+			}
+			if req.JobID == "cleanup-panel" {
+				deleted, ok := parsePanelCleanupResult(output)
+				if !ok {
+					releaseReservation()
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xác nhận được kết quả dọn dẹp aaPanel"})
+					return
+				}
+				invalidate("cron-jobs")
+				c.JSON(http.StatusOK, gin.H{"status": "completed", "deletedCount": deleted})
 				return
 			}
 			if strings.TrimSpace(output) != "STARTED" {

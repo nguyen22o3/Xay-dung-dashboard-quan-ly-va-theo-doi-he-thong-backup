@@ -354,9 +354,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .cron-table th:last-child { text-align: center; }
 .cron-table td:last-child { width: 1%; }
 .cron-table tbody tr:hover { background: color-mix(in srgb, var(--app-accent) 3%, var(--app-card)); }
-.cron-table td strong, .cron-table td small { display: block; }
-.cron-table td strong { font-weight: 650; }
-.cron-table td small { margin-top: 5px; color: var(--app-muted); font-size: 11px; }
+.cron-table td strong { display: block; font-weight: 650; }
 .cron-run { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--app-accent) 30%, transparent); border-radius: 8px; background: var(--app-soft-accent); color: var(--app-accent); font-size: 12px; font-weight: 700; white-space: nowrap; }
 .cron-run:hover:not(:disabled) { border-color: var(--app-accent); }
 .cron-run:disabled { opacity: .55; cursor: not-allowed; }
@@ -380,8 +378,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .cron-schedule-dialog { width: min(520px, 100%); }
 .cron-schedule-body { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 22px; }
 .cron-schedule-body label { color: var(--app-text); font-size: 13px; font-weight: 650; }
-.cron-schedule-body input { min-height: 42px; padding: 0 12px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-card); color: var(--app-text); font: inherit; }
-.cron-schedule-body input:focus { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+.cron-time-selects { display: flex; align-items: center; gap: 8px; }
+.cron-time-selects select { min-width: 92px; min-height: 42px; padding: 0 10px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-card); color: var(--app-text); font: inherit; font-variant-numeric: tabular-nums; }
+.cron-time-selects select:focus { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+.cron-time-selects > span[aria-hidden] { color: var(--app-text); font-size: 19px; font-weight: 700; }
+.cron-time-format { padding: 5px 8px; border: 1px solid var(--app-border); border-radius: 6px; color: var(--app-muted); font-size: 11px; font-weight: 700; }
 .cron-schedule-body small { color: var(--app-muted); font-size: 12px; }
 .cron-schedule-body p { margin: 0; font-size: 12px; }
 .cron-schedule-footer { display: flex; justify-content: flex-end; gap: 9px; padding: 14px 22px; border-top: 1px solid var(--app-border); }

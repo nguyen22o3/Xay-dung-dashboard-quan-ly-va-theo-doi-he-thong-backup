@@ -16,7 +16,7 @@ export function formatDuration(seconds: number): string {
   return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
 }
 
-export function formatCronSchedule(schedule: string): string {
+export function formatCronSchedule(schedule: string, lang: 'vi' | 'en' = 'vi'): string {
   const parts = schedule.trim().split(/\s+/)
   if (parts.length < 5) return schedule
   const [min, hour] = parts
@@ -25,19 +25,22 @@ export function formatCronSchedule(schedule: string): string {
   const dow = parts[4]
 
   if (min === '*' && hour === '*' && dayOfMonth === '*' && month === '*' && dow === '*') {
-    return 'Mỗi phút'
+    return lang === 'vi' ? 'Mỗi phút' : 'Every minute'
   }
   if (hour === '*' && dayOfMonth === '*' && month === '*' && dow === '*') {
-    return `Mỗi giờ phút ${min}`
+    return lang === 'vi' ? `Mỗi giờ phút ${min}` : `At minute ${min} of every hour`
   }
   if (dayOfMonth === '*' && month === '*' && dow === '*') {
-    return `${hour.padStart(2, '0')}:${min.padStart(2, '0')} hằng ngày`
+    const clock = `${hour.padStart(2, '0')}:${min.padStart(2, '0')}`
+    return lang === 'vi' ? `${clock} hằng ngày` : `${clock} daily`
   }
   if (min === '*' && hour === '*' && dayOfMonth === '*' && month === '*' && dow !== '*') {
-    return `Mỗi giờ vào ${dow}`
+    return lang === 'vi' ? `Mỗi giờ vào ${dow}` : `Every hour on ${dow}`
   }
   if (dayOfMonth === '*' && month === '*') {
     return `${hour.padStart(2, '0')}:${min.padStart(2, '0')} (${dow})`
   }
-  return `${hour.padStart(2, '0')}:${min.padStart(2, '0')} dd/${month}`
+  return lang === 'vi'
+    ? `${hour.padStart(2, '0')}:${min.padStart(2, '0')} ngày ${dayOfMonth}/${month}`
+    : `${hour.padStart(2, '0')}:${min.padStart(2, '0')} on ${dayOfMonth}/${month}`
 }

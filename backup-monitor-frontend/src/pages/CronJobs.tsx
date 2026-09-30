@@ -13,6 +13,9 @@ const jobLabels: Record<string, { vi: string; en: string }> = {
   'integrity-check': { vi: 'Kiểm tra toàn vẹn backup', en: 'Check backup integrity' },
 }
 
+const hours24 = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0'))
+const minutes = Array.from({ length: 60 }, (_, minute) => String(minute).padStart(2, '0'))
+
 export default function CronJobs({ lang }: { lang: Lang }) {
   const vi = lang === 'vi'
   const cron = useCronJobs(60000)
@@ -25,20 +28,22 @@ export default function CronJobs({ lang }: { lang: Lang }) {
   const [logError, setLogError] = useState<string | null>(null)
   const logRequest = useRef(0)
   const [editingJob, setEditingJob] = useState<CronJob | null>(null)
-  const [editTime, setEditTime] = useState('')
+  const [editHour, setEditHour] = useState('')
+  const [editMinute, setEditMinute] = useState('')
   const [scheduleError, setScheduleError] = useState<string | null>(null)
   const [savingSchedule, setSavingSchedule] = useState(false)
 
   const openScheduleEditor = (job: CronJob) => {
     const [minute, hour] = job.schedule.split(' ')
-    setEditTime(/^\d{1,2}$/.test(hour) && /^\d{1,2}$/.test(minute)
-      ? `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}` : '')
+    setEditHour(/^\d{1,2}$/.test(hour) && Number(hour) < 24 ? hour.padStart(2, '0') : '')
+    setEditMinute(/^\d{1,2}$/.test(minute) && Number(minute) < 60 ? minute.padStart(2, '0') : '')
     setScheduleError(null)
     setEditingJob(job)
   }
 
   const saveSchedule = async () => {
     if (!editingJob || savingSchedule) return
+    const editTime = `${editHour}:${editMinute}`
     if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(editTime)) {
       setScheduleError(vi ? 'Hãy chọn giờ hợp lệ (00:00–23:59).' : 'Choose a valid time (00:00–23:59).')
       return
@@ -114,11 +119,17 @@ export default function CronJobs({ lang }: { lang: Lang }) {
     setRunningJob(jobId)
     setFeedback(null)
     try {
-      await runCronJob(jobId)
+      const result = await runCronJob(jobId)
+      const cleanupCompleted = jobId === 'cleanup-panel' && result.status === 'completed'
+      const deletedCount = result.deletedCount ?? 0
       setFeedback({
-        message: vi
-          ? `Đã gửi yêu cầu chạy "${name}". Hãy kiểm tra log sau khi tác vụ kết thúc.`
-          : `Started "${name}". Check its log after the job finishes.`,
+        message: cleanupCompleted
+          ? (deletedCount > 0
+              ? (vi ? `Đã dọn dẹp aaPanel: xóa ${deletedCount} file backup cũ.` : `aaPanel cleanup complete: deleted ${deletedCount} old backup files.`)
+              : (vi ? 'Đã dọn dẹp aaPanel: không còn file backup cũ cần xóa.' : 'aaPanel cleanup complete: no old backup files to delete.'))
+          : (vi
+              ? `Đã gửi yêu cầu chạy "${name}". Hãy kiểm tra log sau khi tác vụ kết thúc.`
+              : `Started "${name}". Check its log after the job finishes.`),
         error: false,
       })
       cron.reload()
@@ -173,15 +184,16 @@ export default function CronJobs({ lang }: { lang: Lang }) {
                       <strong>{jobLabels[job.id]?.[vi ? 'vi' : 'en'] ?? job.name}</strong>
                     </td>
                     <td>
-                      <span>{vi ? formatCronSchedule(job.schedule) : job.schedule}</span>
-                      
+                      <span>{formatCronSchedule(job.schedule, lang)}</span>
                     </td>
                     <td>{job.last_run || (vi ? 'Chưa có dữ liệu' : 'No data')}</td>
                     <td>
                       <div className="cron-actions">
                         <button className="cron-run" type="button" onClick={() => handleRun(job)} disabled={runningJob !== null || !job.id}>
                           <Play size={14} fill="currentColor" />
-                          {runningJob === job.id ? (vi ? 'Đang gửi...' : 'Starting...') : (vi ? 'Chạy ngay' : 'Run now')}
+                          {runningJob === job.id
+                            ? (job.id === 'cleanup-panel' ? (vi ? 'Đang dọn...' : 'Cleaning...') : (vi ? 'Đang gửi...' : 'Starting...'))
+                            : (vi ? 'Chạy ngay' : 'Run now')}
                         </button>
                         <button className="cron-view-log" type="button" onClick={() => { setLogJob(job); void loadLog(job) }}>
                           <Eye size={15} /> {vi ? 'Xem log' : 'View log'}
@@ -236,15 +248,26 @@ export default function CronJobs({ lang }: { lang: Lang }) {
               </div>
             </div>
             <div className="cron-schedule-body">
-              <label htmlFor="cron-schedule-time">{vi ? 'Giờ chạy (theo giờ máy chủ)' : 'Run time (server time)'}</label>
-              <input id="cron-schedule-time" type="time" required value={editTime} onChange={(event) => setEditTime(event.target.value)} disabled={savingSchedule} />
-              <small>{vi ? `Lịch hiện tại: ${editingJob.schedule}` : `Current schedule: ${editingJob.schedule}`}</small>
+              <label htmlFor="cron-schedule-hour">{vi ? 'Giờ chạy (theo giờ máy chủ)' : 'Run time (server time)'}</label>
+              <div className="cron-time-selects" role="group" aria-label={vi ? 'Chọn giờ và phút theo định dạng 24 giờ' : 'Select hour and minute in 24-hour format'}>
+                <select id="cron-schedule-hour" value={editHour} onChange={(event) => setEditHour(event.target.value)} disabled={savingSchedule} aria-label={vi ? 'Giờ, từ 00 đến 23' : 'Hour, 00 through 23'} required>
+                  <option value="">{vi ? 'Giờ' : 'Hour'}</option>
+                  {hours24.map((hour) => <option key={hour} value={hour}>{hour}</option>)}
+                </select>
+                <span aria-hidden="true">:</span>
+                <select value={editMinute} onChange={(event) => setEditMinute(event.target.value)} disabled={savingSchedule} aria-label={vi ? 'Phút, từ 00 đến 59' : 'Minute, 00 through 59'} required>
+                  <option value="">{vi ? 'Phút' : 'Minute'}</option>
+                  {minutes.map((minute) => <option key={minute} value={minute}>{minute}</option>)}
+                </select>
+                <span className="cron-time-format">24h</span>
+              </div>
+              <small>{vi ? 'Lịch hiện tại: ' : 'Current schedule: '}{formatCronSchedule(editingJob.schedule, lang)}</small>
               <small>{vi ? 'Các cron khác không tự đổi giờ; hãy tránh để tác vụ phụ thuộc chạy trước backup.' : 'Other jobs keep their schedules; avoid running dependent jobs before backups finish.'}</small>
               {scheduleError && <p className="cron-log-error" role="alert">{scheduleError}</p>}
             </div>
             <div className="cron-schedule-footer">
               <button type="button" className="cron-view-log" onClick={() => setEditingJob(null)} disabled={savingSchedule}>{vi ? 'Hủy' : 'Cancel'}</button>
-              <button type="submit" className="cron-run" disabled={savingSchedule || !editTime}>{savingSchedule ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu giờ chạy' : 'Save time')}</button>
+              <button type="submit" className="cron-run" disabled={savingSchedule || !editHour || !editMinute}>{savingSchedule ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu giờ chạy' : 'Save time')}</button>
             </div>
           </form>
         </div>

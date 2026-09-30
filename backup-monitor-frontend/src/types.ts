@@ -39,7 +39,7 @@ export interface BackupActivityEntry {
   name?: string
   date: string
   time: string
-  duration: number | string
+  duration: number | string | null
   status: string
 }
 

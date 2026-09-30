@@ -101,9 +101,41 @@ if [ ! -f "$SCRIPT" ] || [ -L "$SCRIPT" ]; then
   printf 'CRON_SCRIPT_UNAVAILABLE\n' >&2
   exit 1
 fi
+if [ "$SCRIPT" = "/root/scripts/cleanup-panel-backups.sh" ]; then
+  if ! RUN_OUTPUT=$(/bin/bash "$SCRIPT" --delete 2>&1); then
+    [ -z "$RUN_OUTPUT" ] || echo "$RUN_OUTPUT" >> "$LOG"
+    echo 'CRON_CLEANUP_FAILED' >&2
+    exit 1
+  fi
+  if ! VERIFY_OUTPUT=$(/bin/bash "$SCRIPT" --dry-run 2>&1); then
+    [ -z "$VERIFY_OUTPUT" ] || echo "$VERIFY_OUTPUT" >> "$LOG"
+    echo 'CRON_CLEANUP_VERIFY_FAILED' >&2
+    exit 1
+  fi
+  if echo "$VERIFY_OUTPUT" | grep -q '^Would delete: '; then
+    [ -z "$RUN_OUTPUT" ] || echo "$RUN_OUTPUT" >> "$LOG"
+    echo "$VERIFY_OUTPUT" >> "$LOG"
+    echo 'CRON_CLEANUP_INCOMPLETE' >&2
+    exit 1
+  fi
+  DELETED=$(echo "$RUN_OUTPUT" | awk '/^Deleted: / { count++ } END { print count+0 }')
+  [ -z "$RUN_OUTPUT" ] || echo "$RUN_OUTPUT" >> "$LOG"
+  echo "[$(date '+%%F %%T')] Cleaned panel backups: $DELETED deleted" >> "$LOG"
+  echo "CLEANED:$DELETED"
+  exit 0
+fi
 nohup /bin/bash "$SCRIPT" >> "$LOG" 2>&1 </dev/null &
 printf 'STARTED\n'
 `, task.Script, task.Log)
+}
+
+func parsePanelCleanupResult(output string) (int, bool) {
+	value, ok := strings.CutPrefix(strings.TrimSpace(output), "CLEANED:")
+	if !ok {
+		return 0, false
+	}
+	deleted, err := strconv.Atoi(value)
+	return deleted, err == nil && deleted >= 0
 }
 
 type managedCronJobResponse struct {

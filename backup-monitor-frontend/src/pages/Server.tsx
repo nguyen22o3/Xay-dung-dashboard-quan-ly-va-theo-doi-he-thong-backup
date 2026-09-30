@@ -119,13 +119,15 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
     const map = new Map<string, number>()
     backup.data.localActivity.forEach((a) => {
       if (last14Days.includes(a.date)) {
-        const d = parseFloat(a.duration as string) || 0
-        map.set(a.date, (map.get(a.date) || 0) + d)
+        const duration = a.duration === null || a.duration === '' ? NaN : Number(a.duration)
+        if (Number.isFinite(duration) && duration >= 0) {
+          map.set(a.date, (map.get(a.date) || 0) + duration)
+        }
       }
     })
     return last14Days.map((dateStr: string) => ({
       date: dateStr,
-      duration: parseFloat((map.get(dateStr) || 0).toFixed(2))
+      duration: map.has(dateStr) ? parseFloat(map.get(dateStr)!.toFixed(3)) : null
     }))
   }, [backup.data, last14Days])
 
@@ -590,10 +592,10 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
             {/* DURATION BAR CHART */}
             <div key="duration-chart" style={cardStyle}>
               <div className="drag-handle" style={dragHandleStyle}>
-                {lang === 'vi' ? 'Thời gian Backup (giây)' : 'Backup Duration (seconds)'}
+                {lang === 'vi' ? 'Thời gian backup đã ghi nhận (giây)' : 'Recorded backup duration (seconds)'}
               </div>
               <div style={{ padding: '10px', flex: 1, minHeight: 0 }}>
-                {durationData.length > 0 && durationData.some(d => d.duration > 0) ? (
+                {durationData.length > 0 && durationData.some(d => d.duration !== null) ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={durationData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke={theme.gridLine} vertical={false} />

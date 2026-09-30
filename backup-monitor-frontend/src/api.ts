@@ -142,8 +142,11 @@ export async function fetchCronJobs(): Promise<CronJob[]> {
   return data
 }
 
-export async function runCronJob(jobId: string): Promise<void> {
-  await client.post('/api/run-cron-job', { jobId })
+export type CronJobRunResult = { status: 'started' | 'completed'; deletedCount?: number }
+
+export async function runCronJob(jobId: string): Promise<CronJobRunResult> {
+  const { data } = await client.post<CronJobRunResult>('/api/run-cron-job', { jobId })
+  return data
 }
 
 export async function fetchCronJobLog(jobId: string): Promise<CronJobLog> {

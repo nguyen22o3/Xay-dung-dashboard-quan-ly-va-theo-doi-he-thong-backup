@@ -9,7 +9,8 @@ interface GroupedActivity {
   name: string
   date: string
   time: string
-  duration: number
+  duration: number | null
+  missingDuration: boolean
   status: string
   count: number
 }
@@ -30,6 +31,12 @@ const formatTime24 = (timeStr: string) => {
   
   return `${hour.toString().padStart(2, '0')}:${m}:${s}`
 }
+
+const formatDurationSeconds = (duration: number | null) => {
+  if (duration === null) return '—'
+  return duration > 0 && duration < 0.01 ? `${duration.toFixed(3)}s` : `${duration.toFixed(2)}s`
+}
+
 export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang }) {
   const t = makeTheme(isDark)
   const isVi = lang === 'vi'
@@ -75,13 +82,19 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
            name: type,
            date: act.date,
            time: act.time,
-           duration: 0,
+           duration: null,
+           missingDuration: false,
            status: 'Successful',
            count: 0
          }
          groups.set(groupKey, existing)
        }
-       existing.duration += Number.parseFloat(String(act.duration || '0')) || 0
+       const duration = act.duration === null || act.duration === '' ? NaN : Number(act.duration)
+       if (Number.isFinite(duration) && duration >= 0) {
+         existing.duration = (existing.duration ?? 0) + duration
+       } else {
+         existing.missingDuration = true
+       }
        existing.count += 1
        if (act.status !== 'Successful' && act.status !== 'Ok') {
          existing.status = 'Failed'
@@ -227,7 +240,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
                         {act.date} {formatTime24(act.time)}
                       </td>
                       <td style={{ padding: '16px', color: t.textSecondary }}>
-                        {act.duration.toFixed(2)}s
+                        {act.missingDuration ? '—' : formatDurationSeconds(act.duration)}
                       </td>
                     </tr>
                   )
