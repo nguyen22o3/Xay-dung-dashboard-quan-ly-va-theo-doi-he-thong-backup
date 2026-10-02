@@ -266,12 +266,46 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .apex-settings-heading { margin: 2px 0 29px; }
 .apex-settings-heading h1 { margin: 0 0 8px; color: var(--app-text); font-size: 31px; line-height: 1.15; letter-spacing: -.045em; font-weight: 750; }
 .apex-settings-heading p { margin: 0; color: var(--app-muted); font-size: 14px; line-height: 1.5; }
-.apex-settings-tabs { display: inline-flex; gap: 3px; padding: 4px; margin-bottom: 10px; border-radius: 12px; background: var(--app-card); border: 1px solid var(--app-border); }
+.apex-settings-tabs { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 4px; margin-bottom: 10px; border-radius: 12px; background: var(--app-card); border: 1px solid var(--app-border); }
 .apex-settings-tabs button { min-height: 34px; padding: 0 15px; border: 0; border-radius: 9px; color: var(--app-muted); background: transparent; font-size: 13px; font-weight: 620; white-space: nowrap; }
 .apex-settings-tabs button:hover { color: var(--app-text); }
 .apex-settings-tabs button.is-active { color: var(--app-text); background: var(--app-bg); box-shadow: inset 0 0 0 1px var(--app-border); }
 .apex-settings-panel { padding: 26px 25px 0; border: 1px solid var(--app-border); border-radius: 17px; background: var(--app-card); }
 .apex-settings-panel--appearance { padding-top: 7px; }
+.backup-system-panel { padding-bottom: 24px; }
+.backup-system-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.backup-system-heading h2 { font-size: 18px; margin: 0; }
+.backup-system-note { color: var(--app-muted); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.backup-system-policy { border-left: 3px solid var(--app-accent); padding: 12px 16px; margin: 20px 0; background: var(--app-soft-accent); border-radius: 7px; font-size: 13px; line-height: 1.6; }
+.backup-system-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.backup-system-fields > :first-child { grid-column: 1 / -1; max-width: 480px; }
+.backup-system-path { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.backup-system-path input { flex: 1; min-width: 0; width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-bg); color: var(--app-text); font-size: 12px; }
+.backup-system-fields select, .backup-cron-controls select { border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-bg); color: var(--app-text); padding: 9px 12px; min-height: 40px; }
+.backup-system-secondary { display: inline-flex; justify-content: center; align-items: center; gap: 7px; padding: 10px 12px; border: 1px solid var(--app-border); border-radius: 9px; color: var(--app-text); background: var(--app-bg); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.backup-system-secondary:hover { border-color: var(--app-accent); }
+.backup-system-panel button:disabled { cursor: not-allowed; opacity: .5; }
+.backup-system-panel :is(input, select, button):focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+.backup-system-actions { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 10px; padding: 18px 0 0; }
+.backup-system-preview { margin-top: 16px; padding: 16px; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-bg); font-size: 13px; line-height: 1.6; }
+.backup-system-preview h3 { margin-top: 0; font-size: 15px; }
+.backup-system-error, .backup-system-success, .backup-system-warning { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.backup-system-error { color: #ee6575; }
+.backup-system-success { color: var(--app-accent); }
+.backup-system-warning { color: var(--app-text); border-left: 3px solid #e6ad45; padding-left: 12px; }
+.backup-system-cron { margin-top: 26px; border-top: 1px solid var(--app-border); padding-top: 14px; }
+.backup-system-cron h3 { font-size: 16px; }
+.backup-cron-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid var(--app-border); font-size: 13px; }
+.backup-cron-row small { display: block; color: var(--app-muted); padding-top: 5px; }
+.backup-cron-controls { display: flex; align-items: center; gap: 8px; }
+.backup-folder-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.65); padding: 20px; }
+.backup-folder-dialog { width: min(760px, 100%); max-height: 90vh; overflow-y: auto; background: var(--app-card); color: var(--app-text); border: 1px solid var(--app-border); border-radius: 16px; padding: 24px; box-shadow: 0 18px 80px rgba(0,0,0,.3); }
+.backup-folder-list { min-height: 120px; max-height: 260px; overflow-y: auto; border: 1px solid var(--app-border); border-radius: 8px; margin: 16px 0; padding: 6px; }
+.backup-folder-list button { display: flex; gap: 10px; align-items: center; width: 100%; padding: 12px; text-align: left; border: 0; border-radius: 6px; color: var(--app-text); background: transparent; }
+.backup-folder-list button:hover { background: var(--app-soft-accent); }
+.backup-folder-list p { color: var(--app-muted); font-size: 13px; padding: 10px; }
+@media (max-width: 850px) { .backup-system-fields { grid-template-columns: 1fr; } .backup-cron-row { align-items: start; flex-direction: column; } }
+@media (max-width: 480px) { .backup-system-path { flex-wrap: wrap; } .backup-system-path input { flex-basis: 100%; } .backup-folder-dialog { padding: 16px; } .backup-folder-dialog h2 { font-size: 15px; } .backup-system-actions > button { width: 100%; } }
 .apex-settings-panel--appearance .apex-settings-list { margin-top: 0; }
 .apex-settings-panel-heading h2 { margin: 0 0 7px; font-size: 18px; letter-spacing: -.025em; color: var(--app-text); }
 .apex-settings-panel-heading p { margin: 0; color: var(--app-muted); font-size: 13px; line-height: 1.5; }
@@ -335,6 +369,125 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
   .apex-settings-save { width: 100%; }
 }
 
+/* Unified backup management: aaPanel-style form and compact task list. */
+.backup-management .cron-page-heading { margin-bottom: 18px; }
+.backup-management .cron-page-heading p { margin: 0; color: var(--app-muted); font-size: 13px; line-height: 1.5; }
+.backup-management-nav { display: flex; align-items: center; flex-wrap: wrap; gap: 0; margin-bottom: 14px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-card); }
+.backup-management-nav a { display: inline-flex; align-items: center; gap: 8px; min-height: 50px; padding: 0 20px; color: var(--app-accent); text-decoration: none; font-size: 13px; font-weight: 650; }
+.backup-management-nav a:hover { background: var(--app-soft-accent); }
+.backup-management-nav a span, .backup-count { padding: 2px 7px; border-radius: 5px; color: var(--app-muted); background: var(--app-bg); font-size: 11px; font-weight: 500; }
+.backup-management-nav small { margin-left: auto; padding: 10px 20px; color: var(--app-muted); font-size: 11px; }
+.backup-management #backup-storage, .backup-management #backup-tasks { scroll-margin-top: 100px; }
+.backup-management .backup-system-panel { padding: 0; margin-bottom: 18px; border-radius: 8px; }
+.backup-storage-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; }
+.backup-storage-heading h2 { margin: 0; }
+.backup-storage-heading h2 button { display: flex; align-items: center; gap: 12px; padding: 5px 0; border: 0; background: transparent; color: var(--app-text); font: inherit; font-size: 16px; font-weight: 650; }
+.backup-storage-heading h2 svg { transition: transform .15s; }
+.backup-storage-heading h2 svg.is-expanded { transform: rotate(180deg); }
+.backup-storage-body { padding: 16px 24px 22px; border-top: 1px solid var(--app-border); }
+.backup-storage-body > .backup-system-note:first-child { margin-top: 0; }
+.backup-management .backup-system-policy { margin: 16px 0 24px; padding: 10px 13px; font-size: 12px; }
+.backup-management .backup-system-fields { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.backup-management .backup-system-fields > .apex-settings-field { display: grid; grid-template-columns: 210px minmax(0, 640px); align-items: center; gap: 7px 22px; max-width: none; }
+.backup-management .backup-system-fields > .apex-settings-field > label { grid-column: 1; grid-row: 1; color: var(--app-text); font-size: 12px; font-weight: 550; }
+.backup-management .backup-system-fields > .apex-settings-field > :is(select, .backup-system-path, small) { grid-column: 2; }
+.backup-management .backup-system-fields > .apex-settings-field > :is(input, .backup-task-cycle) { grid-column: 2; }
+.backup-management :is(.backup-task-editor, .backup-task-embedded) .backup-system-fields input { width: 100%; min-width: 0; height: 36px; padding: 0 12px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-bg); color: var(--app-text); font-size: 12px; }
+.backup-storage-subheading { padding-top: 22px; margin: 26px 0 16px; border-top: 1px solid var(--app-border); color: var(--app-text); font-size: 14px; font-weight: 600; }
+.backup-task-type-field { margin-bottom: 18px; }
+.backup-task-editor-anchor { scroll-margin-top: 100px; }
+.backup-management #backup-task-config { scroll-margin-top: 100px; }
+.backup-task-cycle { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.backup-task-cycle > select { min-width: 120px; }
+.backup-task-cycle > select:disabled { opacity: 1; color: var(--app-muted); cursor: default; }
+.backup-time-unit { display: inline-flex; align-items: center; border: 1px solid var(--app-border); border-radius: 6px; overflow: hidden; background: var(--app-bg); }
+.backup-management .backup-time-unit select { min-width: 67px; border: 0; border-radius: 0; background: transparent; }
+.backup-time-unit > span { padding: 10px; color: var(--app-muted); font-size: 12px; background: var(--app-card); border-left: 1px solid var(--app-border); }
+.backup-cycle-preview { color: var(--app-accent); font-size: 12px; }
+.backup-task-editor-notes { padding-left: 232px; max-width: 920px; margin-top: 14px; }
+.backup-task-editor-notes p { margin: 8px 0; }
+.backup-management-feedback { margin: 0 0 18px; border-radius: 6px; line-height: 1.6; }
+.backup-management .backup-system-fields > .apex-settings-field small { margin: 0; font-size: 11px; line-height: 1.5; }
+.backup-management .backup-system-fields select { max-width: 360px; min-height: 36px; padding: 7px 10px; border-radius: 6px; font-size: 12px; }
+.backup-management .backup-system-path input { height: 36px; border-radius: 6px; }
+.backup-management .backup-system-secondary { min-height: 34px; padding: 7px 11px; border-radius: 6px; font-weight: 500; }
+.backup-management .backup-system-actions { justify-content: flex-start; padding-top: 12px; padding-left: 232px; }
+.backup-management .backup-folder-dialog .backup-system-actions { padding-left: 0; justify-content: flex-end; }
+.backup-management .backup-storage-body > .backup-system-note { max-width: 1000px; }
+.backup-management .backup-task-panel { border-radius: 8px; }
+.backup-management .cron-panel-heading { justify-content: space-between; padding: 14px 20px; }
+.backup-management .cron-panel-heading h2 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 16px; }
+.backup-task-toolbar { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; padding: 16px 20px; }
+.backup-task-toolbar select, .backup-task-search { min-height: 36px; border: 1px solid var(--app-border); border-radius: 6px; background: transparent; color: var(--app-text); font-size: 12px; }
+.backup-task-toolbar select { padding: 0 10px; min-width: 185px; background: var(--app-card); }
+.backup-task-search { display: flex; align-items: center; gap: 9px; padding: 0 10px; width: 310px; color: var(--app-muted); }
+.backup-task-search input { flex: 1; min-width: 0; height: 34px; border: 0; outline: 0; background: transparent; color: var(--app-text); font-size: 12px; }
+.backup-task-search:focus-within { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+.backup-task-search button { display: grid; place-items: center; padding: 5px; border: 0; background: transparent; color: var(--app-muted); }
+.backup-management .cron-table-wrap { margin: 0 20px; border: 1px solid var(--app-border); border-radius: 7px; }
+.backup-management .cron-table { min-width: 1080px; font-size: 12px; }
+.backup-management .cron-table th { padding: 13px 12px; text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 550; }
+.backup-management .cron-table td { padding: 13px 12px; }
+.backup-management .cron-table td:first-child { min-width: 205px; }
+.backup-management .cron-table :is(th, td):first-child { position: sticky; left: 0; z-index: 1; background: var(--app-card); box-shadow: 1px 0 var(--app-border); }
+.backup-management .cron-table tbody tr:hover td:first-child { background: color-mix(in srgb, var(--app-accent) 3%, var(--app-card)); }
+.backup-management .cron-table td strong { font-weight: 550; }
+.backup-script-name { display: block; margin-top: 5px; color: var(--app-muted); font-size: 10px; }
+.backup-management .cron-status { padding: 0; background: transparent; font-size: 12px; }
+.backup-management .backup-destination > span { display: block; max-width: 185px; overflow: hidden; text-overflow: ellipsis; }
+.backup-management .cron-time-source { max-width: 190px; font-size: 10px; line-height: 1.5; }
+.backup-management .cron-actions { justify-content: flex-end; gap: 0; }
+.backup-management .cron-actions > button { min-width: 0; min-height: 30px; padding: 0 7px; border: 0; border-radius: 0; background: transparent; color: var(--app-accent); font-size: 12px; font-weight: 500; }
+.backup-management .cron-actions > button + button { border-left: 1px solid var(--app-border); }
+.backup-management .cron-actions > button:hover:not(:disabled) { text-decoration: underline; }
+.backup-management .cron-actions > button:disabled { opacity: .45; cursor: not-allowed; }
+.backup-management .cron-actions svg { display: none; }
+.backup-management .cron-actions > .cron-delete { color: #dc3545; }
+.cron-delete-dialog { max-width: 560px; }
+.cron-delete-body { overflow-y: auto; padding: 24px; color: var(--app-muted); font-size: 14px; line-height: 1.6; }
+.cron-delete-body > strong { color: var(--app-text); }
+.cron-delete-body p { margin: 12px 0; }
+.backup-management .cron-delete-body .backup-system-actions { padding-left: 0; justify-content: flex-end; }
+.backup-management-feedback { overflow-wrap: anywhere; }
+.cron-delete-confirm { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 18px; border: 1px solid #dc3545; border-radius: 8px; background: #dc3545; color: #fff; font-size: 13px; font-weight: 650; cursor: pointer; }
+.cron-delete-confirm:disabled { opacity: .5; cursor: not-allowed; }
+.cron-schedule-state { display: inline-flex; align-items: center; gap: 5px; padding: 6px 0; border: 0; background: transparent; color: var(--app-muted); font: inherit; cursor: pointer; white-space: nowrap; }
+.cron-schedule-state.is-enabled { color: var(--app-accent); }
+.cron-schedule-state.is-paused { color: #dc3545; }
+.cron-schedule-state:hover:not(:disabled) { text-decoration: underline; }
+.cron-schedule-state:disabled { opacity: .55; cursor: not-allowed; }
+.cron-schedule-state:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 3px; border-radius: 3px; }
+.backup-task-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 16px 20px; color: var(--app-muted); font-size: 11px; }
+.backup-task-note { margin: 0; padding: 0 20px 18px; color: var(--app-muted); font-size: 11px; line-height: 1.6; }
+.backup-management .cron-schedule-dialog { width: min(660px, 100%); }
+.backup-management .cron-schedule-body { align-items: stretch; }
+.backup-edit-row { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; align-items: center; margin-bottom: 8px; color: var(--app-text); font-size: 12px; }
+.backup-edit-row strong { font-weight: 550; overflow-wrap: anywhere; }
+.backup-edit-row input { width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-bg); color: var(--app-muted); font-size: 12px; }
+.settings-backup-link { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 13px 16px; margin: 0 0 18px; background: var(--app-card); border: 1px solid var(--app-border); border-radius: 8px; color: var(--app-muted); font-size: 12px; }
+.backup-management :is(button, a, select, input):focus-visible { outline: 2px solid var(--app-accent); outline-offset: 3px; }
+@media (max-width: 850px) {
+  .backup-management .backup-system-fields > .apex-settings-field { grid-template-columns: 175px minmax(0, 1fr); gap: 7px 15px; }
+  .backup-management .backup-system-actions { padding-left: 190px; }
+  .backup-task-editor-notes { padding-left: 190px; }
+  .backup-management-nav small { margin-left: 0; }
+}
+@media (max-width: 600px) {
+  .backup-management .cron-page-heading h1 { font-size: 25px; }
+  .backup-management-nav a { padding: 0 12px; font-size: 12px; min-height: 42px; }
+  .backup-management-nav small { flex-basis: 100%; padding: 0 12px 12px; }
+  .backup-storage-body { padding: 16px; }
+  .backup-management .backup-system-fields > .apex-settings-field { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .backup-management .backup-system-fields > .apex-settings-field > :is(select, .backup-system-path, small) { grid-column: 1; }
+  .backup-management .backup-system-fields > .apex-settings-field > :is(input, .backup-task-cycle) { grid-column: 1; }
+  .backup-task-editor-notes { padding-left: 0; }
+  .backup-management .backup-system-actions { padding-left: 0; }
+  .backup-task-toolbar { padding: 14px; }
+  .backup-task-toolbar > :is(select, div) { width: 100%; }
+  .backup-management .cron-table-wrap { margin: 0 14px; }
+  .backup-edit-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+}
+
 /* Cronjob page */
 .cron-page { width: 100%; max-width: 1560px; margin: 0 auto; }
 .cron-page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 2px 0 28px; }
@@ -368,6 +521,20 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .cron-run:hover:not(:disabled) { border-color: var(--app-accent); }
 .cron-run:disabled { opacity: .55; cursor: not-allowed; }
 .cron-tracking-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 14px 24px; border-top: 1px solid var(--app-border); color: var(--app-muted); font-size: 12px; }
+.activity-summary-row { cursor: pointer; }
+.activity-summary-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 4px 0; border: 0; background: transparent; color: var(--app-text); font: inherit; font-weight: 600; cursor: pointer; }
+.activity-summary-toggle:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 4px; border-radius: 3px; }
+.activity-summary-toggle svg { color: var(--app-muted); transition: transform .15s ease; }
+.activity-summary-toggle svg.is-expanded { transform: rotate(180deg); }
+.activity-detail-cell { padding: 0 16px 16px; }
+.activity-detail-panel { padding: 16px; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-bg); }
+.activity-detail-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; color: var(--app-text); }
+.activity-detail-heading span, .activity-detail-note { color: var(--app-muted); font-size: 12px; }
+.activity-detail-note { margin: 0 0 12px; }
+.activity-detail-table-wrap { overflow-x: auto; }
+.activity-detail-table { width: 100%; min-width: 600px; border-collapse: collapse; text-align: left; }
+.activity-detail-table th { padding: 9px 10px; color: var(--app-muted); font-size: 11px; }
+.activity-detail-table td { padding: 10px; border-top: 1px solid var(--app-border); color: var(--app-text); font-size: 12px; }
 .cron-actions { display: flex; align-items: center; justify-content: center; gap: 8px; }
 .cron-actions .cron-run { min-width: 130px; }
 .cron-actions .cron-view-log { min-width: 112px; }

@@ -117,12 +117,21 @@ func parseLocalSnapshots(output string) []localSnapshot {
 		if err != nil {
 			continue
 		}
-		path := strings.TrimPrefix(parts[2], "/www/backup/")
+		prefix := backupSystemSettings().BackupRoot + "/"
+		if !strings.HasPrefix(parts[2], prefix) {
+			continue
+		}
+		path := strings.TrimPrefix(parts[2], prefix)
 		segments := strings.Split(path, "/")
 		if len(segments) < 2 {
 			continue
 		}
 		category := segments[0]
+		if len(segments) >= 3 {
+			if _, err := time.Parse("2006-01-02", segments[0]); err == nil {
+				category = segments[1]
+			}
+		}
 		if category != "site" && category != "database" && category != "panel" {
 			continue
 		}
@@ -673,6 +682,10 @@ func newSSHSession() (*ssh.Session, error) {
 
 // Hàm thực thi lệnh SSH trên máy ảo (tái sử dụng kết nối pool, timeout 60s)
 func executeSSHCommand(command string) (string, error) {
+	return executeSSHCommandRaw(configuredBackupCommand(command))
+}
+
+func executeSSHCommandRaw(command string) (string, error) {
 	session, err := newSSHSession()
 	if err != nil {
 		return "", err
@@ -1040,7 +1053,7 @@ do
     send_delete_alert "$FILE"
  done`, variables, rotationDecisionShell, localRetentionCopies)
 
-	return integrityScript, realtimeScript
+	return configuredBackupCommand(integrityScript), configuredBackupCommand(realtimeScript)
 }
 
 func buildAlertInstallCommand(integrityScript, realtimeScript string) string {
@@ -1163,6 +1176,20 @@ func setupRouter(cfg AppConfig) *gin.Engine {
 	// Tất cả route bên dưới đều yêu cầu đăng nhập
 	auth := r.Group("/api")
 	auth.Use(authMiddleware(cfg.JWTSecret))
+	auth.Use(func(c *gin.Context) {
+		if c.Request.Method == http.MethodPost && c.Request.URL.Path == "/api/backup-system/apply" {
+			c.Next()
+			return
+		}
+		backupSystemMutation.RLock()
+		defer backupSystemMutation.RUnlock()
+		if c.Request.Method != http.MethodGet && !strings.HasPrefix(c.Request.URL.Path, "/api/backup-system/") && !backupSystemLoaded.Load() {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "Chưa tải được cấu hình sao lưu từ máy chủ; hãy tải lại mục Hệ thống sao lưu trước khi thực hiện thay đổi"})
+			return
+		}
+		c.Next()
+	})
+	registerBackupSystemRoutes(auth)
 	{
 		auth.POST("/download-ticket", func(c *gin.Context) {
 			var req struct {
@@ -1191,7 +1218,7 @@ WEBSITES=$(find /www/wwwroot -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep 
 DATABASES=$(find /www/server/data -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -vE "/(mysql|performance_schema|sys|phpmyadmin)$" | wc -l)
 CRON_SCHEDULES=$(crontab -l 2>/dev/null | awk '
   NF >= 7 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $6 == "/bin/bash" {
-    if ($7 == "/root/scripts/backup-site.sh" || $7 == "/root/scripts/backup-database.sh" || ($7 == "/root/scripts/backup-monitor-run.sh" && ($8 == "backup-site" || $8 == "backup-database"))) type = "local"
+    if ($7 == "/root/scripts/backup-site.sh" || $7 == "/root/scripts/backup-database.sh" || $7 == "/root/scripts/backup-panel.sh" || ($7 == "/root/scripts/backup-monitor-run.sh" && ($8 == "backup-site" || $8 == "backup-database" || $8 == "backup-panel"))) type = "local"
     else if ($7 == "/root/scripts/auto_backup.sh") type = "drive"
     else if ($7 == "/root/scripts/cleanup-panel-backups.sh" || $7 == "/root/scripts/check_integrity.sh") type = "other"
     else next
@@ -1209,7 +1236,7 @@ LOCAL_BACKUP_DIR="/www/backup"
 if [ -d "$LOCAL_BACKUP_DIR" ]; then
   # Only count backup artifacts belonging to websites, databases, or aaPanel.
   # Ignore temporary files and unrelated content kept in /www/backup.
-  LOCAL_FILES=$(find "$LOCAL_BACKUP_DIR" -type f \( -path "$LOCAL_BACKUP_DIR/site/*" -o -path "$LOCAL_BACKUP_DIR/database/*" -o -path "$LOCAL_BACKUP_DIR/panel/*" \) ! -path "$LOCAL_BACKUP_DIR/panel/*/data/*" \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.sql.gz' -o -name '*.sql' \) -printf '%p\n' 2>/dev/null || true)
+  LOCAL_FILES=$(` + localBackupFindCommand + ` -printf '%p\n' 2>/dev/null || true)
   LOCAL_COUNT=$(printf '%s\n' "$LOCAL_FILES" | sed '/^$/d' | wc -l)
   LOCAL_SIZE=$(printf '%s\n' "$LOCAL_FILES" | sed '/^$/d' | xargs -r du -ch 2>/dev/null | tail -1 | awk '{print $1}')
   LOCAL_SIZE=${LOCAL_SIZE:-0}
@@ -1381,7 +1408,7 @@ LOCAL_LOGS=$(awk '
     }
     ' /www/server/cron/*.log 2>/dev/null | sed 's/,$//')
 CUSTOM_LOCAL_LOGS=$(tail -n 500 /root/backup-site.log /root/backup-database.log 2>/dev/null | awk '
-    /^CREATED \/www\/backup\/site\// {
+    /^CREATED \/www\/backup\/(20[0-9]{2}-[0-9]{2}-[0-9]{2}\/)?site\// {
         path = $2
         count = split(path, parts, "/")
         name = parts[count]
@@ -1390,7 +1417,7 @@ CUSTOM_LOCAL_LOGS=$(tail -n 500 /root/backup-site.log /root/backup-database.log 
             printf "{\"name\":\"Backup Website: %s\",\"date\":\"%s-%s-%s\",\"time\":\"%s:%s:%s\",\"duration\":%s,\"status\":\"Successful\"},", dt[1], dt[2], dt[3], dt[4], dt[5], dt[6], dt[7], duration
         }
     }
-    /^CREATED \/www\/backup\/database\/mysql\// {
+    /^CREATED \/www\/backup\/(20[0-9]{2}-[0-9]{2}-[0-9]{2}\/)?database\/mysql\// {
         path = $2
         count = split(path, parts, "/")
         name = parts[count]
@@ -1636,7 +1663,7 @@ done
 			if err != nil {
 				switch {
 				case strings.Contains(err.Error(), "CRON_NOT_SCHEDULED"):
-					c.JSON(http.StatusConflict, gin.H{"error": "Không tìm thấy cron sao lưu website hoặc cơ sở dữ liệu để bật ghi nhận"})
+					c.JSON(http.StatusConflict, gin.H{"error": "Không tìm thấy cron sao lưu website, cơ sở dữ liệu hoặc cấu hình aaPanel để bật ghi nhận"})
 				case strings.Contains(err.Error(), "CRON_DUPLICATE"):
 					c.JSON(http.StatusConflict, gin.H{"error": "Có lịch sao lưu trùng; cần kiểm tra crontab trước khi bật ghi nhận"})
 				case strings.Contains(err.Error(), "CRON_WRAPPER_CONFLICT"):
@@ -1691,12 +1718,13 @@ done
 			var req struct {
 				Time             string `json:"time"`
 				ExpectedSchedule string `json:"expectedSchedule"`
+				ExpectedEnabled  *bool  `json:"expectedEnabled"`
 			}
-			if err := c.ShouldBindJSON(&req); err != nil {
+			if err := c.ShouldBindJSON(&req); err != nil || req.ExpectedEnabled == nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu không hợp lệ"})
 				return
 			}
-			command, valid := commandForCronScheduleUpdate(task, req.Time, req.ExpectedSchedule)
+			command, valid := commandForCronScheduleUpdate(task, req.Time, req.ExpectedSchedule, *req.ExpectedEnabled)
 			if !valid {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Giờ chạy hoặc lịch hiện tại không hợp lệ"})
 				return
@@ -1715,12 +1743,107 @@ done
 				}
 				return
 			}
-			if strings.TrimSpace(output) != "UPDATED" {
+			if !strings.HasPrefix(strings.TrimSpace(output), "UPDATED|/root/backup-monitor/cron-recovery/schedule-"+task.ID+".") {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xác nhận được lịch chạy đã lưu"})
 				return
 			}
 			invalidate("cron-jobs", "server-status")
 			c.JSON(http.StatusOK, gin.H{"schedule": fmt.Sprintf("%s %s %s", req.Time[3:], req.Time[:2], strings.Join(strings.Fields(req.ExpectedSchedule)[2:], " "))})
+		})
+
+		auth.DELETE("/cron-jobs/:id", func(c *gin.Context) {
+			task, ok := managedCronTaskByID(c.Param("id"))
+			if !ok {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Cronjob không hợp lệ"})
+				return
+			}
+			var req struct {
+				ExpectedSchedule string `json:"expectedSchedule"`
+				ExpectedEnabled  *bool  `json:"expectedEnabled"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil || req.ExpectedEnabled == nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu không hợp lệ"})
+				return
+			}
+			command, valid := commandForCronDeletion(task, req.ExpectedSchedule, *req.ExpectedEnabled)
+			if !valid {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Lịch hiện tại không hợp lệ"})
+				return
+			}
+			output, err := executeSSHCommand(command)
+			// Refresh even after an uncertain SSH outcome: installation may have
+			// completed before the connection failed.
+			invalidate("cron-jobs", "server-status", "backup-status")
+			if err != nil {
+				switch {
+				case strings.Contains(err.Error(), "CRON_NOT_SCHEDULED"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Cronjob không còn trong lịch chạy; hãy làm mới danh sách"})
+				case strings.Contains(err.Error(), "CRON_DUPLICATE"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Có nhiều dòng cron cho cùng script; cần kiểm tra trên máy chủ"})
+				case strings.Contains(err.Error(), "CRON_SCHEDULE_CHANGED"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Lịch chạy đã thay đổi; hãy đóng xác nhận, làm mới danh sách và thử lại"})
+				case strings.Contains(err.Error(), "CRON_ALREADY_RUNNING"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Tác vụ đang chạy; hãy chờ kết thúc rồi xóa lịch"})
+				default:
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa lịch cron; không xóa script, log hay backup"})
+				}
+				return
+			}
+			backupPath, ok := strings.CutPrefix(strings.TrimSpace(output), "DELETED|")
+			if !ok || !strings.HasPrefix(backupPath, "/root/backup-monitor/cron-recovery/delete-"+task.ID+".") || !strings.HasSuffix(backupPath, "/crontab.txt") {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xác nhận được kết quả xóa; hãy làm mới danh sách trước khi thử lại"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"status": "deleted", "backupPath": backupPath})
+		})
+
+		auth.PUT("/cron-jobs/:id/state", func(c *gin.Context) {
+			task, ok := managedCronTaskByID(c.Param("id"))
+			if !ok {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Cronjob không hợp lệ"})
+				return
+			}
+			var req struct {
+				Enabled          *bool  `json:"enabled"`
+				ExpectedSchedule string `json:"expectedSchedule"`
+				ExpectedEnabled  *bool  `json:"expectedEnabled"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil || req.Enabled == nil || req.ExpectedEnabled == nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu không hợp lệ"})
+				return
+			}
+			command, valid := commandForCronStateUpdate(task, req.ExpectedSchedule, *req.ExpectedEnabled, *req.Enabled)
+			if !valid {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Lịch hiện tại không hợp lệ"})
+				return
+			}
+			output, err := executeSSHCommand(command)
+			invalidate("cron-jobs", "server-status", "backup-status")
+			if err != nil {
+				switch {
+				case strings.Contains(err.Error(), "CRON_NOT_SCHEDULED"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Cronjob không còn trong danh sách; hãy làm mới"})
+				case strings.Contains(err.Error(), "CRON_DUPLICATE"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Có nhiều dòng cron cho cùng script; cần kiểm tra trên máy chủ"})
+				case strings.Contains(err.Error(), "CRON_SCHEDULE_CHANGED"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Lịch hoặc trạng thái đã thay đổi; hãy đóng xác nhận và làm mới danh sách"})
+				case strings.Contains(err.Error(), "CRON_ALREADY_RUNNING"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Tác vụ đang chạy; hãy chờ kết thúc rồi đổi trạng thái"})
+				default:
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể cập nhật trạng thái cron"})
+				}
+				return
+			}
+			operation := "pause"
+			if *req.Enabled {
+				operation = "enable"
+			}
+			backupPath, ok := strings.CutPrefix(strings.TrimSpace(output), "UPDATED|")
+			if !ok || !strings.HasPrefix(backupPath, "/root/backup-monitor/cron-recovery/"+operation+"-"+task.ID+".") || !strings.HasSuffix(backupPath, "/crontab.txt") {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xác nhận được trạng thái đã lưu; hãy làm mới danh sách"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"enabled": *req.Enabled, "backupPath": backupPath})
 		})
 
 		// API 7: Đọc cấu hình hệ thống (lưu trên máy ảo)
@@ -1800,9 +1923,7 @@ fi
 
 		// API 10: Liệt kê các file backup cục bộ
 		auth.GET("/local-snapshots", func(c *gin.Context) {
-			cmds := `
-find /www/backup/site /www/backup/database /www/backup/panel -type f ! -path '/www/backup/panel/*/data/*' \( -name "*.tar.gz" -o -name "*.sql" -o -name "*.zip" -o -name "*.gz" \) -printf '%TY-%Tm-%Td %TH:%TM:%TS|%s|%p\n' 2>/dev/null
-`
+			cmds := localBackupFindCommand + ` -printf '%TY-%Tm-%Td %TH:%TM:%TS|%s|%p\n' 2>/dev/null`
 			output, err := cachedGet("local-snapshots", 30*time.Second, func() ([]byte, error) {
 				out, e := executeSSHCommand(cmds)
 				return []byte(out), e
@@ -1968,6 +2089,8 @@ func main() {
 	}
 
 	warmDriveStatusCache()
+	runtimeConfig = cfg
+	initializeBackupSystem()
 	router := setupRouter(cfg)
 	log.Printf("Backend listening on %s", cfg.APIBindAddr)
 	if err := router.Run(cfg.APIBindAddr); err != nil {

@@ -154,3 +154,13 @@ func warmDriveStatusCache() {
 	}
 	cacheMu.Unlock()
 }
+
+func clearDriveStatusSnapshot() {
+	driveGoodMu.Lock()
+	driveGoodStatus = nil
+	driveGoodMu.Unlock()
+	if cachePath := driveStatusCachePath(); cachePath != "" {
+		// Only the app-owned cached summary is removed, never backup data.
+		_ = os.Remove(cachePath)
+	}
+}

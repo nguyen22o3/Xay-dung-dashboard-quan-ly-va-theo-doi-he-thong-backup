@@ -65,7 +65,7 @@ export default function App() {
       case 'jobs':
         return <CronJobs lang={lang} />
       case 'settings':
-        return <Settings isDark={isDark} onToggleDark={onToggleDark} lang={lang} onToggleLang={onToggleLang} />
+        return <Settings isDark={isDark} onToggleDark={onToggleDark} lang={lang} onToggleLang={onToggleLang} onOpenBackupManagement={() => onNavigate('jobs')} />
       case 'activity':
         return <Activity isDark={isDark} lang={lang} />
       case 'available':

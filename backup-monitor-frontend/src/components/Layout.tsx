@@ -15,7 +15,7 @@ const overviewItems: NavItem[] = [
 
 const managementItems: NavItem[] = [
   { tab: 'available', icon: Archive, vi: 'Bản sao lưu', en: 'Backups' },
-  { tab: 'jobs', icon: CalendarClock, vi: 'Cronjob', en: 'Cron Jobs' },
+  { tab: 'jobs', icon: CalendarClock, vi: 'Quản lý sao lưu', en: 'Backup management' },
   { tab: 'activity', icon: Activity, vi: 'Nhật ký hoạt động', en: 'Activity log' },
   { tab: 'settings', icon: Settings, vi: 'Cài đặt', en: 'Settings' },
 ]
@@ -40,7 +40,7 @@ export default function Layout({ activeTab, onNavigate, isDark, onToggleDark, la
   const allItems = [...overviewItems, ...managementItems]
   const activeItem = allItems.find((item) => item.tab === activeTab)
   const results = search.trim()
-    ? allItems.filter((item) => `${item.vi} ${item.en}`.toLowerCase().includes(search.trim().toLowerCase()))
+    ? allItems.filter((item) => `${item.vi} ${item.en} ${item.tab === 'jobs' ? 'cronjob cron cấu hình lưu trữ storage configuration' : ''}`.toLowerCase().includes(search.trim().toLowerCase()))
     : []
 
   useEffect(() => {

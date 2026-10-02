@@ -89,6 +89,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
   const s = server.data ?? {}
   const websitesStatus = websites.data ?? []
   const backupJobs = (cron.data ?? []).filter(job => job.id === 'backup-site' || job.id === 'backup-database')
+  const scheduledBackupJobs = (cron.data ?? []).filter(job => ['backup-site', 'backup-database', 'backup-panel'].includes(job.id))
   const trackingEnabled = backupJobs.length > 0 && backupJobs.every(job => job.schedule_tracked)
   
   const successFailureData = useMemo(() => {
@@ -269,7 +270,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                 <div>
                   <div style={{ fontSize: '12px', color: theme.textSecondary }}>{tr(lang, 'nextSchedule')}</div>
                   <div style={{ fontSize: '14px', fontWeight: 'bold', color: theme.titleColor }}>
-                    {nextCronRun((cron.data ?? []).filter(job => job.id === 'backup-site' || job.id === 'backup-database'), s.server_time, lang) ?? '—'}
+                    {nextCronRun(scheduledBackupJobs, s.server_time, lang) ?? '—'}
                   </div>
                 </div>
               </div>
@@ -496,7 +497,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                   <span>{tr(lang, 'scheduledJobsTitle')}</span>
                   <div style={{ padding: '2px 8px', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.gridLine}`, borderRadius: '12px', fontSize: '10px', display: 'flex', alignItems: 'center', gap: '6px', color: theme.successText, textTransform: 'none' }}>
                     <CheckCircle size={12} />
-                    <span style={{ color: theme.titleColor, fontWeight: 'bold' }}>{cron.data ? `${cron.data.filter((job) => job.id === 'backup-site' || job.id === 'backup-database').length} ${tr(lang, 'jobCountUnit')}` : '—'}</span>
+                    <span style={{ color: theme.titleColor, fontWeight: 'bold' }}>{cron.data ? `${scheduledBackupJobs.length} ${tr(lang, 'jobCountUnit')}` : '—'}</span>
                   </div>
                 </div>
               </div>
@@ -509,11 +510,11 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                   </tr>
                 </thead>
                 <tbody>
-                  {(cron.data || []).filter(j => j.id === 'backup-site' || j.id === 'backup-database').length > 0 ? (
-                    (cron.data || []).filter(j => j.id === 'backup-site' || j.id === 'backup-database').map((cJob) => (
+                  {scheduledBackupJobs.length > 0 ? (
+                    scheduledBackupJobs.map((cJob) => (
                       <tr key={`${cJob.id}:${cJob.schedule}`} style={{ borderBottom: `1px solid ${theme.gridLine}` }}>
                         <td style={{ padding: '6px 4px', whiteSpace: 'nowrap',  textOverflow: 'ellipsis', maxWidth: '120px' }} title={cJob.name}>
-                          {tr(lang, cJob.id === 'backup-site' ? 'backupSiteJob' : 'backupDatabaseJob')}
+                          {tr(lang, cJob.id === 'backup-site' ? 'backupSiteJob' : cJob.id === 'backup-panel' ? 'backupPanelJob' : 'backupDatabaseJob')}
                         </td>
                         <td style={{ padding: '6px 4px', color: theme.textSecondary }}>{formatCronSchedule(cJob.schedule, lang)}</td>
                       </tr>

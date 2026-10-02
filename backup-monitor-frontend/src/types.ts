@@ -77,6 +77,7 @@ export interface CronJob {
   name: string
   script: string
   schedule: string
+  enabled?: boolean
   last_run: string
   log_updated_at?: string
   tracked_at?: string

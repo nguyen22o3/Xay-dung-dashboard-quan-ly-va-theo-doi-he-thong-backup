@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-const scheduledBackupRunnerPath = "/root/scripts/backup-monitor-run.sh"
-const backupRunHistoryPath = "/root/backup-monitor-runs.log"
+func scheduledBackupRunnerPath() string { return configuredScript("backup-monitor-run.sh") }
+func backupRunHistoryPath() string      { return configuredLog("backup-monitor-runs.log") }
 
 // Manual and scheduled runs share a lifecycle and the same per-job flock.
 // The separate structured history survives verbose/truncated script output.
@@ -54,20 +54,28 @@ exit "$result"
 func trackedRunnerForTask(task managedCronTask) string {
 	history := ""
 	if task.ID == "backup-site" || task.ID == "backup-database" {
-		history = backupRunHistoryPath
+		history = backupRunHistoryPath()
 	}
-	return fmt.Sprintf("SCRIPT=%q\nTASK_ID=%q\nRUN_HISTORY=%q\n", task.Script, task.ID, history) + trackedRunShell
+	prefix := fmt.Sprintf("SCRIPT=%q\nTASK_ID=%q\nRUN_HISTORY=%q\n", task.Script, task.ID, history)
+	if task.ID == "backup-site" || task.ID == "backup-database" || task.ID == "backup-panel" {
+		prefix += "export BACKUP_MONITOR_ORIGIN=manual\n"
+	}
+	if task.ID == "backup-panel" {
+		prefix += "export BACKUP_PANEL_CAPTURED_LOG=1\n"
+	}
+	return prefix + trackedRunShell
 }
 
 func buildScheduledBackupRunner() string {
 	var script strings.Builder
 	script.WriteString("#!/bin/bash\n# backup-monitor scheduled tracking v1\nset -u\numask 077\nTASK_ID=${1:-}\ncase \"$TASK_ID\" in\n")
-	for _, id := range []string{"backup-site", "backup-database"} {
+	for _, id := range []string{"backup-site", "backup-database", "backup-panel"} {
 		task, _ := managedCronTaskByID(id)
 		fmt.Fprintf(&script, "  %s) SCRIPT=%q; LOG=%q ;;\n", task.ID, task.Script, task.Log)
 	}
-	script.WriteString("  *) printf 'CRON_INVALID_JOB\\n' >&2; exit 1 ;;\nesac\nshift\n")
-	fmt.Fprintf(&script, "RUN_HISTORY=%q\n", backupRunHistoryPath)
+	script.WriteString("  *) printf 'CRON_INVALID_JOB\\n' >&2; exit 1 ;;\nesac\nshift\nexport BACKUP_MONITOR_ORIGIN=cron\n")
+	fmt.Fprintf(&script, "RUN_HISTORY=%q\n", backupRunHistoryPath())
+	script.WriteString("if [ \"$TASK_ID\" = backup-panel ]; then\n  RUN_HISTORY=''\n  export BACKUP_PANEL_CAPTURED_LOG=1\nfi\n")
 	script.WriteString(`if [ -L "$LOG" ] || { [ -e "$LOG" ] && [ ! -f "$LOG" ]; }; then
   printf 'CRON_LOG_UNAVAILABLE\n' >&2
   exit 1
@@ -80,17 +88,19 @@ if ! flock -n 8; then
 fi
 `)
 	script.WriteString(trackedRunShell)
-	return script.String()
+	return configuredBackupCommand(script.String())
 }
 
 // Only two allowlisted command forms are managed. Scripts, arguments, times,
 // comments, environment variables and unrelated cron entries stay intact.
 const trackingCronAwk = `
+  { original=$0; paused_prefix=""; if (index($0, "# backup-monitor-paused ") == 1) { sub(/^# backup-monitor-paused /, ""); paused_prefix="# backup-monitor-paused " } }
   NF >= 7 && $1 !~ /^#/ && $6 == "/bin/bash" {
     id=""
     if ($7 == "/root/scripts/backup-site.sh") id="backup-site"
     else if ($7 == "/root/scripts/backup-database.sh") id="backup-database"
-    else if ($7 == wrapper && ($8 == "backup-site" || $8 == "backup-database")) id=$8
+    else if ($7 == "/root/scripts/backup-panel.sh") id="backup-panel"
+    else if ($7 == wrapper && ($8 == "backup-site" || $8 == "backup-database" || $8 == "backup-panel")) id=$8
     if (id != "") {
       counts[id]++
       total++
@@ -99,15 +109,15 @@ const trackingCronAwk = `
         prefix=substr($0, 1, RLENGTH)
         command=substr($0, RLENGTH+1)
         match(command, /^\/bin\/bash[[:space:]]+[^[:space:]]+/)
-        print prefix "/bin/bash " wrapper " " id substr(command, RLENGTH+1)
+        print paused_prefix prefix "/bin/bash " wrapper " " id substr(command, RLENGTH+1)
         next
       }
     }
   }
-  { print }
+  { print original }
   END {
     if (!total) { print "CRON_NOT_SCHEDULED" > "/dev/stderr"; exit 1 }
-    if (counts["backup-site"] > 1 || counts["backup-database"] > 1) { print "CRON_DUPLICATE" > "/dev/stderr"; exit 1 }
+    if (counts["backup-site"] > 1 || counts["backup-database"] > 1 || counts["backup-panel"] > 1) { print "CRON_DUPLICATE" > "/dev/stderr"; exit 1 }
   }
 `
 
@@ -138,6 +148,7 @@ for id in $IDS; do
   case "$id" in
     backup-site) script=/root/scripts/backup-site.sh ;;
     backup-database) script=/root/scripts/backup-database.sh ;;
+    backup-panel) script=/root/scripts/backup-panel.sh ;;
     *) continue ;;
   esac
   [ -f "$script" ] && [ ! -L "$script" ] || { printf 'CRON_SCRIPT_UNAVAILABLE\n' >&2; exit 1; }
@@ -151,18 +162,18 @@ cp -- "$TMP_DIR/current" "$BACKUP"
 mv -f -- "$TMP_DIR/runner" "$WRAPPER"
 crontab "$TMP_DIR/updated"
 printf 'TRACKING_ENABLED\n'
-`, scheduledBackupRunnerPath, backupRunHistoryPath, trackingCronAwk, base64.StdEncoding.EncodeToString([]byte(buildScheduledBackupRunner())))
+`, scheduledBackupRunnerPath(), backupRunHistoryPath(), configuredBackupCommand(trackingCronAwk), base64.StdEncoding.EncodeToString([]byte(buildScheduledBackupRunner())))
 }
 
 func managedTaskForCronFields(fields []string) (managedCronTask, bool, bool) {
 	if len(fields) < 7 || fields[5] != "/bin/bash" {
 		return managedCronTask{}, false, false
 	}
-	for _, task := range managedCronTasks {
+	for _, task := range managedCronTasks() {
 		if fields[6] == task.Script {
 			return task, false, true
 		}
-		if len(fields) >= 8 && fields[6] == scheduledBackupRunnerPath && fields[7] == task.ID && (task.ID == "backup-site" || task.ID == "backup-database") {
+		if len(fields) >= 8 && fields[6] == scheduledBackupRunnerPath() && fields[7] == task.ID && (task.ID == "backup-site" || task.ID == "backup-database" || task.ID == "backup-panel") {
 			return task, true, true
 		}
 	}
@@ -183,5 +194,5 @@ func backupRunActivityCommand() string {
 	return fmt.Sprintf(`{
   tail -n 1000 /root/backup-site.log /root/backup-database.log 2>/dev/null | awk -F'|' 'NF == 6 && $1 == "MONITOR_RUN"'
   if [ -f %q ] && [ ! -L %q ]; then tail -n 10000 %q; fi
-} | awk -F'|' '%s' | sed 's/,$//'`, backupRunHistoryPath, backupRunHistoryPath, backupRunHistoryPath, backupRunActivityAwk)
+} | awk -F'|' '%s' | sed 's/,$//'`, backupRunHistoryPath(), backupRunHistoryPath(), backupRunHistoryPath(), backupRunActivityAwk)
 }

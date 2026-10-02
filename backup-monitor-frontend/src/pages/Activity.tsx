@@ -1,22 +1,9 @@
-import { useState, useMemo } from 'react'
-import { Check, X, Trash2 } from 'lucide-react'
+import { Fragment, useState, useMemo } from 'react'
+import { Check, ChevronDown, X, Trash2 } from 'lucide-react'
 import type { Lang } from '../language'
 import { makeTheme } from '../theme'
 import { apiErrorMessage, clearLog, useBackupStatus } from '../api'
-import { activityStamp, activityStatus, formatTime24, statusLabel } from '../utils'
-
-interface GroupedActivity {
-  key: string
-  name: string
-  date: string
-  time: string
-  duration: number | null
-  missingDuration: boolean
-  status: string
-  count: number
-}
-
-
+import { activityStamp, activityStatus, formatTime24, statusLabel, summarizeLocalBackupActivity } from '../utils'
 const formatDurationSeconds = (duration: number | null) => {
   if (duration === null) return '—'
   return duration > 0 && duration < 0.01 ? `${duration.toFixed(3)}s` : `${duration.toFixed(2)}s`
@@ -29,6 +16,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
   const [isClearing, setIsClearing] = useState(false)
   const [clearError, setClearError] = useState('')
   const [activeTab, setActiveTab] = useState<'server' | 'drive'>('drive')
+  const [expandedKey, setExpandedKey] = useState<string | null>(null)
 
   const handleClear = async () => {
     if (activeTab !== 'drive') return
@@ -47,45 +35,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
   }
 
   const driveActivities = [...(driveData?.activity ?? [])].sort((a, b) => activityStamp(b).localeCompare(activityStamp(a)))
-  const localActivities = useMemo(() => driveData?.localActivity ?? [], [driveData?.localActivity])
-
-  const groupedLocal = useMemo(() => {
-    const groups = new Map<string, GroupedActivity>()
-    localActivities.forEach((act, index) => {
-       const name = act.name || 'aaPanel Job'
-       const isSite = name.includes('Website')
-       const isDb = name.includes('Database')
-       const type = isSite ? name.replace('Backup Website', isVi ? 'Sao lưu website' : 'Website backup') : (isDb ? name.replace('Backup Database', isVi ? 'Sao lưu cơ sở dữ liệu' : 'Database backup') : name)
-       
-       // Use hour and minute for grouping
-       const groupKey = `${activityStamp(act)} ${type} ${index}`
-       
-       let existing = groups.get(groupKey)
-       if (!existing) {
-         existing = {
-           key: groupKey,
-           name: type,
-           date: act.date,
-           time: act.time,
-           duration: null,
-           missingDuration: false,
-           status: act.status,
-           count: 0
-         }
-         groups.set(groupKey, existing)
-       }
-       const duration = act.duration === null || act.duration === '' ? NaN : Number(act.duration)
-       if (Number.isFinite(duration) && duration >= 0) {
-         existing.duration = (existing.duration ?? 0) + duration
-       } else {
-         existing.missingDuration = true
-       }
-       existing.count += 1
-    })
-    return Array.from(groups.values()).sort((a, b) => b.key.localeCompare(a.key))
-  }, [localActivities, isVi])
-
-
+  const groupedLocal = useMemo(() => summarizeLocalBackupActivity(driveData?.localActivity ?? []), [driveData?.localActivity])
   return (
     <div className="animate-fade-in legacy-page" style={{ padding: '20px' }}>
       <h2 style={{ margin: '0 0 20px 0', fontSize: '20px', fontWeight: '500', color: isDark ? t.titleColor : '#1a4175' }}>
@@ -206,13 +156,20 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
                 </tr>
               )
             ) : (
-              localActivities.length > 0 ? (
-                groupedLocal.map((act, i) => {
+              groupedLocal.length > 0 ? (
+                groupedLocal.map((act, index) => {
                   const isSuccess = activityStatus(act.status) === 'success'
+                  const expanded = expandedKey === act.key
+                  const detailId = `backup-activity-details-${index}`
+                  const toggleDetails = () => setExpandedKey(expanded ? null : act.key)
                   return (
-                    <tr key={i} style={{ borderBottom: `1px solid ${isDark ? t.cardBorder : '#f5f5f5'}` }}>
+                    <Fragment key={act.key}>
+                    <tr className="activity-summary-row" onClick={toggleDetails} style={{ borderBottom: `1px solid ${isDark ? t.cardBorder : '#f5f5f5'}` }}>
                       <td style={{ padding: '16px', color: t.textSecondary }}>
-                        {act.name || 'aaPanel Job'}
+                        <button type="button" className="activity-summary-toggle" aria-expanded={expanded} aria-controls={detailId} aria-label={`${expanded ? (isVi ? 'Thu gọn' : 'Collapse') : (isVi ? 'Xem chi tiết' : 'View details')} ${act.name}, ${act.date} ${act.time}`}>
+                          <ChevronDown size={16} className={expanded ? 'is-expanded' : ''} aria-hidden="true" />
+                          {act.name}
+                        </button>
                       </td>
                       <td style={{ padding: '16px' }}>
                         <span style={{ color: isSuccess ? '#4caf50' : activityStatus(act.status) === 'failed' ? '#f44336' : t.textSecondary, display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 'bold' }}>
@@ -223,10 +180,43 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
                       <td style={{ padding: '16px', color: t.textSecondary }}>
                         {act.date} {formatTime24(act.time)}
                       </td>
-                      <td style={{ padding: '16px', color: t.textSecondary }}>
-                        {act.missingDuration ? '—' : formatDurationSeconds(act.duration)}
+                      <td style={{ padding: '16px', color: t.textSecondary }} title={act.source === 'run'
+                        ? (isVi ? 'Thời lượng của cả lần chạy' : 'Duration of the whole run')
+                        : (isVi ? 'Tổng thời lượng các tệp có cùng thời điểm bắt đầu; không phải thời lượng toàn bộ tác vụ' : 'Sum of file durations with the same start time, not the full job duration')}>
+                        {formatDurationSeconds(act.duration)}
                       </td>
                     </tr>
+                    {expanded && <tr>
+                      <td colSpan={4} className="activity-detail-cell">
+                        <div id={detailId} role="region" aria-label={`${isVi ? 'Chi tiết' : 'Details'} ${act.name}`} className="activity-detail-panel">
+                          <div className="activity-detail-heading">
+                            <strong>{isVi ? 'Chi tiết' : 'Details'} {act.name}</strong>
+                            <span>{act.date} {act.time} · {act.details.length} {isVi ? 'bản ghi tệp' : 'file records'}</span>
+                          </div>
+                          {act.source === 'files' && <p className="activity-detail-note">{isVi ? 'Log cũ: tổng hợp các tệp cùng thời điểm bắt đầu, chưa có bản ghi kết quả của cả tác vụ.' : 'Legacy logs: grouped file records with the same start time; a whole-run result is unavailable.'}</p>}
+                          {act.details.length > 0 ? <div className="activity-detail-table-wrap"><table className="activity-detail-table">
+                            <thead><tr>
+                              <th>{isVi ? 'Website / Cơ sở dữ liệu' : 'Website / Database'}</th>
+                              <th>{isVi ? 'Trạng thái' : 'Status'}</th>
+                              <th>{isVi ? 'Thời điểm ghi nhận' : 'Recorded time'}</th>
+                              <th>{isVi ? 'Thời lượng tệp' : 'File duration'}</th>
+                            </tr></thead>
+                            <tbody>{act.details.map((detail, detailIndex) => {
+                              const status = activityStatus(detail.status)
+                              const duration = detail.duration == null || String(detail.duration).trim() === '' ? NaN : Number(detail.duration)
+                              const name = (detail.name ?? '').replace(/^Backup (?:Website|Site):\s*/i, 'Website: ').replace(/^Backup Database:\s*/i, isVi ? 'Cơ sở dữ liệu: ' : 'Database: ')
+                              return <tr key={`${activityStamp(detail)}:${detail.name}:${detailIndex}`}>
+                                <td>{name || '—'}</td>
+                                <td><span style={{ color: status === 'success' ? '#4caf50' : status === 'failed' ? '#f44336' : t.textSecondary }}>{statusLabel(detail.status, lang)}</span></td>
+                                <td>{activityStamp(detail)}</td>
+                                <td>{formatDurationSeconds(Number.isFinite(duration) && duration >= 0 ? duration : null)}</td>
+                              </tr>
+                            })}</tbody>
+                          </table></div> : <p className="activity-detail-note">{isVi ? 'Chưa có bản ghi chi tiết tệp cho lần chạy này. Bạn có thể xem log tác vụ trong mục Cronjob.' : 'No file details were recorded for this run. View its log in Cron Jobs.'}</p>}
+                        </div>
+                      </td>
+                    </tr>}
+                    </Fragment>
                   )
                 })
               ) : (

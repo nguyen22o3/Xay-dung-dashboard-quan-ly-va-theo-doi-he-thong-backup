@@ -6,7 +6,7 @@ import type { Lang } from '../language'
 
 type Section = 'alerts' | 'monitoring' | 'appearance'
 type ChannelId = 'telegram' | 'discord' | 'email'
-type Props = { isDark: boolean; onToggleDark: () => void; lang: Lang; onToggleLang: () => void }
+type Props = { isDark: boolean; onToggleDark: () => void; lang: Lang; onToggleLang: () => void; onOpenBackupManagement: () => void }
 type Channel = { id: ChannelId; title: string; vi: string; en: string; icon: LucideIcon }
 
 const channels: Channel[] = [
@@ -21,7 +21,7 @@ const tabs: { id: Section; vi: string; en: string }[] = [
   { id: 'appearance', vi: 'Giao diện', en: 'Appearance' },
 ]
 
-export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: Props) {
+export default function Settings({ isDark, onToggleDark, lang, onToggleLang, onOpenBackupManagement }: Props) {
   const vi = lang === 'vi'
   const [section, setSection] = useState<Section>('alerts')
   const [expanded, setExpanded] = useState<ChannelId | null>(null)
@@ -91,7 +91,8 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
   </div>
 
   return <div className="apex-settings-page animate-fade-in">
-    <header className="apex-settings-heading"><h1>{vi ? 'Cài đặt' : 'Settings'}</h1><p>{vi ? 'Quản lý cảnh báo, giám sát và tùy chọn giao diện.' : 'Manage alerts, monitoring, and appearance preferences.'}</p></header>
+    <header className="apex-settings-heading"><h1>{vi ? 'Cài đặt' : 'Settings'}</h1><p>{vi ? 'Quản lý cảnh báo, giám sát và giao diện.' : 'Manage alerts, monitoring, and appearance.'}</p></header>
+    <div className="settings-backup-link"><span>{vi ? 'Nơi lưu trữ và lịch cron đã được gộp vào Quản lý sao lưu.' : 'Storage and cron schedules are now together in Backup management.'}</span><button type="button" className="backup-system-secondary" onClick={onOpenBackupManagement}>{vi ? 'Mở Quản lý sao lưu' : 'Open Backup management'} →</button></div>
     <div className="apex-settings-tabs" role="tablist" aria-label={vi ? 'Nhóm cài đặt' : 'Settings sections'}>
       {tabs.map((tab) => <button key={tab.id} id={`settings-tab-${tab.id}`} role="tab" type="button" aria-controls={`settings-panel-${tab.id}`} aria-selected={section === tab.id} tabIndex={section === tab.id ? 0 : -1} className={section === tab.id ? 'is-active' : ''} onClick={() => setSection(tab.id)} onKeyDown={(event) => {
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
@@ -133,7 +134,7 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
     {section === 'monitoring' && <section className="apex-settings-panel" role="tabpanel" id="settings-panel-monitoring" aria-labelledby="settings-tab-monitoring">
       <div className="apex-settings-panel-heading"><h2>{vi ? 'Quy tắc giám sát' : 'Monitoring rule'}</h2><p>{vi ? 'Điều chỉnh ngưỡng để phát hiện thiếu bản sao lưu trên Google Drive.' : 'Set the threshold used to detect missing Drive backups.'}</p></div>
       <div className="apex-settings-list">
-        <div className="apex-settings-row"><span className="apex-settings-row-icon"><Cloud size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folders'}</strong><small>{vi ? 'Cảnh báo nếu số thư mục trong gdrive:Backup ít hơn ngưỡng này.' : 'Alert when folders in gdrive:Backup fall below this threshold.'}</small></span><input className="apex-settings-number" type="number" min={1} max={365} value={threshold} aria-label={vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folders'} onChange={(event) => setThreshold(Number(event.target.value))} /></div>
+        <div className="apex-settings-row"><span className="apex-settings-row-icon"><Cloud size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folders'}</strong><small>{vi ? 'Cảnh báo nếu số thư mục ngày trong nơi lưu trữ Drive đã chọn ít hơn ngưỡng này.' : 'Alert when dated folders in the configured Drive location fall below this threshold.'}</small></span><input className="apex-settings-number" type="number" min={1} max={365} value={threshold} aria-label={vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folders'} onChange={(event) => setThreshold(Number(event.target.value))} /></div>
         <div className="apex-settings-row"><span className="apex-settings-row-icon"><ShieldCheck size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Phạm vi giám sát đã cấu hình' : 'Configured monitoring scope'}</strong><small>{vi ? 'Theo dõi xóa tệp trên máy chủ và đếm thư mục Drive theo lịch. Chưa kiểm tra checksum hoặc khả năng khôi phục tệp.' : 'Watch server file deletion and count Drive folders on a schedule. Checksums and restorability are not verified.'}</small></span><span className="apex-settings-source">Server + Google Drive</span></div>
       </div>
       {saveFooter}

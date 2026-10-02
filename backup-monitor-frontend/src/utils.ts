@@ -111,6 +111,98 @@ export function activityStamp(entry: BackupActivityEntry): string {
   return `${entry.date} ${formatTime24(entry.time)}`
 }
 
+export interface BackupActivitySummary {
+  key: string
+  name: 'Backup Site' | 'Backup Database'
+  date: string
+  time: string
+  duration: number | null
+  status: string
+  source: 'run' | 'files'
+  details: BackupActivityEntry[]
+}
+
+function localBackupType(entry: BackupActivityEntry): 'site' | 'database' | null {
+  const name = (entry.name ?? '').trim().toLowerCase()
+  if (/^(?:backup (?:website|site)\b|website backup\b|(?:lần chạy )?sao lưu website\b)/.test(name)) return 'site'
+  if (/^(?:backup database\b|database backup\b|(?:lần chạy )?sao lưu cơ sở dữ liệu)/.test(name)) return 'database'
+  return null
+}
+
+function recordedDuration(entry: BackupActivityEntry): number | null {
+  if (entry.duration == null || (typeof entry.duration === 'string' && entry.duration.trim() === '')) return null
+  const duration = Number(entry.duration)
+  return Number.isFinite(duration) && duration >= 0 ? duration : null
+}
+
+// Compact server history only. Keep every tracked run, use its authoritative
+// result/duration, and suppress the file details it covers. Legacy file records
+// are grouped by exact start time, never by minute (two runs may share a minute).
+export function summarizeLocalBackupActivity(entries: BackupActivityEntry[]): BackupActivitySummary[] {
+  const classified = entries.map(entry => ({ entry, type: localBackupType(entry) }))
+    .filter(item => item.type !== null)
+  const runs = classified.filter(item => item.entry.kind === 'run').map(item => {
+    const duration = recordedDuration(item.entry)
+    const start = Date.parse(`${item.entry.date}T${formatTime24(item.entry.time)}Z`)
+    return { ...item, duration, start }
+  })
+  const runCounts = new Map<string, number>()
+  const rows: BackupActivitySummary[] = runs.map(({ entry, type, duration }) => {
+    const stampKey = `run:${type}:${activityStamp(entry)}`
+    const ordinal = runCounts.get(stampKey) ?? 0
+    runCounts.set(stampKey, ordinal + 1)
+    return {
+      key: `${stampKey}:${ordinal}`,
+      name: type === 'site' ? 'Backup Site' : 'Backup Database',
+      date: entry.date,
+      time: formatTime24(entry.time),
+      duration,
+      status: activityStatus(entry.status),
+      source: 'run',
+      details: [],
+    }
+  })
+  const legacyGroups = new Map<string, { row: BackupActivitySummary; missingDuration: boolean }>()
+  const seenFiles = new Set<string>()
+  const severity = { success: 0, unknown: 1, running: 2, failed: 3 }
+  for (const { entry, type } of classified) {
+    if (entry.kind === 'run') continue
+    const fingerprint = JSON.stringify([type, activityStamp(entry), entry.name, entry.duration, entry.status])
+    if (seenFiles.has(fingerprint)) continue
+    seenFiles.add(fingerprint)
+    const stamp = activityStamp(entry)
+    const start = Date.parse(`${entry.date}T${formatTime24(entry.time)}Z`)
+    const runIndex = runs.findIndex(run => run.type === type && (
+      activityStamp(run.entry) === stamp ||
+      (run.duration !== null && Number.isFinite(start) && Number.isFinite(run.start) && start >= run.start && start <= run.start + run.duration * 1000)
+    ))
+    if (runIndex >= 0) {
+      rows[runIndex].details.push(entry)
+      continue
+    }
+    const key = `files:${type}:${stamp}`
+    const duration = recordedDuration(entry)
+    const status = activityStatus(entry.status)
+    const group = legacyGroups.get(key)
+    if (!group) {
+      legacyGroups.set(key, { row: {
+        key, name: type === 'site' ? 'Backup Site' : 'Backup Database',
+        date: entry.date, time: formatTime24(entry.time), duration, status, source: 'files', details: [entry],
+      }, missingDuration: duration === null })
+      continue
+    }
+    group.missingDuration ||= duration === null
+    group.row.details.push(entry)
+    if (duration !== null) group.row.duration = (group.row.duration ?? 0) + duration
+    if (severity[status] > severity[activityStatus(group.row.status)]) group.row.status = status
+  }
+  for (const { row, missingDuration } of legacyGroups.values()) {
+    if (missingDuration) row.duration = null
+    rows.push(row)
+  }
+  return rows.sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`))
+}
+
 export function categoryLabel(category: string, lang: 'vi' | 'en'): string {
   return ({ site: ['Website', 'Website'], database: ['Cơ sở dữ liệu', 'Database'], panel: ['aaPanel', 'aaPanel'], root: ['Khác', 'Other'] }[category])?.[lang === 'vi' ? 0 : 1] ?? category
 }

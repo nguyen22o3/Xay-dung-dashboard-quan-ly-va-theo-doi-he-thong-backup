@@ -158,8 +158,18 @@ export async function fetchCronJobLog(jobId: string): Promise<CronJobLog> {
   return data
 }
 
-export async function updateCronJobSchedule(jobId: string, time: string, expectedSchedule: string): Promise<void> {
-  await client.put(`/api/cron-jobs/${encodeURIComponent(jobId)}/schedule`, { time, expectedSchedule })
+export async function updateCronJobSchedule(jobId: string, time: string, expectedSchedule: string, expectedEnabled: boolean): Promise<void> {
+  await client.put(`/api/cron-jobs/${encodeURIComponent(jobId)}/schedule`, { time, expectedSchedule, expectedEnabled })
+}
+
+export async function deleteCronJob(jobId: string, expectedSchedule: string, expectedEnabled: boolean): Promise<{ status: 'deleted'; backupPath: string }> {
+  const { data } = await client.delete<{ status: 'deleted'; backupPath: string }>(`/api/cron-jobs/${encodeURIComponent(jobId)}`, { data: { expectedSchedule, expectedEnabled } })
+  return data
+}
+
+export async function updateCronJobState(jobId: string, enabled: boolean, expectedSchedule: string, expectedEnabled: boolean): Promise<{ enabled: boolean; backupPath: string }> {
+  const { data } = await client.put<{ enabled: boolean; backupPath: string }>(`/api/cron-jobs/${encodeURIComponent(jobId)}/state`, { enabled, expectedSchedule, expectedEnabled })
+  return data
 }
 
 export async function fetchConfig(): Promise<AppConfig> {
