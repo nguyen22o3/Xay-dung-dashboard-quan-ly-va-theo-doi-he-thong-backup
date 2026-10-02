@@ -3,6 +3,7 @@ import { Check, X, Trash2 } from 'lucide-react'
 import type { Lang } from '../language'
 import { makeTheme } from '../theme'
 import { apiErrorMessage, clearLog, useBackupStatus } from '../api'
+import { activityStamp, activityStatus, formatTime24, statusLabel } from '../utils'
 
 interface GroupedActivity {
   key: string
@@ -16,22 +17,6 @@ interface GroupedActivity {
 }
 
 
-const formatTime24 = (timeStr: string) => {
-  if (!timeStr) return ''
-  const isPM = timeStr.toUpperCase().includes('PM')
-  const isAM = timeStr.toUpperCase().includes('AM')
-  if (!isPM && !isAM) return timeStr
-  
-  const [time] = timeStr.split(' ')
-  const [h, m, s] = time.split(':')
-  let hour = parseInt(h, 10)
-  
-  if (isPM && hour < 12) hour += 12
-  if (isAM && hour === 12) hour = 0
-  
-  return `${hour.toString().padStart(2, '0')}:${m}:${s}`
-}
-
 const formatDurationSeconds = (duration: number | null) => {
   if (duration === null) return '—'
   return duration > 0 && duration < 0.01 ? `${duration.toFixed(3)}s` : `${duration.toFixed(2)}s`
@@ -40,13 +25,14 @@ const formatDurationSeconds = (duration: number | null) => {
 export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang }) {
   const t = makeTheme(isDark)
   const isVi = lang === 'vi'
-  const { data: driveData, reload } = useBackupStatus(60000)
+  const { data: driveData, reload, loading, error } = useBackupStatus(60000)
   const [isClearing, setIsClearing] = useState(false)
   const [clearError, setClearError] = useState('')
   const [activeTab, setActiveTab] = useState<'server' | 'drive'>('drive')
 
   const handleClear = async () => {
-    if (window.confirm(isVi ? 'Bạn có chắc muốn xóa toàn bộ nhật ký?' : 'Are you sure you want to clear logs?')) {
+    if (activeTab !== 'drive') return
+    if (window.confirm(isVi ? 'Xóa nhật ký các lần đẩy backup lên Drive? Các tệp backup vẫn được giữ nguyên.' : 'Clear Drive upload history? Backup files will be kept.')) {
       setIsClearing(true)
       setClearError('')
       try {
@@ -60,20 +46,19 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
     }
   }
 
-  const driveActivities = driveData?.activity || []
+  const driveActivities = [...(driveData?.activity ?? [])].sort((a, b) => activityStamp(b).localeCompare(activityStamp(a)))
   const localActivities = useMemo(() => driveData?.localActivity ?? [], [driveData?.localActivity])
 
   const groupedLocal = useMemo(() => {
     const groups = new Map<string, GroupedActivity>()
-    localActivities.forEach((act) => {
+    localActivities.forEach((act, index) => {
        const name = act.name || 'aaPanel Job'
        const isSite = name.includes('Website')
        const isDb = name.includes('Database')
-       const type = isSite ? 'Backup Site' : (isDb ? 'Backup Database' : name)
+       const type = isSite ? name.replace('Backup Website', isVi ? 'Sao lưu website' : 'Website backup') : (isDb ? name.replace('Backup Database', isVi ? 'Sao lưu cơ sở dữ liệu' : 'Database backup') : name)
        
        // Use hour and minute for grouping
-       const timePrefix = act.time.split(':').slice(0, 2).join(':')
-       const groupKey = act.date + ' ' + timePrefix + ' ' + type
+       const groupKey = `${activityStamp(act)} ${type} ${index}`
        
        let existing = groups.get(groupKey)
        if (!existing) {
@@ -84,7 +69,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
            time: act.time,
            duration: null,
            missingDuration: false,
-           status: 'Successful',
+           status: act.status,
            count: 0
          }
          groups.set(groupKey, existing)
@@ -96,12 +81,9 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
          existing.missingDuration = true
        }
        existing.count += 1
-       if (act.status !== 'Successful' && act.status !== 'Ok') {
-         existing.status = 'Failed'
-       }
     })
     return Array.from(groups.values()).sort((a, b) => b.key.localeCompare(a.key))
-  }, [localActivities])
+  }, [localActivities, isVi])
 
 
   return (
@@ -109,6 +91,8 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
       <h2 style={{ margin: '0 0 20px 0', fontSize: '20px', fontWeight: '500', color: isDark ? t.titleColor : '#1a4175' }}>
         {isVi ? 'Hoạt động sao lưu' : 'Backup activity'}
       </h2>
+      {error && <p role="alert" style={{ color: t.errorText }}>{isVi ? 'Không thể cập nhật nhật ký: ' : 'Could not update activity: '}{error}</p>}
+      {driveData?.driveStale && <p role="status" style={{ color: t.textSecondary }}>{isVi ? 'Dữ liệu đã lưu; thời điểm cập nhật: ' : 'Saved data; last updated: '}{driveData.driveDataAt ? new Date(driveData.driveDataAt).toLocaleString(isVi ? 'vi-VN' : 'en-GB', { hour12: false }) : '—'}</p>}
 
       {clearError && (
         <div role="alert" style={{ marginBottom: '12px', color: '#ef4444', fontSize: '13px' }}>
@@ -148,7 +132,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
           {isVi ? 'Trên Google Drive' : 'On Google Drive'}
         </button>
         <div style={{ flex: 1 }} />
-        <button className="legacy-danger-button"
+        {activeTab === 'drive' && <button className="legacy-danger-button"
           onClick={handleClear}
           disabled={isClearing}
           style={{
@@ -168,7 +152,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
         >
           <Trash2 size={16} />
           {isClearing ? (isVi ? 'Đang xóa...' : 'Clearing...') : (isVi ? 'Xóa nhật ký' : 'Clear Logs')}
-        </button>
+        </button>}
       </div>
 
       <div style={{ backgroundColor: isDark ? t.cardBg : 'white', border: `1px solid ${isDark ? t.cardBorder : '#e0e0e0'}`, borderRadius: '2px' }}>
@@ -176,7 +160,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
           <thead>
             <tr style={{ borderBottom: `1px solid ${isDark ? t.cardBorder : '#e0e0e0'}` }}>
               <th style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: t.textPrimary, width: '30%' }}>
-                {isVi ? 'Cron' : 'Job name'}
+                {isVi ? 'Hoạt động sao lưu' : 'Backup activity'}
               </th>
               <th style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: t.textPrimary, width: '25%' }}>
                 {isVi ? 'Trạng thái sao lưu' : 'Backup status'}
@@ -185,31 +169,31 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
                 {isVi ? 'Thời gian bắt đầu' : 'Start time'} ▼
               </th>
               <th style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: t.textPrimary, width: '15%' }}>
-                {isVi ? 'Thời gian thực hiện' : 'Duration'}
+                {isVi ? 'Thời lượng ghi nhận' : 'Recorded duration'}
               </th>
             </tr>
           </thead>
           <tbody>
             {activeTab === 'drive' ? (
               driveActivities.length > 0 ? (
-                driveActivities.slice().reverse().map((act, i) => {
-                  const isSuccess = act.status?.toLowerCase().includes('success') || act.status?.toLowerCase().includes('ok')
+                driveActivities.map((act, i) => {
+                  const isSuccess = activityStatus(act.status) === 'success'
                   return (
                     <tr key={i} style={{ borderBottom: `1px solid ${isDark ? t.cardBorder : '#f5f5f5'}` }}>
                       <td style={{ padding: '16px', color: t.textSecondary }}>
                         {act.name || 'aaPanel Job'}
                       </td>
                       <td style={{ padding: '16px' }}>
-                        <span style={{ color: isSuccess ? '#4caf50' : '#f44336', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 'bold' }}>
-                          {isSuccess ? <Check size={14} strokeWidth={3} /> : <X size={14} strokeWidth={3} />} 
-                          {isSuccess ? (isVi ? 'Thành công' : 'Successful') : (isVi ? 'Thất bại' : 'Failed')}
+                        <span style={{ color: isSuccess ? '#4caf50' : activityStatus(act.status) === 'failed' ? '#f44336' : t.textSecondary, display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 'bold' }}>
+                          {isSuccess ? <Check size={14} strokeWidth={3} /> : activityStatus(act.status) === 'failed' ? <X size={14} strokeWidth={3} /> : '—'}
+                          {statusLabel(act.status, lang)}
                         </span>
                       </td>
                       <td style={{ padding: '16px', color: t.textSecondary }}>
                         {act.date} {formatTime24(act.time)}
                       </td>
                       <td style={{ padding: '16px', color: t.textSecondary }}>
-                        {act.duration}s
+                        {formatDurationSeconds(act.duration == null || act.duration === '' ? null : Number.isFinite(Number(act.duration)) ? Number(act.duration) : null)}
                       </td>
                     </tr>
                   )
@@ -217,23 +201,23 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
               ) : (
                 <tr>
                   <td colSpan={4} style={{ padding: '30px', textAlign: 'center', color: t.textSecondary }}>
-                    {isVi ? 'Đang tải dữ liệu hoặc chưa có hoạt động nào...' : 'Loading data or no activity found...'}
+                    {loading ? (isVi ? 'Đang tải nhật ký…' : 'Loading activity…') : error ? (isVi ? 'Không tải được nhật ký.' : 'Activity unavailable.') : (isVi ? 'Chưa có hoạt động nào.' : 'No activity yet.')}
                   </td>
                 </tr>
               )
             ) : (
               localActivities.length > 0 ? (
                 groupedLocal.map((act, i) => {
-                  const isSuccess = act.status?.toLowerCase().includes('success') || act.status?.toLowerCase().includes('ok')
+                  const isSuccess = activityStatus(act.status) === 'success'
                   return (
                     <tr key={i} style={{ borderBottom: `1px solid ${isDark ? t.cardBorder : '#f5f5f5'}` }}>
                       <td style={{ padding: '16px', color: t.textSecondary }}>
                         {act.name || 'aaPanel Job'}
                       </td>
                       <td style={{ padding: '16px' }}>
-                        <span style={{ color: isSuccess ? '#4caf50' : '#f44336', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 'bold' }}>
-                          {isSuccess ? <Check size={14} strokeWidth={3} /> : <X size={14} strokeWidth={3} />} 
-                          {isSuccess ? (isVi ? 'Thành công' : 'Successful') : (isVi ? 'Thất bại' : 'Failed')}
+                        <span style={{ color: isSuccess ? '#4caf50' : activityStatus(act.status) === 'failed' ? '#f44336' : t.textSecondary, display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 'bold' }}>
+                          {isSuccess ? <Check size={14} strokeWidth={3} /> : activityStatus(act.status) === 'failed' ? <X size={14} strokeWidth={3} /> : '—'}
+                          {statusLabel(act.status, lang)}
                         </span>
                       </td>
                       <td style={{ padding: '16px', color: t.textSecondary }}>
@@ -248,7 +232,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
               ) : (
                 <tr>
                   <td colSpan={4} style={{ padding: '30px', textAlign: 'center', color: t.textSecondary }}>
-                    {isVi ? 'Đang tải dữ liệu hoặc chưa có hoạt động nào...' : 'Loading data or no activity found...'}
+                    {loading ? (isVi ? 'Đang tải nhật ký…' : 'Loading activity…') : error ? (isVi ? 'Không tải được nhật ký.' : 'Activity unavailable.') : (isVi ? 'Chưa có hoạt động nào.' : 'No activity yet.')}
                   </td>
                 </tr>
               )

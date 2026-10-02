@@ -4,7 +4,7 @@ import type { Lang } from '../language'
 import { makeTheme } from '../theme'
 import { apiErrorMessage, downloadSnapshot, useSnapshots } from '../api'
 import type { SnapshotFile } from '../types'
-import { formatBytes } from '../utils'
+import { categoryLabel, formatBytes } from '../utils'
 
 function snapshotKey(snapshot: SnapshotFile): string {
   return `${snapshot.date}/${snapshot.category}/${snapshot.name}`
@@ -16,13 +16,15 @@ export default function Available({ isDark, lang }: { isDark: boolean; lang: Lan
   const snapshots = useSnapshots(60000)
   const [downloading, setDownloading] = useState<string | null>(null)
   const [downloadError, setDownloadError] = useState('')
+  const [filterDate, setFilterDate] = useState('')
+  const [filterCategory, setFilterCategory] = useState('')
 
   const files = useMemo(
-    () => [...(snapshots.data ?? [])].sort((a, b) => {
+    () => [...(snapshots.data ?? [])].filter(file => (!filterDate || file.date.slice(0, 10) === filterDate) && (!filterCategory || file.category === filterCategory)).sort((a, b) => {
       const byDate = b.date.localeCompare(a.date)
       return byDate !== 0 ? byDate : b.modified.localeCompare(a.modified)
     }),
-    [snapshots.data],
+    [snapshots.data, filterDate, filterCategory],
   )
 
   const handleDownload = async (snapshot: SnapshotFile) => {
@@ -71,6 +73,12 @@ export default function Available({ isDark, lang }: { isDark: boolean; lang: Lan
           ? 'Danh sách file sao lưu thực tế trên Google Drive.'
           : 'Actual backup files currently stored on Google Drive.'}
       </p>
+      <div className="backup-filters">
+        <label>{isVi ? 'Ngày sao lưu' : 'Backup date'}<input type="date" value={filterDate} onChange={event => setFilterDate(event.target.value)} /></label>
+        <label>{isVi ? 'Loại sao lưu' : 'Backup type'}<select value={filterCategory} onChange={event => setFilterCategory(event.target.value)}><option value="">{isVi ? 'Tất cả' : 'All types'}</option>{[...new Set((snapshots.data ?? []).map(file => file.category))].sort().map(category => <option key={category} value={category}>{categoryLabel(category, lang)}</option>)}</select></label>
+        {(filterDate || filterCategory) && <button type="button" className="legacy-secondary-button" onClick={() => { setFilterDate(''); setFilterCategory('') }}>{isVi ? 'Bỏ lọc' : 'Clear filters'}</button>}
+        <span>{files.length} {isVi ? 'tệp' : 'files'} · {formatBytes(files.reduce((sum, file) => sum + file.size, 0))}</span>
+      </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', padding: '10px 12px', borderRadius: '4px', background: isDark ? '#202d3a' : '#eef6ff', color: isDark ? '#93c5fd' : '#1d4f91', fontSize: '13px' }}>
         <Info size={16} />
@@ -106,7 +114,7 @@ export default function Available({ isDark, lang }: { isDark: boolean; lang: Lan
                 return (
                   <tr key={`${key}-${snapshot.modified}`} style={{ borderBottom: index === files.length - 1 ? 'none' : `1px solid ${t.cardBorder}` }}>
                     <td style={{ padding: '14px 16px', color: t.textPrimary, whiteSpace: 'nowrap' }}>{snapshot.date}</td>
-                    <td style={{ padding: '14px 16px', color: t.textSecondary, textTransform: 'capitalize' }}>{snapshot.category}</td>
+                    <td style={{ padding: '14px 16px', color: t.textSecondary }}>{categoryLabel(snapshot.category, lang)}</td>
                     <td style={{ padding: '14px 16px', color: t.textPrimary, fontWeight: '500', overflowWrap: 'anywhere' }}>{snapshot.name}</td>
                     <td style={{ padding: '14px 16px', color: t.textSecondary, whiteSpace: 'nowrap' }}>{formatBytes(snapshot.size)}</td>
                     <td style={{ padding: '14px 16px', textAlign: 'right' }}>
@@ -140,7 +148,7 @@ export default function Available({ isDark, lang }: { isDark: boolean; lang: Lan
               {!snapshots.loading && files.length === 0 && !snapshots.error && (
                 <tr>
                   <td colSpan={5} style={{ padding: '30px', textAlign: 'center', color: t.textSecondary }}>
-                    {isVi ? 'Chưa có file sao lưu nào.' : 'No backup files found.'}
+                    {filterDate || filterCategory ? (isVi ? 'Không có bản sao lưu khớp bộ lọc.' : 'No backups match the filters.') : (isVi ? 'Chưa có file sao lưu nào.' : 'No backup files found.')}
                   </td>
                 </tr>
               )}

@@ -20,6 +20,7 @@ export interface LocalBackupInfo {
 }
 
 export interface ServerStatus {
+  server_time?: string
   disk?: DiskInfo
   ram?: RamInfo
   cpu?: string
@@ -36,6 +37,7 @@ export interface ServerStatus {
 }
 
 export interface BackupActivityEntry {
+  kind?: 'file' | 'run'
   name?: string
   date: string
   time: string
@@ -68,7 +70,7 @@ export interface WebsiteStatus {
   time: string
 }
 
-export type CronJobStatus = 'success' | 'failed' | 'never' | 'unknown'
+export type CronJobStatus = 'running' | 'success' | 'failed' | 'never' | 'unknown'
 
 export interface CronJob {
   id: string
@@ -76,6 +78,9 @@ export interface CronJob {
   script: string
   schedule: string
   last_run: string
+  log_updated_at?: string
+  tracked_at?: string
+  schedule_tracked?: boolean
   status: CronJobStatus
 }
 

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type managedCronTask struct {
@@ -21,7 +22,7 @@ var managedCronTasks = []managedCronTask{
 	{ID: "backup-site", Name: "Sao lưu website", Script: "/root/scripts/backup-site.sh", Log: "/root/backup-site.log"},
 	{ID: "backup-database", Name: "Sao lưu database", Script: "/root/scripts/backup-database.sh", Log: "/root/backup-database.log"},
 	{ID: "drive-sync", Name: "Đồng bộ Google Drive", Script: "/root/scripts/auto_backup.sh", Log: "/root/auto_backup.log"},
-	{ID: "integrity-check", Name: "Kiểm tra toàn vẹn backup", Script: "/root/scripts/check_integrity.sh", Log: "/root/check_integrity.log"},
+	{ID: "integrity-check", Name: "Kiểm tra số thư mục sao lưu", Script: "/root/scripts/check_integrity.sh", Log: "/root/check_integrity.log"},
 }
 
 var cronClockRe = regexp.MustCompile(`^(?:[01][0-9]|2[0-3]):[0-5][0-9]$`)
@@ -42,6 +43,8 @@ func commandForCronScheduleUpdate(task managedCronTask, clock, expectedSchedule 
 	// browser cannot silently overwrite an intervening crontab edit.
 	return fmt.Sprintf(`set -eu
 SCRIPT=%q
+TASK_ID=%q
+WRAPPER=%q
 HOUR=%d
 MINUTE=%d
 EXPECTED=$(printf '%%s' '%s' | base64 -d)
@@ -53,8 +56,8 @@ if ! crontab -l > "$TMP_DIR/current" 2>/dev/null; then
   printf 'CRON_NOT_SCHEDULED\n' >&2
   exit 1
 fi
-if ! awk -v script="$SCRIPT" -v hour="$HOUR" -v minute="$MINUTE" -v expected="$EXPECTED" '
-  NF >= 7 && $1 !~ /^#/ && $6 == "/bin/bash" && $7 == script {
+if ! awk -v script="$SCRIPT" -v id="$TASK_ID" -v wrapper="$WRAPPER" -v hour="$HOUR" -v minute="$MINUTE" -v expected="$EXPECTED" '
+  NF >= 7 && $1 !~ /^#/ && $6 == "/bin/bash" && ($7 == script || ($7 == wrapper && $8 == id)) {
     matches++
     actual=$1 " " $2 " " $3 " " $4 " " $5
     if (actual != expected) stale=1
@@ -73,7 +76,7 @@ if ! awk -v script="$SCRIPT" -v hour="$HOUR" -v minute="$MINUTE" -v expected="$E
 fi
 crontab "$TMP_DIR/updated"
 printf 'UPDATED\n'
-`, task.Script, hour, minute, expectedBase64), true
+`, task.Script, task.ID, scheduledBackupRunnerPath, hour, minute, expectedBase64), true
 }
 
 func managedCronTaskByID(id string) (managedCronTask, bool) {
@@ -86,12 +89,15 @@ func managedCronTaskByID(id string) (managedCronTask, bool) {
 }
 
 func commandForManagedCronJob(task managedCronTask) string {
+	runner := trackedRunnerForTask(task)
 	// task comes exclusively from managedCronTasks, never from user input.
 	return fmt.Sprintf(`set -eu
 SCRIPT=%q
 LOG=%q
-if ! crontab -l 2>/dev/null | awk -v script="$SCRIPT" '
-  NF >= 7 && $1 !~ /^#/ && $6 == "/bin/bash" && $7 == script { found=1 }
+TASK_ID=%q
+WRAPPER=%q
+if ! crontab -l 2>/dev/null | awk -v script="$SCRIPT" -v id="$TASK_ID" -v wrapper="$WRAPPER" '
+  NF >= 7 && $1 !~ /^#/ && $6 == "/bin/bash" && ($7 == script || ($7 == wrapper && $8 == id)) { found=1 }
   END { exit !found }
 '; then
   printf 'CRON_NOT_SCHEDULED\n' >&2
@@ -101,32 +107,49 @@ if [ ! -f "$SCRIPT" ] || [ -L "$SCRIPT" ]; then
   printf 'CRON_SCRIPT_UNAVAILABLE\n' >&2
   exit 1
 fi
+exec 8>/root/.backup-monitor-job-%s.lock
+if ! flock -n 8; then
+  printf 'CRON_ALREADY_RUNNING\n' >&2
+  exit 1
+fi
 if [ "$SCRIPT" = "/root/scripts/cleanup-panel-backups.sh" ]; then
+  START_SECONDS=$(date +%%s)
+  START_DATE=$(date +%%F)
+  START_TIME=$(date +%%T)
+  record_cleanup() {
+    printf 'MONITOR_RUN|cleanup-panel|%%s|%%s|%%s|%%s\n' "$START_DATE" "$START_TIME" "$1" "$(( $(date +%%s) - START_SECONDS ))" >> "$LOG"
+  }
+  record_cleanup running
   if ! RUN_OUTPUT=$(/bin/bash "$SCRIPT" --delete 2>&1); then
     [ -z "$RUN_OUTPUT" ] || echo "$RUN_OUTPUT" >> "$LOG"
+    record_cleanup failed
     echo 'CRON_CLEANUP_FAILED' >&2
     exit 1
   fi
   if ! VERIFY_OUTPUT=$(/bin/bash "$SCRIPT" --dry-run 2>&1); then
     [ -z "$VERIFY_OUTPUT" ] || echo "$VERIFY_OUTPUT" >> "$LOG"
+    record_cleanup failed
     echo 'CRON_CLEANUP_VERIFY_FAILED' >&2
     exit 1
   fi
   if echo "$VERIFY_OUTPUT" | grep -q '^Would delete: '; then
     [ -z "$RUN_OUTPUT" ] || echo "$RUN_OUTPUT" >> "$LOG"
     echo "$VERIFY_OUTPUT" >> "$LOG"
+    record_cleanup failed
     echo 'CRON_CLEANUP_INCOMPLETE' >&2
     exit 1
   fi
   DELETED=$(echo "$RUN_OUTPUT" | awk '/^Deleted: / { count++ } END { print count+0 }')
   [ -z "$RUN_OUTPUT" ] || echo "$RUN_OUTPUT" >> "$LOG"
   echo "[$(date '+%%F %%T')] Cleaned panel backups: $DELETED deleted" >> "$LOG"
+  record_cleanup success
   echo "CLEANED:$DELETED"
   exit 0
 fi
-nohup /bin/bash "$SCRIPT" >> "$LOG" 2>&1 </dev/null &
+RUNNER=$(printf '%%s' '%s' | base64 -d)
+nohup /bin/bash -c "$RUNNER" >> "$LOG" 2>&1 </dev/null &
 printf 'STARTED\n'
-`, task.Script, task.Log)
+`, task.Script, task.Log, task.ID, scheduledBackupRunnerPath, task.ID, base64.StdEncoding.EncodeToString([]byte(runner)))
 }
 
 func parsePanelCleanupResult(output string) (int, bool) {
@@ -139,12 +162,15 @@ func parsePanelCleanupResult(output string) (int, bool) {
 }
 
 type managedCronJobResponse struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Script   string `json:"script"`
-	Schedule string `json:"schedule"`
-	LastRun  string `json:"last_run"`
-	Status   string `json:"status"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Script          string `json:"script"`
+	Schedule        string `json:"schedule"`
+	LastRun         string `json:"last_run"`
+	LogUpdatedAt    string `json:"log_updated_at"`
+	TrackedAt       string `json:"tracked_at,omitempty"`
+	Status          string `json:"status"`
+	ScheduleTracked bool   `json:"schedule_tracked"`
 }
 
 type managedCronJobLogResponse struct {
@@ -182,12 +208,13 @@ fi`, task.Log)
 func parseManagedCronJobs(output string) []managedCronJobResponse {
 	jobs := make([]managedCronJobResponse, 0, len(managedCronTasks))
 	logs := make(map[string]string)
+	runs := make(map[string][]string)
 	lines := strings.Split(output, "\n")
 	section := ""
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		switch line {
-		case "__CRONTAB__", "__LOGS__":
+		case "__CRONTAB__", "__LOGS__", "__RUNS__":
 			section = line
 			continue
 		}
@@ -198,26 +225,54 @@ func parseManagedCronJobs(output string) []managedCronJobResponse {
 			}
 			continue
 		}
+		if section == "__RUNS__" {
+			fields := strings.Split(line, "|")
+			if (len(fields) == 7 || len(fields) == 8) && fields[0] == "MONITOR_RUN" {
+				runs[fields[1]] = fields
+			}
+			continue
+		}
 		if section != "__CRONTAB__" || line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 7 || fields[5] != "/bin/bash" {
-			continue
-		}
-		for _, task := range managedCronTasks {
-			if fields[6] == task.Script {
-				jobs = append(jobs, managedCronJobResponse{
-					ID: task.ID, Name: task.Name, Script: task.Script,
-					Schedule: strings.Join(fields[:5], " "), Status: "unknown",
-				})
-				break
-			}
+		if task, tracked, ok := managedTaskForCronFields(fields); ok {
+			jobs = append(jobs, managedCronJobResponse{
+				ID: task.ID, Name: task.Name, Script: task.Script,
+				Schedule: strings.Join(fields[:5], " "), Status: "unknown", ScheduleTracked: tracked,
+			})
 		}
 	}
 	for i := range jobs {
 		task, _ := managedCronTaskByID(jobs[i].ID)
-		jobs[i].LastRun = logs[task.Log]
+		jobs[i].LogUpdatedAt = logs[task.Log]
+		if jobs[i].LogUpdatedAt == "" {
+			jobs[i].Status = "never"
+		}
+		if run, ok := runs[task.ID]; ok {
+			active := run[len(run)-1] == "active"
+			if run[2] != "" && run[3] != "" {
+				jobs[i].LastRun = run[2] + " " + run[3]
+				jobs[i].TrackedAt = jobs[i].LastRun
+			}
+			jobs[i].Status = run[4]
+			if active {
+				jobs[i].Status = "running"
+			}
+			if run[4] == "running" && !active {
+				jobs[i].Status = "unknown"
+			}
+			// A later untracked execution must not reuse an old result.
+			if !active && jobs[i].LogUpdatedAt > jobs[i].LastRun {
+				if run[4] == "success" || run[4] == "failed" {
+					duration, _ := strconv.Atoi(run[5])
+					started, err := time.Parse("2006-01-02 15:04:05", jobs[i].LastRun)
+					if err == nil && jobs[i].LogUpdatedAt > started.Add(time.Duration(duration+2)*time.Second).Format("2006-01-02 15:04:05") {
+						jobs[i].Status = "unknown"
+					}
+				}
+			}
+		}
 	}
 	return jobs
 }
@@ -231,6 +286,18 @@ for file in /root/cleanup-panel-backups.log /root/backup-site.log /root/backup-d
     printf '%s|' "$file"
     date -r "$file" '+%Y-%m-%d %H:%M:%S'
   fi
+done
+printf '__RUNS__\n'
+for pair in 'cleanup-panel:/root/cleanup-panel-backups.log' 'backup-site:/root/backup-site.log' 'backup-database:/root/backup-database.log' 'drive-sync:/root/auto_backup.log' 'integrity-check:/root/check_integrity.log'; do
+  id=${pair%%:*}
+  file=${pair#*:}
+  [ -f "$file" ] && [ ! -L "$file" ] || continue
+  marker=$(tail -n 200 "$file" | awk -F'|' -v id="$id" '$1 == "MONITOR_RUN" && $2 == id {last=$0} END {print last}')
+  active=inactive
+  lock=/root/.backup-monitor-job-$id.lock
+  if [ -f "$lock" ] && ! flock -n "$lock" -c true; then active=active; fi
+  if [ -z "$marker" ] && [ "$active" = active ]; then marker="MONITOR_RUN|$id|||running|0"; fi
+  [ -z "$marker" ] || printf '%s|%s\n' "$marker" "$active"
 done`)
 	if err != nil {
 		return nil, err

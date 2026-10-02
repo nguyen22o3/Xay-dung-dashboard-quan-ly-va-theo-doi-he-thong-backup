@@ -136,7 +136,7 @@ export default function Layout({ activeTab, onNavigate, isDark, onToggleDark, la
             <span className="app-mobile-title">{vi ? activeItem?.vi : activeItem?.en}</span>
           </div>
           <div className="app-topbar-actions">
-            <span className={`app-connection ${server.error ? 'is-offline' : ''}`}><i />{server.error ? (vi ? 'Mất kết nối' : 'Disconnected') : (vi ? 'Đang giám sát' : 'Monitoring')}</span>
+            <span className={`app-connection ${server.error ? 'is-offline' : ''}`} title={vi ? 'Trạng thái kết nối lấy thông số máy chủ' : 'Connection used to fetch server metrics'}><i />{server.error ? (vi ? 'Mất kết nối máy chủ' : 'Server disconnected') : !server.data ? (vi ? 'Đang kết nối…' : 'Connecting…') : (vi ? 'Máy chủ đã kết nối' : 'Server connected')}</span>
             <button className="app-topbar-primary" type="button" onClick={() => navigate('available')}><Archive size={17} />{vi ? 'Bản sao lưu' : 'Backups'}</button>
             <button className={`app-icon-button ${isRefreshing ? 'is-spinning' : ''}`} type="button" onClick={refresh} disabled={isRefreshing} title={vi ? 'Làm mới dữ liệu' : 'Refresh data'} aria-label={vi ? 'Làm mới dữ liệu' : 'Refresh data'}><RefreshCw size={19} /></button>
             <button className="app-icon-button" type="button" onClick={onToggleDark} title={isDark ? (vi ? 'Giao diện sáng' : 'Light theme') : (vi ? 'Giao diện tối' : 'Dark theme')} aria-label={isDark ? (vi ? 'Giao diện sáng' : 'Light theme') : (vi ? 'Giao diện tối' : 'Dark theme')}>{isDark ? <Sun size={19} /> : <Moon size={19} />}</button>

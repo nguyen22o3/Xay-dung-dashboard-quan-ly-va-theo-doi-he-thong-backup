@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { CalendarClock, Eye, Pencil, Play, RefreshCw, X } from 'lucide-react'
-import { apiErrorMessage, fetchCronJobLog, runCronJob, updateCronJobSchedule, useCronJobs } from '../api'
+import { apiErrorMessage, enableCronTracking, fetchCronJobLog, runCronJob, updateCronJobSchedule, useCronJobs } from '../api'
 import type { Lang } from '../language'
 import type { CronJob, CronJobLog } from '../types'
-import { formatCronSchedule } from '../utils'
+import { formatCronSchedule, statusLabel } from '../utils'
 
 const jobLabels: Record<string, { vi: string; en: string }> = {
   'cleanup-panel': { vi: 'Dọn dẹp thư mục panel', en: 'Clean up panel backups' },
   'backup-site': { vi: 'Sao lưu website', en: 'Backup websites' },
-  'backup-database': { vi: 'Sao lưu database', en: 'Backup databases' },
+  'backup-database': { vi: 'Sao lưu cơ sở dữ liệu', en: 'Backup databases' },
   'drive-sync': { vi: 'Đồng bộ Google Drive', en: 'Sync Google Drive' },
-  'integrity-check': { vi: 'Kiểm tra toàn vẹn backup', en: 'Check backup integrity' },
+  'integrity-check': { vi: 'Kiểm tra số thư mục sao lưu', en: 'Check backup folder count' },
 }
 
 const hours24 = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0'))
@@ -18,7 +18,7 @@ const minutes = Array.from({ length: 60 }, (_, minute) => String(minute).padStar
 
 export default function CronJobs({ lang }: { lang: Lang }) {
   const vi = lang === 'vi'
-  const cron = useCronJobs(60000)
+  const cron = useCronJobs(15000)
   const jobs = cron.data ?? []
   const [runningJob, setRunningJob] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<{ message: string; error: boolean } | null>(null)
@@ -32,6 +32,29 @@ export default function CronJobs({ lang }: { lang: Lang }) {
   const [editMinute, setEditMinute] = useState('')
   const [scheduleError, setScheduleError] = useState<string | null>(null)
   const [savingSchedule, setSavingSchedule] = useState(false)
+  const [enablingTracking, setEnablingTracking] = useState(false)
+  const backupJobs = jobs.filter(job => job.id === 'backup-site' || job.id === 'backup-database')
+  const trackingEnabled = backupJobs.length > 0 && backupJobs.every(job => job.schedule_tracked)
+
+  const handleEnableTracking = async () => {
+    if (enablingTracking || trackingEnabled) return
+    if (!window.confirm(vi
+      ? 'Bật ghi nhận kết quả cho cron sao lưu website và cơ sở dữ liệu? Giữ nguyên lịch chạy, script và tham số; lưu dự phòng crontab trước khi cập nhật. Không chạy sao lưu ngay.'
+      : 'Enable result tracking for scheduled website and database backups? Schedules, scripts and arguments stay unchanged; the crontab is backed up before updating. This does not run a backup now.')) return
+    setEnablingTracking(true)
+    setFeedback(null)
+    try {
+      await enableCronTracking()
+      setFeedback({ error: false, message: vi
+        ? 'Đã bật ghi nhận cron tự động. Kết quả sẽ xuất hiện sau lần sao lưu tiếp theo; không tạo lại kết quả từ log cũ.'
+        : 'Scheduled backup tracking is enabled. Results appear after the next backup; old log results are not reconstructed.' })
+      window.dispatchEvent(new Event('force-refresh'))
+    } catch (error: unknown) {
+      setFeedback({ error: true, message: apiErrorMessage(error, vi ? 'Không thể bật ghi nhận cron tự động.' : 'Could not enable scheduled backup tracking.') })
+    } finally {
+      setEnablingTracking(false)
+    }
+  }
 
   const openScheduleEditor = (job: CronJob) => {
     const [minute, hour] = job.schedule.split(' ')
@@ -157,8 +180,18 @@ export default function CronJobs({ lang }: { lang: Lang }) {
           <div>
             <h2>{vi ? 'Tác vụ định kỳ' : 'Scheduled jobs'}</h2>
             <p>{vi ? `${jobs.length} tác vụ trong danh sách` : `${jobs.length} jobs in the list`}</p>
+            <p>{vi ? 'Theo dõi kết quả từng lần sao lưu, không đếm số tệp. Log cũ thiếu kết quả lần chạy vẫn hiện “Chưa xác nhận”.' : 'Track each backup run, not the number of files. Old logs without a run result remain unconfirmed.'}</p>
           </div>
         </div>
+
+        {backupJobs.length > 0 && <div className="cron-tracking-bar">
+          <span>{trackingEnabled
+            ? (vi ? 'Đã bật ghi nhận kết quả cron sao lưu tự động.' : 'Scheduled backup result tracking is enabled.')
+            : (vi ? 'Cron sao lưu tự động chưa được ghi nhận đầy đủ.' : 'Scheduled backup runs are not fully tracked yet.')}</span>
+          {!trackingEnabled && <button className="cron-run" type="button" onClick={() => void handleEnableTracking()} disabled={enablingTracking || !!cron.error || savingSchedule || runningJob !== null}>
+            {enablingTracking ? (vi ? 'Đang bật...' : 'Enabling...') : (vi ? 'Bật ghi nhận cron tự động' : 'Enable scheduled backup tracking')}
+          </button>}
+        </div>}
 
         {cron.error && <div className="cron-message cron-error" role="alert">{vi ? 'Không thể cập nhật danh sách: ' : 'Could not update the list: '}{cron.error}</div>}
         {feedback && <div className={`cron-feedback ${feedback.error ? 'cron-feedback--error' : ''}`} role="status">{feedback.message}</div>}
@@ -173,7 +206,8 @@ export default function CronJobs({ lang }: { lang: Lang }) {
                 <tr>
                   <th>{vi ? 'Tác vụ' : 'Job'}</th>
                   <th>{vi ? 'Lịch chạy' : 'Schedule'}</th>
-                  <th title={vi ? 'Dựa trên thời điểm cập nhật log; tác vụ không ghi log sẽ không có dữ liệu' : 'Based on log modification time; jobs without a log have no timestamp'}>{vi ? 'Thời gian thực hiện lần cuối' : 'Last execution time'}</th>
+                  <th>{vi ? 'Thời điểm ghi nhận' : 'Recorded time'}</th>
+                  <th>{vi ? 'Trạng thái' : 'Status'}</th>
                   <th>{vi ? 'Hành động' : 'Action'}</th>
                 </tr>
               </thead>
@@ -182,14 +216,18 @@ export default function CronJobs({ lang }: { lang: Lang }) {
                   <tr key={`${job.id}:${job.schedule}`}>
                     <td>
                       <strong>{jobLabels[job.id]?.[vi ? 'vi' : 'en'] ?? job.name}</strong>
+                      {(job.id === 'backup-site' || job.id === 'backup-database') && <small className="cron-time-source">{job.schedule_tracked
+                        ? (vi ? 'Có ghi nhận lần chạy tự động' : 'Scheduled runs are tracked')
+                        : (vi ? 'Chưa bật ghi nhận lần chạy tự động' : 'Scheduled run tracking is off')}</small>}
                     </td>
                     <td>
                       <span>{formatCronSchedule(job.schedule, lang)}</span>
                     </td>
-                    <td>{job.last_run || (vi ? 'Chưa có dữ liệu' : 'No data')}</td>
+                    <td><span>{job.log_updated_at || job.last_run || (vi ? 'Chưa có dữ liệu' : 'No data')}</span><small className="cron-time-source">{job.log_updated_at ? (vi ? 'Cập nhật log' : 'Log updated') : ''}{job.tracked_at ? `${vi ? ' · Bắt đầu: ' : ' · Started: '}${job.tracked_at}` : ''}</small></td>
+                    <td><span className={`cron-status cron-status--${job.status}`}>{job.status === 'never' ? (vi ? 'Chưa có log' : 'No log yet') : statusLabel(job.status, lang)}</span></td>
                     <td>
                       <div className="cron-actions">
-                        <button className="cron-run" type="button" onClick={() => handleRun(job)} disabled={runningJob !== null || !job.id}>
+                        <button className="cron-run" type="button" onClick={() => handleRun(job)} disabled={runningJob !== null || !job.id || job.status === 'running'}>
                           <Play size={14} fill="currentColor" />
                           {runningJob === job.id
                             ? (job.id === 'cleanup-panel' ? (vi ? 'Đang dọn...' : 'Cleaning...') : (vi ? 'Đang gửi...' : 'Starting...'))

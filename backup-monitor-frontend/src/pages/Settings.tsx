@@ -104,7 +104,7 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
     </div>
 
     {section === 'alerts' && <section className="apex-settings-panel" role="tabpanel" id="settings-panel-alerts" aria-labelledby="settings-tab-alerts">
-      <div className="apex-settings-panel-heading"><h2>{vi ? 'Kênh cảnh báo' : 'Alert channels'}</h2><p>{vi ? 'Chọn nơi nhận thông báo khi hệ thống phát hiện sự cố sao lưu.' : 'Choose where you receive notifications about backup issues.'}</p></div>
+      <div className="apex-settings-panel-heading"><h2>{vi ? 'Kênh cảnh báo' : 'Alert channels'}</h2><p>{vi ? 'Chọn nơi nhận thông báo khi hệ thống phát hiện sự cố sao lưu. “Đã cấu hình” xác nhận thông tin đã lưu, chưa xác nhận gửi được thông báo.' : 'Choose where to receive backup alerts. “Configured” means settings are saved; delivery has not been verified.'}</p></div>
       <div className="apex-settings-list">
         {channels.map(({ id, title, vi: viSubtitle, en: enSubtitle, icon: Icon }) => <div className={`apex-settings-channel ${expanded === id ? 'is-expanded' : ''}`} key={id}>
           <button type="button" className="apex-settings-row apex-settings-row-button" aria-expanded={expanded === id} aria-controls={`settings-channel-${id}`} onClick={() => setExpanded(expanded === id ? null : id)}>
@@ -134,7 +134,7 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
       <div className="apex-settings-panel-heading"><h2>{vi ? 'Quy tắc giám sát' : 'Monitoring rule'}</h2><p>{vi ? 'Điều chỉnh ngưỡng để phát hiện thiếu bản sao lưu trên Google Drive.' : 'Set the threshold used to detect missing Drive backups.'}</p></div>
       <div className="apex-settings-list">
         <div className="apex-settings-row"><span className="apex-settings-row-icon"><Cloud size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folders'}</strong><small>{vi ? 'Cảnh báo nếu số thư mục trong gdrive:Backup ít hơn ngưỡng này.' : 'Alert when folders in gdrive:Backup fall below this threshold.'}</small></span><input className="apex-settings-number" type="number" min={1} max={365} value={threshold} aria-label={vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folders'} onChange={(event) => setThreshold(Number(event.target.value))} /></div>
-        <div className="apex-settings-row"><span className="apex-settings-row-icon"><ShieldCheck size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Nguồn đang theo dõi' : 'Monitored sources'}</strong><small>{vi ? 'Hệ thống đang giám sát máy chủ và Google Drive.' : 'The system monitors the server and Google Drive.'}</small></span><span className="apex-settings-source">Server + Google Drive</span></div>
+        <div className="apex-settings-row"><span className="apex-settings-row-icon"><ShieldCheck size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Phạm vi giám sát đã cấu hình' : 'Configured monitoring scope'}</strong><small>{vi ? 'Theo dõi xóa tệp trên máy chủ và đếm thư mục Drive theo lịch. Chưa kiểm tra checksum hoặc khả năng khôi phục tệp.' : 'Watch server file deletion and count Drive folders on a schedule. Checksums and restorability are not verified.'}</small></span><span className="apex-settings-source">Server + Google Drive</span></div>
       </div>
       {saveFooter}
     </section>}

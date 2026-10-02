@@ -970,15 +970,21 @@ TARGET_EMAIL=$(decode_value '%s')`,
 	integrityScript := fmt.Sprintf(`#!/bin/bash
 set -u
 %s
-BACKUP_COUNT=$(/usr/bin/rclone lsd gdrive:Backup/ --config /root/.config/rclone/rclone.conf 2>/dev/null | wc -l)
+if ! BACKUP_DIRS=$(/usr/bin/rclone lsd gdrive:Backup/ --config /root/.config/rclone/rclone.conf); then
+    echo "[$(date '+%%F %%T')] Không thể đọc Google Drive; chưa xác nhận số thư mục" >&2
+    exit 1
+fi
+BACKUP_COUNT=$(printf '%%s\n' "$BACKUP_DIRS" | sed '/^$/d' | wc -l)
 echo "[$(date '+%%F %%T')] Da kiem tra Drive: $BACKUP_COUNT thu muc Backup"
 if [ "$BACKUP_COUNT" -lt %d ]; then
-    MSG="CANH BAO TOAN VEN DU LIEU! So luong ban sao luu tren Drive hien tai la $BACKUP_COUNT/%d. Vui long kiem tra!"
+    MSG="CANH BAO THIEU THU MUC BACKUP: Google Drive hien co $BACKUP_COUNT/%d thu muc. Vui long kiem tra!"
 	echo "[$(date '+%%F %%T')] CẢNH BÁO: $MSG"
     if [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$MSG\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
     if [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$MSG" >/dev/null; fi
     if [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [ALERT] Backup Monitor\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$MSG" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
-fi`, variables, settings.Threshold, settings.Threshold)
+    exit 1
+fi
+exit 0`, variables, settings.Threshold, settings.Threshold)
 
 	realtimeScript := fmt.Sprintf(`#!/bin/bash
 set -u
@@ -1053,7 +1059,17 @@ printf '%%s' '%s' | base64 -d > "$REALTIME_TMP"
 chmod 600 "$INTEGRITY_TMP" "$REALTIME_TMP"
 mv -f -- "$INTEGRITY_TMP" "$SCRIPTS_DIR/check_integrity.sh"
 mv -f -- "$REALTIME_TMP" "$SCRIPTS_DIR/realtime_monitor.sh"
-(crontab -l 2>/dev/null | grep -v 'check_integrity.sh' | grep -v 'realtime_monitor.sh'; printf '%%s\n' '0 12 * * * /bin/bash /root/scripts/check_integrity.sh' '@reboot nohup /bin/bash /root/scripts/realtime_monitor.sh >/dev/null 2>&1 &') | crontab -
+exec 8>/root/.backup-monitor-crontab.lock
+flock -x 8
+CURRENT_CRON=$(crontab -l 2>/dev/null || true)
+UPDATED_CRON=$(printf '%%s\n' "$CURRENT_CRON" | grep -v 'realtime_monitor.sh' || true)
+if ! printf '%%s\n' "$CURRENT_CRON" | awk 'NF >= 7 && $1 !~ /^#/ && $6 == "/bin/bash" && $7 == "/root/scripts/check_integrity.sh" {found=1} END {exit !found}'; then
+  UPDATED_CRON="$UPDATED_CRON
+0 12 * * * /bin/bash /root/scripts/check_integrity.sh >> /root/check_integrity.log 2>&1"
+fi
+printf '%%s\n' "$UPDATED_CRON" '@reboot nohup /bin/bash /root/scripts/realtime_monitor.sh >/dev/null 2>&1 &' | crontab -
+flock -u 8
+exec 8>&-
 OLD_MONITORS=$(pgrep -f '^(/bin/)?bash /root/(scripts/)?realtime_monitor[.]sh$' || true)
 for PID in $OLD_MONITORS; do
   pkill -TERM -P "$PID" 2>/dev/null || true
@@ -1170,11 +1186,12 @@ DISK=$(df -h / | awk 'NR==2 {printf "{\"total\":\"%s\", \"used\":\"%s\", \"free\
 RAM=$(free -m | awk 'NR==2{printf "{\"total\":\"%sMB\", \"used\":\"%sMB\", \"free\":\"%sMB\", \"usage\":\"%.1f%%\"}", $2, $3, $4, $3*100/$2}')
 CPU=$(vmstat 1 2 | tail -1 | awk '{printf "%.1f%%", 100 - $15}')
 UPTIME=$(uptime -p | sed 's/up //')
+SERVER_TIME=$(date -Iseconds)
 WEBSITES=$(find /www/wwwroot -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -v "/default$" | wc -l)
 DATABASES=$(find /www/server/data -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -vE "/(mysql|performance_schema|sys|phpmyadmin)$" | wc -l)
 CRON_SCHEDULES=$(crontab -l 2>/dev/null | awk '
   NF >= 7 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $6 == "/bin/bash" {
-    if ($7 == "/root/scripts/backup-site.sh" || $7 == "/root/scripts/backup-database.sh") type = "local"
+    if ($7 == "/root/scripts/backup-site.sh" || $7 == "/root/scripts/backup-database.sh" || ($7 == "/root/scripts/backup-monitor-run.sh" && ($8 == "backup-site" || $8 == "backup-database"))) type = "local"
     else if ($7 == "/root/scripts/auto_backup.sh") type = "drive"
     else if ($7 == "/root/scripts/cleanup-panel-backups.sh" || $7 == "/root/scripts/check_integrity.sh") type = "other"
     else next
@@ -1192,7 +1209,7 @@ LOCAL_BACKUP_DIR="/www/backup"
 if [ -d "$LOCAL_BACKUP_DIR" ]; then
   # Only count backup artifacts belonging to websites, databases, or aaPanel.
   # Ignore temporary files and unrelated content kept in /www/backup.
-  LOCAL_FILES=$(find "$LOCAL_BACKUP_DIR" -type f \( -path "$LOCAL_BACKUP_DIR/site/*" -o -path "$LOCAL_BACKUP_DIR/database/*" -o -path "$LOCAL_BACKUP_DIR/panel/*" \) -printf '%p\n' 2>/dev/null || true)
+  LOCAL_FILES=$(find "$LOCAL_BACKUP_DIR" -type f \( -path "$LOCAL_BACKUP_DIR/site/*" -o -path "$LOCAL_BACKUP_DIR/database/*" -o -path "$LOCAL_BACKUP_DIR/panel/*" \) ! -path "$LOCAL_BACKUP_DIR/panel/*/data/*" \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.sql.gz' -o -name '*.sql' \) -printf '%p\n' 2>/dev/null || true)
   LOCAL_COUNT=$(printf '%s\n' "$LOCAL_FILES" | sed '/^$/d' | wc -l)
   LOCAL_SIZE=$(printf '%s\n' "$LOCAL_FILES" | sed '/^$/d' | xargs -r du -ch 2>/dev/null | tail -1 | awk '{print $1}')
   LOCAL_SIZE=${LOCAL_SIZE:-0}
@@ -1208,7 +1225,7 @@ fi
 
 LOCAL_BACKUP="{\"size\":\"$LOCAL_SIZE\", \"count\":$LOCAL_COUNT, \"latest_date\":\"$LOCAL_LATEST_DATE\", \"latest_name\":\"$LOCAL_LATEST_NAME\"}"
 
-echo "{\"disk\": $DISK, \"ram\": $RAM, \"cpu\": \"$CPU\", \"uptime\": \"$UPTIME\", \"websites\": $WEBSITES, \"databases\": $DATABASES, \"drive_crons\": $DRIVE_CRONJOBS, \"drive_cron_times\": \"$DRIVE_CRON_TIMES\", \"local_crons\": $LOCAL_CRONJOBS, \"local_cron_times\": \"$LOCAL_CRON_TIMES\", \"crons\": $CRONJOBS, \"cron_times\": \"$CRON_TIMES\", \"local_backup\": $LOCAL_BACKUP}"
+echo "{\"server_time\":\"$SERVER_TIME\", \"disk\": $DISK, \"ram\": $RAM, \"cpu\": \"$CPU\", \"uptime\": \"$UPTIME\", \"websites\": $WEBSITES, \"databases\": $DATABASES, \"drive_crons\": $DRIVE_CRONJOBS, \"drive_cron_times\": \"$DRIVE_CRON_TIMES\", \"local_crons\": $LOCAL_CRONJOBS, \"local_cron_times\": \"$LOCAL_CRON_TIMES\", \"crons\": $CRONJOBS, \"cron_times\": \"$CRON_TIMES\", \"local_backup\": $LOCAL_BACKUP}"
 `
 			output, err := cachedGet("server-status", 15*time.Second, func() ([]byte, error) {
 				out, e := executeSSHCommand(cmds)
@@ -1264,7 +1281,7 @@ $2 != "-1" && $2 != "" {
     total_files++
     split($1, a, "/")
     day = a[1]
-    if (day != "") {
+    if (day ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) {
         days[day] = 1
         size[day] += $2
         count[day]++
@@ -1383,11 +1400,13 @@ CUSTOM_LOCAL_LOGS=$(tail -n 500 /root/backup-site.log /root/backup-database.log 
         }
     }
 ' | sed 's/,$//')
-if [ -n "$LOCAL_LOGS" ] && [ -n "$CUSTOM_LOCAL_LOGS" ]; then
-  LOCAL_ACTIVITY="[$LOCAL_LOGS,$CUSTOM_LOCAL_LOGS]"
-else
-  LOCAL_ACTIVITY="[$LOCAL_LOGS$CUSTOM_LOCAL_LOGS]"
-fi
+RUN_LOGS=$(` + backupRunActivityCommand() + `)
+LOCAL_ACTIVITY="["
+SEP=""
+for ENTRIES in "$LOCAL_LOGS" "$CUSTOM_LOCAL_LOGS" "$RUN_LOGS"; do
+  if [ -n "$ENTRIES" ]; then LOCAL_ACTIVITY="$LOCAL_ACTIVITY$SEP$ENTRIES"; SEP=","; fi
+done
+LOCAL_ACTIVITY="$LOCAL_ACTIVITY]"
 
 echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\": $TOTAL_FOLDERS, \"history\": $HISTORY, \"activity\": $ACTIVITY, \"localActivity\": $LOCAL_ACTIVITY, \"driveError\": \"$DRIVE_ERROR\", \"todayBreakdown\": {\"site\": ${TODAY_SITE:-0}, \"database\": ${TODAY_DB:-0}, \"panel\": ${TODAY_PANEL:-0}}, \"todayBreakdownBytes\": {\"site\": ${TODAY_SITE_BYTES:-0}, \"database\": ${TODAY_DB_BYTES:-0}, \"panel\": ${TODAY_PANEL_BYTES:-0}}}"
 `
@@ -1477,6 +1496,10 @@ echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\"
 			output, err := runJobSSHCommand(command)
 			if err != nil {
 				releaseReservation()
+				if strings.Contains(err.Error(), "CRON_ALREADY_RUNNING") {
+					c.JSON(http.StatusConflict, gin.H{"error": "Tác vụ đang chạy; hãy đợi hoàn tất và xem log"})
+					return
+				}
 				if strings.Contains(err.Error(), "CRON_NOT_SCHEDULED") {
 					c.JSON(http.StatusConflict, gin.H{"error": "Cronjob không còn trong lịch chạy"})
 					return
@@ -1608,6 +1631,31 @@ done
 		})
 
 		// API 6: Liệt kê các script được quản lý trong root crontab.
+		auth.POST("/cron-tracking", func(c *gin.Context) {
+			output, err := executeSSHCommand(buildCronTrackingInstallCommand())
+			if err != nil {
+				switch {
+				case strings.Contains(err.Error(), "CRON_NOT_SCHEDULED"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Không tìm thấy cron sao lưu website hoặc cơ sở dữ liệu để bật ghi nhận"})
+				case strings.Contains(err.Error(), "CRON_DUPLICATE"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Có lịch sao lưu trùng; cần kiểm tra crontab trước khi bật ghi nhận"})
+				case strings.Contains(err.Error(), "CRON_WRAPPER_CONFLICT"):
+					c.JSON(http.StatusConflict, gin.H{"error": "File bộ ghi nhận đã tồn tại nhưng không thuộc dashboard; chưa ghi đè"})
+				case strings.Contains(err.Error(), "CRON_SCRIPT_UNAVAILABLE"):
+					c.JSON(http.StatusConflict, gin.H{"error": "Script sao lưu không còn khả dụng; chưa đổi crontab"})
+				default:
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể bật ghi nhận cron tự động; lịch cũ được lưu dự phòng nếu đã cập nhật"})
+				}
+				return
+			}
+			if strings.TrimSpace(output) != "TRACKING_ENABLED" {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xác nhận được việc bật ghi nhận cron tự động"})
+				return
+			}
+			invalidate("cron-jobs", "server-status", "backup-status")
+			c.JSON(http.StatusOK, gin.H{"status": "enabled"})
+		})
+
 		auth.GET("/cron-jobs", func(c *gin.Context) {
 			output, err := cachedGet("cron-jobs", 15*time.Second, func() ([]byte, error) {
 				return fetchManagedCronJobs()
@@ -1753,7 +1801,7 @@ fi
 		// API 10: Liệt kê các file backup cục bộ
 		auth.GET("/local-snapshots", func(c *gin.Context) {
 			cmds := `
-find /www/backup/site /www/backup/database /www/backup/panel -type f \( -name "*.tar.gz" -o -name "*.sql" -o -name "*.zip" -o -name "*.gz" \) -printf '%TY-%Tm-%Td %TH:%TM:%TS|%s|%p\n' 2>/dev/null
+find /www/backup/site /www/backup/database /www/backup/panel -type f ! -path '/www/backup/panel/*/data/*' \( -name "*.tar.gz" -o -name "*.sql" -o -name "*.zip" -o -name "*.gz" \) -printf '%TY-%Tm-%Td %TH:%TM:%TS|%s|%p\n' 2>/dev/null
 `
 			output, err := cachedGet("local-snapshots", 30*time.Second, func() ([]byte, error) {
 				out, e := executeSSHCommand(cmds)

@@ -6,7 +6,7 @@ import 'react-resizable/css/styles.css'
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts'
 
 import { useServerStatus, useBackupStatus, useWebsitesStatus, useCronJobs, useLocalSnapshots } from '../api'
-import { formatBytes, formatCronSchedule } from '../utils'
+import { activityStatus, calendarDays, categoryLabel, formatBytes, formatCronSchedule, nextCronRun, readPercentage } from '../utils'
 import { makeTheme } from '../theme'
 import { CheckCircle, AlertTriangle, Clock, Calendar } from 'lucide-react'
 import { tr, type Lang } from '../language'
@@ -40,22 +40,16 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
 
   
   const last14Days = useMemo(() => {
-    const days: string[] = []
-    for (let i = 13; i >= 0; i--) {
-      const d = new Date()
-      d.setDate(d.getDate() - i)
-      days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
-    }
-    return days
-  }, [])
+    return calendarDays(server.data?.server_time)
+  }, [server.data?.server_time])
 
   const categoryData = useMemo(() => {
     if (!localSnapshots.data) return []
     const map = new Map<string, number>()
     
     // Khởi tạo sẵn 2 mục với giá trị 0 để biểu đồ luôn hiện cả 2
-    const siteLabel = lang === 'vi' ? 'Site' : 'Websites'
-    const dbLabel = lang === 'vi' ? 'Database' : 'Databases'
+    const siteLabel = categoryLabel('site', lang)
+    const dbLabel = categoryLabel('database', lang)
     map.set(siteLabel, 0)
     map.set(dbLabel, 0)
 
@@ -63,8 +57,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
       const date = snap.date.split(' ')[0]
       if (!last14Days.includes(date)) continue
 
-      const cat = snap.category === 'site' ? siteLabel :
-                  snap.category === 'database' ? dbLabel : (snap.category === 'panel' ? 'aaPanel' : snap.category)
+      const cat = categoryLabel(snap.category, lang)
       
       map.set(cat, (map.get(cat) || 0) + snap.size)
     }
@@ -95,6 +88,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
   
   const s = server.data ?? {}
   const websitesStatus = websites.data ?? []
+  const backupJobs = (cron.data ?? []).filter(job => job.id === 'backup-site' || job.id === 'backup-database')
+  const trackingEnabled = backupJobs.length > 0 && backupJobs.every(job => job.schedule_tracked)
   
   const successFailureData = useMemo(() => {
     const la = backup.data?.localActivity
@@ -102,9 +97,9 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
     let success = 0
     let failed = 0
     la.forEach((a) => {
-      if (last14Days.includes(a.date)) {
-        if (a.status === 'Successful' || a.status === 'success') success++
-        else failed++
+      if (a.kind === 'run' && last14Days.includes(a.date)) {
+        if (activityStatus(a.status) === 'success') success++
+        else if (activityStatus(a.status) === 'failed') failed++
       }
     })
     if (success === 0 && failed === 0) return []
@@ -118,6 +113,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
     if (!backup.data?.localActivity) return []
     const map = new Map<string, number>()
     backup.data.localActivity.forEach((a) => {
+      if (a.kind === 'run') return
       if (last14Days.includes(a.date)) {
         const duration = a.duration === null || a.duration === '' ? NaN : Number(a.duration)
         if (Number.isFinite(duration) && duration >= 0) {
@@ -131,7 +127,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
     }))
   }, [backup.data, last14Days])
 
-  const diskPercent = s.disk ? (parseFloat(s.disk.used) / parseFloat(s.disk.total)) * 100 : 0
+  const diskUsage = readPercentage(s.disk?.usage)
+  const diskPercent = diskUsage ?? 0
   const cpuPercent = s.cpu ? parseFloat(s.cpu) : 0
   const ramPercent = s.ram && s.ram.usage ? parseFloat(s.ram.usage) : 0
 
@@ -213,12 +210,13 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
   return (
     <div className="legacy-page" style={{ width: '100%' }}>
       <h2 style={{ margin: '0 0 15px 0', fontSize: '22px', fontWeight: 'normal', color: theme.titleColor }}>
-        {tr(lang, 'homeDashboard')}
+        {lang === 'vi' ? 'Máy chủ' : 'Server'}
       </h2>
       {server.loading && !server.data && <p role="status" style={{ color: theme.textSecondary }}>{lang === 'vi' ? 'Đang đọc thông số máy chủ…' : 'Loading server status…'}</p>}
       {server.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc máy chủ: ${server.error}` : `Could not load server: ${server.error}`}</p>}
-      {backup.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc lịch sử backup từ Drive: ${backup.error}` : `Could not load Drive backup history: ${backup.error}`}</p>}
-      {localSnapshots.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc bản backup cục bộ: ${localSnapshots.error}` : `Could not load local backups: ${localSnapshots.error}`}</p>}
+      {backup.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc lịch sử sao lưu từ Google Drive: ${backup.error}` : `Could not load Google Drive backup history: ${backup.error}`}</p>}
+      {localSnapshots.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc bản sao lưu trên máy chủ: ${localSnapshots.error}` : `Could not load server backups: ${localSnapshots.error}`}</p>}
+      {websites.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? 'Không thể cập nhật trạng thái website: ' : 'Could not update website status: '}{websites.error}</p>}
       <div style={{ margin: '0 -15px' }}>
         <div ref={containerRef} style={{ minHeight: '100vh', width: '100%' }}>
           {containerWidth > 0 && (
@@ -247,9 +245,9 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
               <div style={{ flex: 1, minWidth: '180px', display: 'flex', alignItems: 'center', gap: '15px', background: theme.gridLine, padding: '15px', borderRadius: '8px' }}>
                 <AlertTriangle size={32} color={diskPercent >= 85 ? theme.errorText : theme.successText} />
                 <div>
-                  <div style={{ fontSize: '12px', color: theme.textSecondary }}>{lang === 'vi' ? 'Cảnh báo hệ thống' : 'System Alerts'}</div>
+                  <div style={{ fontSize: '12px', color: theme.textSecondary }}>{lang === 'vi' ? 'Tình trạng ổ đĩa' : 'Disk status'}</div>
                   <div style={{ fontSize: '18px', fontWeight: 'bold', color: diskPercent >= 85 ? theme.errorText : theme.successText }}>
-                    {diskPercent >= 85 ? (lang === 'vi' ? 'Sắp hết ổ cứng' : 'Storage Full') : (lang === 'vi' ? 'Bình thường' : 'Healthy')}
+                    {diskUsage === null || server.error ? (lang === 'vi' ? 'Chưa xác nhận' : 'Unconfirmed') : diskPercent >= 85 ? (lang === 'vi' ? 'Sắp hết dung lượng' : 'Low disk space') : (lang === 'vi' ? 'Bình thường' : 'Normal')}
                   </div>
                 </div>
               </div>
@@ -260,7 +258,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                 <div>
                   <div style={{ fontSize: '12px', color: theme.textSecondary }}>{lang === 'vi' ? 'Sao lưu gần nhất' : 'Last Backup'}</div>
                   <div style={{ fontSize: '14px', fontWeight: 'bold', color: theme.titleColor }}>
-                    {localSnapshots.data?.[0]?.date.split(' ')[0] || '--'}
+                    {localSnapshots.data?.[0]?.date || '—'}
                   </div>
                 </div>
               </div>
@@ -269,26 +267,9 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
               <div style={{ flex: 1, minWidth: '180px', display: 'flex', alignItems: 'center', gap: '15px', background: theme.gridLine, padding: '15px', borderRadius: '8px' }}>
                 <Calendar size={32} color={theme.titleColor} />
                 <div>
-                  <div style={{ fontSize: '12px', color: theme.textSecondary }}>{lang === 'vi' ? 'Lịch trình tiếp theo' : 'Next Schedule'}</div>
+                  <div style={{ fontSize: '12px', color: theme.textSecondary }}>{tr(lang, 'nextSchedule')}</div>
                   <div style={{ fontSize: '14px', fontWeight: 'bold', color: theme.titleColor }}>
-                    {(() => {
-                      const cTimes = s.local_cron_times || ''
-                      const cList = cTimes.split(',').map(ss => ss.trim()).filter(Boolean)
-                      const now = new Date()
-                      const nowM = now.getHours() * 60 + now.getMinutes()
-                      let fCron = cList[0] || '--:--'
-                      let isNextDay = false
-                      if (cList.length > 0) {
-                        isNextDay = true
-                        for (const ct of cList) {
-                          const p = ct.split(':')
-                          if (p.length === 2 && (parseInt(p[0]) * 60 + parseInt(p[1]) > nowM)) {
-                            fCron = ct; isNextDay = false; break
-                          }
-                        }
-                      }
-                      return fCron !== '--:--' ? `${fCron}${isNextDay ? (lang === 'vi' ? ' (mai)' : ' (next day)') : ''}` : '--:--'
-                    })()}
+                    {nextCronRun((cron.data ?? []).filter(job => job.id === 'backup-site' || job.id === 'backup-database'), s.server_time, lang) ?? '—'}
                   </div>
                 </div>
               </div>
@@ -304,14 +285,14 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
             </div>
             <div style={{ padding: '0 15px 15px 15px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
-                <span style={{ fontSize: '24px', fontWeight: 'bold', color: theme.titleColor }}>{cpuPercent.toFixed(1)}%</span>
+                <span style={{ fontSize: '24px', fontWeight: 'bold', color: theme.titleColor }}>{s.cpu ? `${cpuPercent.toFixed(1)}%` : '—'}</span>
               </div>
               <div style={{ width: '100%', background: theme.gridLine, height: '24px', borderRadius: '12px', overflow: 'hidden', marginBottom: '10px' }}>
                 <div style={{ width: `${cpuPercent}%`, background: cpuPercent >= 85 ? theme.errorText : theme.successText, height: '100%', transition: 'width 0.4s' }} />
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: theme.textSecondary, fontSize: '12px' }}>
                 <span>{lang === 'vi' ? 'Đang dùng' : 'Used'}</span>
-                <span>{lang === 'vi' ? 'Trống' : 'Free'} {(100 - cpuPercent).toFixed(1)}%</span>
+                <span>{lang === 'vi' ? 'Nhàn rỗi' : 'Idle'} {s.cpu ? `${(100 - cpuPercent).toFixed(1)}%` : '—'}</span>
               </div>
             </div>
           </div>
@@ -367,7 +348,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
           {/* DATA GROWTH TREND */}
           <div key="growth-trend" style={cardStyle}>
             <div className="drag-handle" style={dragHandleStyle}>
-              {lang === 'vi' ? 'Xu hướng tăng trưởng dữ liệu' : 'Data Growth Trend'}
+              {lang === 'vi' ? 'Dung lượng bản sao lưu trên máy chủ theo ngày' : 'Backup size on the server by date'} ({tr(lang, 'last14Days')})
             </div>
             <div style={{ padding: '10px', flex: 1, minHeight: 0 }}>
               {growthData.length > 0 ? (
@@ -394,10 +375,10 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
           {/* PIE CHART (STORAGE BY CATEGORY) */}
           <div key="backup-chart" style={cardStyle}>
             <div className="drag-handle" style={dragHandleStyle}>
-              {lang === 'vi' ? 'Dung lượng phân bổ' : 'Storage Allocation'}
+              {lang === 'vi' ? 'Dung lượng bản sao lưu trên máy chủ theo loại' : 'Backup size on the server by type'} ({tr(lang, 'last14Days')})
             </div>
             <div style={{ padding: '10px', flex: 1, minHeight: 0 }}>
-              {categoryData.length > 0 ? (
+              {categoryData.some(item => item.value > 0) ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
@@ -424,7 +405,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                 </ResponsiveContainer>
               ) : (
                 <div style={{ textAlign: 'center', color: theme.textSecondary, padding: '20px', fontSize: '12px' }}>
-                  {lang === 'vi' ? 'Đang tải dữ liệu...' : 'Loading chart...'}
+                  {localSnapshots.loading ? (lang === 'vi' ? 'Đang tải dữ liệu...' : 'Loading chart...') : localSnapshots.error ? (lang === 'vi' ? 'Không tải được dữ liệu.' : 'Data unavailable.') : (lang === 'vi' ? 'Chưa có bản sao lưu trong 14 ngày.' : 'No backups in the last 14 days.')}
                 </div>
               )}
             </div>
@@ -476,7 +457,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
           {/* PROTECTED ENTITIES - RECENT BACKUPS */}
           <div key="local-snapshots" style={cardStyle}>
             <div className="drag-handle" style={dragHandleStyle}>
-              {lang === 'vi' ? 'Lịch sử sao lưu' : 'Restore History'}
+              {lang === 'vi' ? 'Tệp sao lưu trên máy chủ' : 'Backup files on the server'} ({tr(lang, 'last14Days')})
             </div>
             <div style={{ padding: '0 10px 10px 10px', flex: 1, overflow: 'hidden', minHeight: 0 }}>
               {localSnapshots.data && localSnapshots.data.length > 0 ? (
@@ -484,7 +465,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                     <thead>
                       <tr style={{ borderBottom: `1px solid ${theme.gridLine}` }}>
-                        <th style={{ padding: '6px 0', textAlign: 'left', color: theme.textSecondary, fontWeight: 'normal' }}>{lang === 'vi' ? 'Tên file' : 'File Name'}</th>
+                        <th style={{ padding: '6px 0', textAlign: 'left', color: theme.textSecondary, fontWeight: 'normal' }}>{tr(lang, 'fileName')}</th>
                         <th style={{ padding: '6px 0', textAlign: 'center', color: theme.textSecondary, fontWeight: 'normal' }}>{lang === 'vi' ? 'Dung lượng' : 'Size'}</th>
                       </tr>
                     </thead>
@@ -512,10 +493,10 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
           <div key="cron-jobs" style={cardStyle}>
                           <div className="drag-handle" style={dragHandleStyle}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                  <span>{lang === 'vi' ? 'Tiến trình hẹn giờ' : 'Cron Jobs'}</span>
+                  <span>{tr(lang, 'scheduledJobsTitle')}</span>
                   <div style={{ padding: '2px 8px', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.gridLine}`, borderRadius: '12px', fontSize: '10px', display: 'flex', alignItems: 'center', gap: '6px', color: theme.successText, textTransform: 'none' }}>
                     <CheckCircle size={12} />
-                    <span style={{ color: theme.titleColor, fontWeight: 'bold' }}>{cron.data ? cron.data.filter((job) => job.id === 'backup-site' || job.id === 'backup-database').length + ' Jobs' : '0'}</span>
+                    <span style={{ color: theme.titleColor, fontWeight: 'bold' }}>{cron.data ? `${cron.data.filter((job) => job.id === 'backup-site' || job.id === 'backup-database').length} ${tr(lang, 'jobCountUnit')}` : '—'}</span>
                   </div>
                 </div>
               </div>
@@ -523,8 +504,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
               <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${theme.gridLine}`, color: theme.textSecondary, textAlign: 'left' }}>
-                    <th style={{ padding: '6px 4px', fontWeight: 'bold' }}>{lang === 'vi' ? 'Tên tiến trình' : 'Job Name'}</th>
-                    <th style={{ padding: '6px 4px', fontWeight: 'bold' }}>{lang === 'vi' ? 'Lịch trình' : 'Schedule'}</th>
+                    <th style={{ padding: '6px 4px', fontWeight: 'bold' }}>{tr(lang, 'jobName')}</th>
+                    <th style={{ padding: '6px 4px', fontWeight: 'bold' }}>{tr(lang, 'schedule')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -532,9 +513,9 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                     (cron.data || []).filter(j => j.id === 'backup-site' || j.id === 'backup-database').map((cJob) => (
                       <tr key={`${cJob.id}:${cJob.schedule}`} style={{ borderBottom: `1px solid ${theme.gridLine}` }}>
                         <td style={{ padding: '6px 4px', whiteSpace: 'nowrap',  textOverflow: 'ellipsis', maxWidth: '120px' }} title={cJob.name}>
-                          {cJob.id === 'backup-site' ? (lang === 'vi' ? 'Sao lưu website' : 'Backup websites') : (lang === 'vi' ? 'Sao lưu database' : 'Backup databases')}
+                          {tr(lang, cJob.id === 'backup-site' ? 'backupSiteJob' : 'backupDatabaseJob')}
                         </td>
-                        <td style={{ padding: '6px 4px', color: theme.textSecondary }}>{formatCronSchedule(cJob.schedule)}</td>
+                        <td style={{ padding: '6px 4px', color: theme.textSecondary }}>{formatCronSchedule(cJob.schedule, lang)}</td>
                       </tr>
                     ))
                   ) : (
@@ -553,7 +534,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
             {/* SUCCESS / FAILURE DONUT CHART */}
             <div key="success-failure" style={cardStyle}>
               <div className="drag-handle" style={dragHandleStyle}>
-                {lang === 'vi' ? 'Tỷ lệ Thành công / Thất bại (14 Ngày)' : 'Success / Failure Rate (14 Days)'}
+                {lang === 'vi' ? 'Kết quả sao lưu trên máy chủ' : 'Server backup run results'} ({tr(lang, 'last14Days')})
               </div>
               <div style={{ padding: '10px', flex: 1, minHeight: 0 }}>
                 {successFailureData.length > 0 ? (
@@ -583,7 +564,10 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                   </ResponsiveContainer>
                 ) : (
                   <div style={{ textAlign: 'center', color: theme.textSecondary, padding: '20px', fontSize: '12px' }}>
-                    {tr(lang, 'noData')}
+                    {trackingEnabled
+                      ? (lang === 'vi' ? 'Chưa có lần sao lưu hoàn tất được ghi nhận. Kết quả sẽ xuất hiện sau lần chạy tiếp theo.' : 'No completed backup runs recorded yet. Results appear after the next run.')
+                      : (lang === 'vi' ? 'Chưa có kết quả lần chạy. Vào Cronjob → Bật ghi nhận cron tự động để theo dõi các lần sao lưu tiếp theo.' : 'No run results yet. Go to Cron Jobs → Enable scheduled backup tracking to track future backups.')}
+                    <p>{lang === 'vi' ? 'Log cũ chỉ ghi tệp thành công, không đủ để thống kê kết quả từng lần chạy.' : 'Old logs only record completed files, not the result of each run.'}</p>
                   </div>
                 )}
               </div>
@@ -592,7 +576,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
             {/* DURATION BAR CHART */}
             <div key="duration-chart" style={cardStyle}>
               <div className="drag-handle" style={dragHandleStyle}>
-                {lang === 'vi' ? 'Thời gian backup đã ghi nhận (giây)' : 'Recorded backup duration (seconds)'}
+                {lang === 'vi' ? 'Tổng thời lượng xử lý tệp đã ghi nhận mỗi ngày (giây)' : 'Total recorded file processing duration per day (seconds)'}
               </div>
               <div style={{ padding: '10px', flex: 1, minHeight: 0 }}>
                 {durationData.length > 0 && durationData.some(d => d.duration !== null) ? (
@@ -605,7 +589,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                         contentStyle={{ backgroundColor: theme.cardBg, borderColor: theme.gridLine, color: theme.titleColor, borderRadius: '8px' }}
                         cursor={{ fill: theme.gridLine }}
                       />
-                      <Bar dataKey="duration" name={lang === 'vi' ? 'Thời gian (s)' : 'Duration (s)'} fill="#8b5cf6" barSize={15} radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="duration" name={tr(lang, 'durationSeconds')} fill="#8b5cf6" barSize={15} radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (

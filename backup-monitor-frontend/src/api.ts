@@ -142,6 +142,10 @@ export async function fetchCronJobs(): Promise<CronJob[]> {
   return data
 }
 
+export async function enableCronTracking(): Promise<void> {
+  await client.post('/api/cron-tracking')
+}
+
 export type CronJobRunResult = { status: 'started' | 'completed'; deletedCount?: number }
 
 export async function runCronJob(jobId: string): Promise<CronJobRunResult> {
@@ -303,6 +307,7 @@ function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, initialData: 
   useEffect(() => {
     let alive = true
     const load = async () => {
+      if (alive) setLoading(true)
       try {
         const d = await fetcher()
         if (alive) {

@@ -21,8 +21,8 @@ import { ErrorBoundary } from '../ErrorBoundary'
 import type { Lang } from '../language'
 import { tr } from '../language'
 import { makeTheme } from '../theme'
-import { useServerStatus, useBackupStatus } from '../api'
-import { formatBytes, formatDuration } from '../utils'
+import { useServerStatus, useBackupStatus, useCronJobs } from '../api'
+import { activityStamp, activityStatus, calendarDays, categoryLabel, formatBytes, formatDuration, nextCronRun } from '../utils'
 
 import type { CSSProperties } from 'react'
 
@@ -32,7 +32,6 @@ interface ChartDatum {
   diffSize: number
   success: number
   failed: number
-  noBackup: number
 }
 
 function ChartTooltip({
@@ -93,6 +92,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
   const theme = makeTheme(isDark)
   const server = useServerStatus()
   const backup = useBackupStatus()
+  const cron = useCronJobs(60000)
   
   const { width: containerWidth, containerRef } = useCustomContainerWidth()
 
@@ -135,18 +135,11 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
   // Drive Storage Math
   const { about } = backupStatus
 
-  const backupFolderSize = backupStatus.size?.bytes || 0
+  const backupFolderSize = backupStatus.size?.bytes ?? 0
   const driveTotal = driveUnavailable ? 0 : (about?.total || 0)
-  const rawDrivePercent = driveTotal ? (backupFolderSize / driveTotal) * 100 : 0
-  const driveUsedPercent = driveTotal ? (rawDrivePercent > 0 && rawDrivePercent < 0.01 ? '< 0.01' : rawDrivePercent.toFixed(1)) : '—'
-  const driveFreePercent = driveTotal ? (100 - (rawDrivePercent > 0 && rawDrivePercent < 0.01 ? 0.01 : rawDrivePercent)).toFixed(1) : '—'
-
-  const getLocalDateString = (d: Date) => {
-    const year = d.getFullYear()
-    const month = String(d.getMonth() + 1).padStart(2, '0')
-    const day = String(d.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
-  }
+  const rawDrivePercent = driveTotal && about?.used != null ? Math.min(100, Math.max(0, about.used / driveTotal * 100)) : 0
+  const driveUsedPercent = driveTotal && about?.used != null ? (rawDrivePercent > 0 && rawDrivePercent < 0.01 ? '< 0.01' : rawDrivePercent.toFixed(1)) : '—'
+  const driveFreePercent = driveTotal && about?.free != null ? Math.min(100, Math.max(0, about.free / driveTotal * 100)).toFixed(1) : '—'
 
   // PIE CHART DATA — phân loại dung lượng theo loại (site/database/panel)
   const activities = backupStatus.activity ?? []
@@ -158,9 +151,9 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
     totalPieBytes === 0
       ? [{ name: 'idle', value: 1 }]
       : [
-          { name: 'Site', value: breakdownBytes.site },
-          { name: 'Database', value: breakdownBytes.database },
-          { name: 'aaPanel', value: breakdownBytes.panel },
+          { name: categoryLabel('site', lang), value: breakdownBytes.site },
+          { name: categoryLabel('database', lang), value: breakdownBytes.database },
+          { name: categoryLabel('panel', lang), value: breakdownBytes.panel },
         ]
   const PIE_COLORS = ['#4caf50', '#2196f3', '#ff9800']
 
@@ -171,12 +164,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
     const historyMap = new Map()
     history.forEach((h) => historyMap.set(h.date, { bytes: h.bytes, files: h.files || 0 }))
 
-    const last14Days: string[] = []
-    for (let i = 13; i >= 0; i--) {
-      const d = new Date()
-      d.setDate(d.getDate() - i)
-      last14Days.push(getLocalDateString(d))
-    }
+    const last14Days = calendarDays(serverStatus.server_time)
 
     chartData = last14Days.map((dateStr, i) => {
       const histData = historyMap.get(dateStr) || { bytes: 0, files: 0 }
@@ -190,13 +178,10 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
 
       let success = 0
       const failed = 0
-      let noBackup = 0
 
       const files = histData.files || 0
         if (files > 0) {
           success = files
-        } else {
-          noBackup = 1
         }
 
       return {
@@ -205,7 +190,6 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
         diffSize: diff,
         success,
         failed,
-        noBackup,
       }
     })
 
@@ -326,9 +310,9 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                         </div>
                         <div style={{ flex: 1.5, fontSize: '12px' }}>
                           {[
-                            { label: 'Site', value: breakdownBytes.site, color: '#4caf50' },
-                            { label: 'Database', value: breakdownBytes.database, color: '#2196f3' },
-                            { label: 'aaPanel', value: breakdownBytes.panel, color: '#ff9800' },
+                            { label: categoryLabel('site', lang), value: breakdownBytes.site, color: '#4caf50' },
+                            { label: categoryLabel('database', lang), value: breakdownBytes.database, color: '#2196f3' },
+                            { label: categoryLabel('panel', lang), value: breakdownBytes.panel, color: '#ff9800' },
                           ].map((item) => {
                             const pct = totalPieBytes > 0 ? Math.round((item.value / totalPieBytes) * 100) : 0
                             return (
@@ -355,32 +339,12 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                     {(() => {
                       const lastBackup = activities.length > 0
                         ? [...activities].sort((a, b) => {
-                            const da = `${a.date} ${a.time}`
-                            const db = `${b.date} ${b.time}`
+                            const da = activityStamp(a)
+                            const db = activityStamp(b)
                             return db.localeCompare(da)
                           })[0]
                         : null
-                      const cronTimes = serverStatus.drive_cron_times || ''
-                      const cronList = cronTimes.split(',').map(s => s.trim()).filter(Boolean)
-                      const now = new Date()
-                      const nowMinutes = now.getHours() * 60 + now.getMinutes()
-                      let firstCron = cronList[0] || '--:--'
-                      let isNextDay = false
-                      if (cronList.length > 0) {
-                        isNextDay = true
-                        for (const ct of cronList) {
-                          const parts = ct.split(':')
-                          if (parts.length === 2) {
-                            const cronMin = parseInt(parts[0]) * 60 + parseInt(parts[1])
-                            if (cronMin > nowMinutes) {
-                              firstCron = ct
-                              isNextDay = false
-                              break
-                            }
-                          }
-                        }
-                      }
-                      const nextScheduleDisplay = firstCron !== '--:--' ? `${firstCron}${isNextDay ? (lang === 'vi' ? ' (ngày mai)' : ' (next day)') : ''}` : '--:--'
+                      const nextScheduleDisplay = nextCronRun((cron.data ?? []).filter(job => job.id === 'drive-sync'), serverStatus.server_time, lang) ?? '—'
 
                       if (!lastBackup) {
                         return (
@@ -390,8 +354,8 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                         )
                       }
 
-                      const isSuccess = lastBackup.status === 'Successful'
-                      const durationStr = formatDuration(Number(lastBackup.duration))
+                      const isSuccess = activityStatus(lastBackup.status) === 'success'
+                      const durationStr = formatDuration(lastBackup.duration == null || lastBackup.duration === '' ? NaN : Number(lastBackup.duration))
 
                       return (
                         <div style={{ fontSize: '12px' }}>
@@ -406,13 +370,13 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                               {isSuccess ? tr(lang, 'backupSuccessful') : tr(lang, 'backupFailed')}
                             </strong>
                             <span style={{ color: theme.textSecondary, fontSize: '11px' }}>
-                              {lastBackup.date} {lastBackup.time}
+                              {activityStamp(lastBackup)}
                             </span>
                           </div>
                           <div style={{ lineHeight: '1.9' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px dashed ${theme.gridLine}`, paddingBottom: '1px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', borderBottom: `1px dashed ${theme.gridLine}`, paddingBottom: '1px' }}>
                               <span style={{ color: theme.textSecondary }}>{tr(lang, 'job')}</span>
-                              <strong>Lưu trữ bản backup lên Google Drive</strong>
+                              <strong style={{ textAlign: 'right' }}>{tr(lang, 'driveBackupJob')}</strong>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: `1px dashed ${theme.gridLine}`, paddingBottom: '1px' }}>
                               <span style={{ color: theme.textSecondary }}>{tr(lang, 'duration')}</span>
@@ -422,7 +386,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                               <span style={{ color: theme.textSecondary }}>{tr(lang, 'destination')}</span>
                               <strong>Google Drive</strong>
                             </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '1px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', paddingTop: '1px' }}>
                               <span style={{ color: theme.textSecondary }}>{tr(lang, 'nextSchedule')}</span>
                               <strong style={{ color: theme.titleColor }}>{nextScheduleDisplay}</strong>
                             </div>
@@ -436,7 +400,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                 {/* GROWTH CHART */}
                 <div key="growth" style={cardStyle}>
                   <div className="drag-handle" style={dragHandleStyle}>
-                    {tr(lang, 'dataGrowth')}
+                    {tr(lang, 'dataGrowth')} ({tr(lang, 'last14Days')})
                   </div>
                   <div style={{ padding: '0 10px 10px 10px', flex: 1, minHeight: 0 }}>
                     {chartData.length > 0 ? (
@@ -479,7 +443,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                 {/* HISTORY CHART */}
                 <div key="history" style={cardStyle}>
                   <div className="drag-handle" style={dragHandleStyle}>
-                    {tr(lang, 'backupsHistory')}
+                    {tr(lang, 'backupsHistory')} ({tr(lang, 'last14Days')})
                   </div>
                   <div style={{ padding: '0 10px 10px 10px', flex: 1, minHeight: 0 }}>
                     {chartData.length > 0 ? (
@@ -526,7 +490,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                 {/* SUCCESS CHART */}
                 <div key="success" style={cardStyle}>
                   <div className="drag-handle" style={dragHandleStyle}>
-                    {tr(lang, 'successTrend')}
+                    {tr(lang, 'successTrend')} ({tr(lang, 'last14Days')})
                   </div>
                   <div style={{ padding: '0 10px 10px 10px', flex: 1, minHeight: 0 }}>
                     {chartData.length > 0 ? (
@@ -549,7 +513,6 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                             cursor={{ fill: theme.gridLine }}
                           />
                           <Bar dataKey="success" stackId="a" fill={theme.successText} barSize={20} name={tr(lang, 'filesCount')} />
-                          <Bar dataKey="noBackup" stackId="a" fill="#555555" barSize={20} name={tr(lang, 'noBackups')} />
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
@@ -572,14 +535,14 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                   </div>
                   <div style={{ padding: '0 10px 10px 10px', flex: 1, overflow: 'hidden', minHeight: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '5px' }}>
-                      <span style={{ fontSize: 'clamp(0px, 15cqmin, 18px)', fontWeight: 'bold' }}>{driveUnavailable ? '—' : formatBytes(backupFolderSize)}</span>
+                      <span style={{ fontSize: 'clamp(12px, 15cqmin, 18px)', fontWeight: 'bold' }}>{driveUnavailable || !backupStatus.size ? '—' : formatBytes(backupFolderSize)}</span>
                       <span style={{ fontSize: 'clamp(3px, 8cqmin, 10px)', color: theme.textSecondary }}>
-                        {tr(lang, 'storageUtilization')}
+                        {lang === 'vi' ? 'Bản sao lưu / Tổng dung lượng tài khoản' : 'Backups / Account capacity'}
                       </span>
                       <span style={{ fontSize: 'clamp(0px, 15cqmin, 18px)', fontWeight: 'bold' }}>{driveTotal ? formatBytes(driveTotal) : '—'}</span>
                     </div>
                     <div style={{ width: '100%', backgroundColor: theme.gridLine, height: '12px', marginBottom: '5px', borderRadius: '2px', overflow: 'hidden' }}>
-                      <div style={{ width: `${Math.max(rawDrivePercent, backupFolderSize > 0 ? 1.5 : 0)}%`, minWidth: backupFolderSize > 0 ? '6px' : '0', backgroundColor: '#2196f3', height: '100%' }} />
+                      <div style={{ width: `${rawDrivePercent}%`, backgroundColor: '#2196f3', height: '100%' }} />
                     </div>
                     <div
                       style={{
@@ -591,7 +554,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                       }}
                     >
                       <span>
-                        {tr(lang, 'used')} ({driveUsedPercent}%)
+                        {lang === 'vi' ? 'Tài khoản đã dùng' : 'Account used'} ({driveUsedPercent}%)
                       </span>
                       <span>
                         {tr(lang, 'free')} ({driveFreePercent}%)
@@ -610,9 +573,9 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                             lineHeight: 1.5,
                           }}
                         >
-                          <span>{lang === 'vi' ? 'Tổng số thư mục' : 'Total Folders'}</span>
+                          <span>{lang === 'vi' ? 'Số ngày có bản sao lưu' : 'Days with backup files'}</span>
                           <strong style={{ color: theme.successText }}>
-                            {driveUnavailable ? '—' : (backupStatus.totalFolders || 0)}
+                            {driveUnavailable || backupStatus.totalFolders == null ? '—' : backupStatus.totalFolders}
                           </strong>
                         </div>
                       </div>
