@@ -1407,26 +1407,7 @@ LOCAL_LOGS=$(awk '
         printf "{\"name\":\"%s\",\"date\":\"%s\",\"time\":\"%s\",\"duration\":\"%s\",\"status\":\"%s\"},", name, date, time, duration, status
     }
     ' /www/server/cron/*.log 2>/dev/null | sed 's/,$//')
-CUSTOM_LOCAL_LOGS=$(tail -n 500 /root/backup-site.log /root/backup-database.log 2>/dev/null | awk '
-    /^CREATED \/www\/backup\/(20[0-9]{2}-[0-9]{2}-[0-9]{2}\/)?site\// {
-        path = $2
-        count = split(path, parts, "/")
-        name = parts[count]
-        if (match(name, /^web_(web[1-4]\.local)_([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})_site\.tar\.gz$/, dt)) {
-            duration = ($3 == "DURATION" && $4 ~ /^[0-9]+([.][0-9]+)?$/) ? $4 : "null"
-            printf "{\"name\":\"Backup Website: %s\",\"date\":\"%s-%s-%s\",\"time\":\"%s:%s:%s\",\"duration\":%s,\"status\":\"Successful\"},", dt[1], dt[2], dt[3], dt[4], dt[5], dt[6], dt[7], duration
-        }
-    }
-    /^CREATED \/www\/backup\/(20[0-9]{2}-[0-9]{2}-[0-9]{2}\/)?database\/mysql\// {
-        path = $2
-        count = split(path, parts, "/")
-        name = parts[count]
-        if (match(name, /^db_(sql_web[1-4]_local)_([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})_mysql_data\.sql\.gz$/, dt)) {
-            duration = ($3 == "DURATION" && $4 ~ /^[0-9]+([.][0-9]+)?$/) ? $4 : "null"
-            printf "{\"name\":\"Backup Database: %s\",\"date\":\"%s-%s-%s\",\"time\":\"%s:%s:%s\",\"duration\":%s,\"status\":\"Successful\"},", dt[1], dt[2], dt[3], dt[4], dt[5], dt[6], dt[7], duration
-        }
-    }
-' | sed 's/,$//')
+CUSTOM_LOCAL_LOGS=$(` + customLocalActivityCommand() + `)
 RUN_LOGS=$(` + backupRunActivityCommand() + `)
 LOCAL_ACTIVITY="["
 SEP=""

@@ -203,6 +203,21 @@ export function summarizeLocalBackupActivity(entries: BackupActivityEntry[]): Ba
   return rows.sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`))
 }
 
+// Use the same authoritative run totals as the activity page. File details
+// covered by a run must never be added again; legacy groups remain a fallback.
+export function localBackupDurationByDay(entries: BackupActivityEntry[], days: string[]) {
+  const totals = new Map<string, number>()
+  const allowedDays = new Set(days)
+  for (const row of summarizeLocalBackupActivity(entries)) {
+    if (!allowedDays.has(row.date) || row.duration === null) continue
+    totals.set(row.date, (totals.get(row.date) ?? 0) + row.duration)
+  }
+  return days.map(date => ({
+    date,
+    duration: totals.has(date) ? Number(totals.get(date)!.toFixed(3)) : null,
+  }))
+}
+
 export function categoryLabel(category: string, lang: 'vi' | 'en'): string {
   return ({ site: ['Website', 'Website'], database: ['Cơ sở dữ liệu', 'Database'], panel: ['aaPanel', 'aaPanel'], root: ['Khác', 'Other'] }[category])?.[lang === 'vi' ? 0 : 1] ?? category
 }

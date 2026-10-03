@@ -6,7 +6,7 @@ import 'react-resizable/css/styles.css'
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts'
 
 import { useServerStatus, useBackupStatus, useWebsitesStatus, useCronJobs, useLocalSnapshots } from '../api'
-import { activityStatus, calendarDays, categoryLabel, formatBytes, formatCronSchedule, nextCronRun, readPercentage } from '../utils'
+import { activityStatus, calendarDays, categoryLabel, formatBytes, formatCronSchedule, localBackupDurationByDay, nextCronRun, readPercentage } from '../utils'
 import { makeTheme } from '../theme'
 import { CheckCircle, AlertTriangle, Clock, Calendar } from 'lucide-react'
 import { tr, type Lang } from '../language'
@@ -110,23 +110,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
     ]
   }, [backup.data, last14Days, lang])
 
-  const durationData = useMemo(() => {
-    if (!backup.data?.localActivity) return []
-    const map = new Map<string, number>()
-    backup.data.localActivity.forEach((a) => {
-      if (a.kind === 'run') return
-      if (last14Days.includes(a.date)) {
-        const duration = a.duration === null || a.duration === '' ? NaN : Number(a.duration)
-        if (Number.isFinite(duration) && duration >= 0) {
-          map.set(a.date, (map.get(a.date) || 0) + duration)
-        }
-      }
-    })
-    return last14Days.map((dateStr: string) => ({
-      date: dateStr,
-      duration: map.has(dateStr) ? parseFloat(map.get(dateStr)!.toFixed(3)) : null
-    }))
-  }, [backup.data, last14Days])
+  const durationData = useMemo(() => localBackupDurationByDay(backup.data?.localActivity ?? [], last14Days), [backup.data, last14Days])
 
   const diskUsage = readPercentage(s.disk?.usage)
   const diskPercent = diskUsage ?? 0
@@ -577,7 +561,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
             {/* DURATION BAR CHART */}
             <div key="duration-chart" style={cardStyle}>
               <div className="drag-handle" style={dragHandleStyle}>
-                {lang === 'vi' ? 'Tổng thời lượng xử lý tệp đã ghi nhận mỗi ngày (giây)' : 'Total recorded file processing duration per day (seconds)'}
+                {lang === 'vi' ? 'Tổng thời lượng sao lưu website và database mỗi ngày (giây)' : 'Total website and database backup duration per day (seconds)'}
               </div>
               <div style={{ padding: '10px', flex: 1, minHeight: 0 }}>
                 {durationData.length > 0 && durationData.some(d => d.duration !== null) ? (
