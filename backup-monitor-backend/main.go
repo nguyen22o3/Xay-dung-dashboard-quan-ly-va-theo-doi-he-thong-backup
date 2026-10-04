@@ -1547,36 +1547,8 @@ echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\"
 
 		// API 4: Giám sát Uptime các website (động theo thư mục /www/wwwroot)
 		auth.GET("/websites-status", func(c *gin.Context) {
-			cmds := `
-sites=$(ls -d /www/wwwroot/*/ 2>/dev/null | sed 's#/$##' | xargs -n1 basename 2>/dev/null | grep -v '^default$' | head -n 10)
-if [ -z "$sites" ]; then
-  sites="web1.local
-web2.local
-web3.local"
-fi
-echo "["
-first=1
-for site in $sites; do
-  res=$(curl -o /dev/null -s -w "%{http_code},%{time_total}" --resolve "$site:80:127.0.0.1" --max-time 2 "http://$site" 2>/dev/null)
-  if [ -z "$res" ] || [ "$(echo "$res" | cut -d',' -f1)" = "000" ]; then
-    res=$(curl -o /dev/null -s -w "%{http_code},%{time_total}" --max-time 2 "http://$site" 2>/dev/null || echo "000,0")
-  fi
-  code=$(echo "$res" | cut -d',' -f1)
-  sec=$(echo "$res" | cut -d',' -f2)
-  ms=$(awk -v s="$sec" 'BEGIN {printf "%.0fms", s*1000}')
-  status="OFFLINE"
-  if [ "$code" = "200" ] || [ "$code" = "301" ] || [ "$code" = "302" ] || [ "$code" = "403" ]; then
-    status="ONLINE"
-  fi
-  if [ "$first" -ne 1 ]; then printf ","; fi
-  first=0
-  printf '{"name":"%s","status":"%s","code":"%s","time":"%s"}' "$site" "$status" "$code" "$ms"
-done
-echo "]"
-`
 			output, err := cachedGet("websites-status", 15*time.Second, func() ([]byte, error) {
-				out, e := executeSSHCommand(cmds)
-				return []byte(out), e
+				return collectWebsiteStatuses(executeSSHCommandRaw)
 			})
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể kiểm tra website", "detail": err.Error()})

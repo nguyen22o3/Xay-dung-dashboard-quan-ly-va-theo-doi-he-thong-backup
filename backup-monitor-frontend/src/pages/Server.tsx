@@ -8,6 +8,7 @@ import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, L
 import { useServerStatus, useBackupStatus, useWebsitesStatus, useCronJobs, useLocalSnapshots } from '../api'
 import { activityStatus, calendarDays, categoryLabel, formatBytes, formatCronSchedule, localBackupDurationByDay, nextCronRun, readPercentage } from '../utils'
 import { makeTheme } from '../theme'
+import { websiteStatusPresentation } from '../websiteStatus'
 import { CheckCircle, AlertTriangle, Clock, Calendar } from 'lucide-react'
 import { tr, type Lang } from '../language'
 
@@ -412,18 +413,21 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                       </tr>
                     </thead>
                     <tbody>
-                      {websitesStatus.map((site, i) => {
-                        const isOnline = site.status === 'ONLINE'
+                      {websitesStatus.map(site => {
+                        const presentation = websiteStatusPresentation(site, lang)
+                        const color = presentation.tone === 'healthy' ? theme.successText : presentation.tone === 'warning' ? (isDark ? '#fbbf24' : '#92400e') : presentation.tone === 'error' ? theme.errorText : theme.textSecondary
+                        const background = presentation.tone === 'healthy' ? (isDark ? '#1b4d3e' : '#e8f5e9') : presentation.tone === 'warning' ? (isDark ? '#422f0b' : '#fef3c7') : presentation.tone === 'error' ? (isDark ? '#4a1111' : '#ffebee') : theme.gridLine
                         return (
-                          <tr key={i} style={{ borderBottom: `1px solid ${theme.gridLine}` }}>
+                          <tr key={site.name} title={presentation.title} style={{ borderBottom: `1px solid ${theme.gridLine}` }}>
                             <td style={{ padding: '8px 0', display: 'flex', alignItems: 'center', gap: '8px', color: theme.titleColor }}>
-                              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: isOnline ? theme.successText : theme.errorText, display: 'inline-block', flexShrink: 0 }} />
+                              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: color, display: 'inline-block', flexShrink: 0 }} />
                               {site.name}
                             </td>
                             <td style={{ padding: '8px 0', textAlign: 'center' }}>
-                              <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '9px', fontWeight: 'bold', backgroundColor: isOnline ? (isDark ? '#1b4d3e' : '#e8f5e9') : (isDark ? '#4a1111' : '#ffebee'), color: isOnline ? theme.successText : theme.errorText }}>
-                                {site.status}
+                              <span style={{ padding: '2px 6px', borderRadius: '10px', fontSize: '9px', fontWeight: 'bold', backgroundColor: background, color }}>
+                                {presentation.label}
                               </span>
+                              {presentation.details && <div style={{ fontSize: '9px', color: theme.textSecondary, marginTop: '4px' }}>{presentation.details}</div>}
                             </td>
                           </tr>
                         )

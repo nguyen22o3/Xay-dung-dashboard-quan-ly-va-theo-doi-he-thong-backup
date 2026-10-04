@@ -21,7 +21,7 @@ import (
 )
 
 const BinaryPath = "/usr/local/libexec/backup-monitor/backup-manager"
-const Version = "backup-manager-go-v2"
+const Version = "backup-manager-go-v5"
 const RetentionDays = 14
 const LayoutMarker = "# backup-monitor daily layout v1"
 
@@ -30,39 +30,44 @@ var ScriptNames = []string{"backup-site.sh", "backup-database.sh", "backup-panel
 var LogNames = []string{"backup-site.log", "backup-database.log", "backup-panel.log", "auto_backup.log", "cleanup-panel-backups.log", "check_integrity.log", "backup-monitor-runs.log"}
 
 type Settings struct {
-	BackupRoot      string `json:"backupRoot"`
-	ScriptsDir      string `json:"scriptsDir"`
-	LogsDir         string `json:"logsDir"`
-	DriveRemote     string `json:"driveRemote"`
-	DriveFolder     string `json:"driveFolder"`
-	DriveHistoryLog string `json:"driveHistoryLog"`
+	BackupRoot      string     `json:"backupRoot"`
+	ScriptsDir      string     `json:"scriptsDir"`
+	LogsDir         string     `json:"logsDir"`
+	DriveRemote     string     `json:"driveRemote"`
+	DriveFolder     string     `json:"driveFolder"`
+	DriveHistoryLog string     `json:"driveHistoryLog"`
+	SiteSource      SourceSpec `json:"siteSource,omitzero"`
+	DatabaseSource  SourceSpec `json:"databaseSource,omitzero"`
+	PanelSource     SourceSpec `json:"panelSource,omitzero"`
 }
 
 func DefaultSettings() Settings {
-	return Settings{"/www/backup", "/root/scripts", "/root", "gdrive", "Backup", "/var/log/aapanel_backup.log"}
+	return Settings{BackupRoot: "/www/backup", ScriptsDir: "/root/scripts", LogsDir: "/root", DriveRemote: "gdrive", DriveFolder: "Backup", DriveHistoryLog: "/var/log/aapanel_backup.log"}
 }
 
 type Request struct {
-	Operation       string    `json:"operation"`
-	Config          *Settings `json:"config,omitempty"`
-	ExpectedVersion string    `json:"expectedVersion,omitempty"`
-	PreviewToken    string    `json:"previewToken,omitempty"`
-	Purpose         string    `json:"purpose,omitempty"`
-	Location        string    `json:"location,omitempty"`
-	Path            string    `json:"path,omitempty"`
-	Remote          string    `json:"remote,omitempty"`
+	Operation       string          `json:"operation"`
+	Config          *Settings       `json:"config,omitempty"`
+	ExpectedVersion string          `json:"expectedVersion,omitempty"`
+	PreviewToken    string          `json:"previewToken,omitempty"`
+	Schedule        *ScheduleChange `json:"schedule,omitempty"`
+	Purpose         string          `json:"purpose,omitempty"`
+	Location        string          `json:"location,omitempty"`
+	Path            string          `json:"path,omitempty"`
+	Remote          string          `json:"remote,omitempty"`
 }
 type State struct {
-	Config             Settings            `json:"config"`
-	Version            string              `json:"version"`
-	Remotes            []string            `json:"remotes"`
-	LocalRetentionDays int                 `json:"localRetentionDays"`
-	DriveRetentionDays int                 `json:"driveRetentionDays"`
-	AllowedRoots       map[string][]string `json:"allowedRoots"`
-	Ready              bool                `json:"ready"`
-	Applied            bool                `json:"applied"`
-	RecoveryDir        string              `json:"recoveryDir,omitempty"`
-	Warnings           []string            `json:"warnings"`
+	Config             Settings              `json:"config"`
+	Version            string                `json:"version"`
+	Remotes            []string              `json:"remotes"`
+	LocalRetentionDays int                   `json:"localRetentionDays"`
+	DriveRetentionDays int                   `json:"driveRetentionDays"`
+	AllowedRoots       map[string][]string   `json:"allowedRoots"`
+	Ready              bool                  `json:"ready"`
+	Applied            bool                  `json:"applied"`
+	RecoveryDir        string                `json:"recoveryDir,omitempty"`
+	Warnings           []string              `json:"warnings"`
+	Sources            map[string]SourceSpec `json:"sources"`
 }
 type Runner func(args []string, input []byte) ([]byte, error)
 type Controller struct {
@@ -82,7 +87,7 @@ func NewController() *Controller {
 		locks = append(locks, "/root/.backup-monitor-job-"+name+".lock")
 	}
 	return &Controller{ConfigPath: "/root/backup-monitor/system-config.json", RcloneConfig: "/root/.config/rclone/rclone.conf", RecoveryRoot: "/root/backup-layout-migrations", Binary: BinaryPath,
-		Defaults: DefaultSettings(), Roots: map[string][]string{"backup": {"/www/backup", "/var/backups", "/srv/backups", "/mnt", "/media"}, "scripts": {"/root", "/opt/backup-monitor"}, "logs": {"/root", "/var/log/backup-monitor"}},
+		Defaults: DefaultSettings(), Roots: map[string][]string{"backup": {"/"}, "scripts": {"/"}, "logs": {"/"}, "source-site": {"/"}, "source-database": {"/"}, "source-panel": {"/"}},
 		Locks: locks, Run: runCommand, Write: AtomicWrite, RestartMonitor: restartMonitor}
 }
 func runCommand(args []string, input []byte) ([]byte, error) {
@@ -142,7 +147,7 @@ func SafeParents(path string) error {
 	return nil
 }
 func within(path, root string) bool {
-	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
+	return path == root || strings.HasPrefix(path, strings.TrimRight(root, string(filepath.Separator))+string(filepath.Separator))
 }
 func exists(path string) bool { _, err := os.Lstat(path); return err == nil }
 func nearest(path string) (os.FileInfo, error) {
@@ -272,6 +277,13 @@ func (c *Controller) LocalPath(value, purpose string) error {
 	if !permitted {
 		return errors.New("Đường dẫn nằm ngoài vùng được phép cho " + purpose)
 	}
+	if filepath.Separator == '/' {
+		for _, root := range []string{"/proc", "/sys", "/dev", "/run"} {
+			if within(value, root) {
+				return errors.New("Không dùng filesystem hệ thống tạm thời làm nguồn hoặc nơi lưu backup")
+			}
+		}
+	}
 	if purpose == "scripts" && (value == "/root" || value == "/opt/backup-monitor") {
 		return errors.New("Chọn thư mục script con, ví dụ /root/scripts")
 	}
@@ -370,6 +382,17 @@ func (c *Controller) Validate(s Settings) error {
 	if s.DriveHistoryLog != "/var/log/aapanel_backup.log" && s.DriveHistoryLog != filepath.Join(s.LogsDir, "aapanel_backup.log") {
 		return errors.New("Đường dẫn nhật ký Drive không hợp lệ")
 	}
+	for _, id := range []string{"backup-site", "backup-database", "backup-panel"} {
+		// Also protect default sources when the form only changes storage.
+		if within(effectiveSource(s, id).Path, s.BackupRoot) || within(s.BackupRoot, effectiveSource(s, id).Path) {
+			return errors.New("Nguồn dữ liệu phải tách khỏi nơi lưu backup")
+		}
+		if spec := configuredSource(s, id); spec != (SourceSpec{}) {
+			if err := c.ValidateSource(s, id, spec); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 func (c *Controller) Active() (Settings, string, error) {
@@ -405,7 +428,7 @@ func (c *Controller) Get() (State, error) {
 	}
 	info, err := os.Stat(c.Binary)
 	ready := err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0100 != 0 && SafeParents(c.Binary) == nil
-	return State{Config: cfg, Version: version, Remotes: remotes, LocalRetentionDays: RetentionDays, DriveRetentionDays: RetentionDays, AllowedRoots: c.Roots, Ready: ready, Warnings: []string{}}, nil
+	return State{Config: cfg, Version: version, Remotes: remotes, LocalRetentionDays: RetentionDays, DriveRetentionDays: RetentionDays, AllowedRoots: c.Roots, Ready: ready, Warnings: []string{}, Sources: sourceSelections(cfg)}, nil
 }
 
 type Folder struct {
@@ -421,42 +444,33 @@ type FolderList struct {
 
 func (c *Controller) List(r Request) (FolderList, error) {
 	result := FolderList{Path: r.Path, Entries: []Folder{}}
-	roots, ok := c.Roots[r.Purpose]
+	_, ok := c.Roots[r.Purpose]
 	if !ok {
 		return result, errors.New("Loại thư mục không hợp lệ")
 	}
 	if r.Location == "local" {
-		if r.Path == "/" {
-			result.Exists = true
-			for _, p := range roots {
-				result.Entries = append(result.Entries, Folder{p, p})
-			}
-			return result, nil
+		// Browsing is independent of the selected task and has no write side
+		// effects. Selection/apply still uses LocalPath and ValidateSource.
+		if !filepath.IsAbs(r.Path) || filepath.Clean(r.Path) != r.Path {
+			return result, errors.New("Đường dẫn duyệt phải tuyệt đối và không chứa ..")
 		}
-		browseRoot := false
-		for _, p := range roots {
-			if r.Purpose == "scripts" && p == r.Path {
-				browseRoot = true
-			}
-		}
-		if !browseRoot {
-			if err := c.LocalPath(r.Path, r.Purpose); err != nil {
-				return result, err
-			}
-		} else if err := SafeParents(r.Path); err != nil {
+		if err := SafeParents(r.Path); err != nil {
 			return result, err
 		}
 		parent := filepath.Dir(r.Path)
-		allowed := false
-		for _, p := range roots {
-			if within(parent, p) {
-				allowed = true
-			}
+		if parent != r.Path {
+			result.Parent = &parent
 		}
-		if !allowed {
-			parent = "/"
+		info, err := os.Stat(r.Path)
+		if os.IsNotExist(err) {
+			return result, nil
 		}
-		result.Parent = &parent
+		if err != nil {
+			return result, err
+		}
+		if !info.IsDir() {
+			return result, errors.New("Đường dẫn duyệt không phải thư mục")
+		}
 		entries, err := os.ReadDir(r.Path)
 		if os.IsNotExist(err) {
 			return result, nil
@@ -466,11 +480,14 @@ func (c *Controller) List(r Request) (FolderList, error) {
 		}
 		result.Exists = true
 		for _, entry := range entries {
-			if entry.IsDir() && entry.Type()&os.ModeSymlink == 0 && !strings.HasPrefix(entry.Name(), ".") && localChars.MatchString(entry.Name()) {
+			if entry.IsDir() && entry.Type()&os.ModeSymlink == 0 {
 				result.Entries = append(result.Entries, Folder{entry.Name(), filepath.Join(r.Path, entry.Name())})
 			}
 		}
 		return result, nil
+	}
+	if strings.HasPrefix(r.Purpose, "source-") {
+		return result, errors.New("Chỉ chọn thư mục nguồn trên máy chủ")
 	}
 	if r.Location != "drive" {
 		return result, errors.New("Nơi lưu trữ không hợp lệ")
@@ -520,6 +537,9 @@ func (c *Controller) rcloneArgs(args ...string) []string {
 	return append(append([]string{"/usr/bin/rclone"}, args...), "--config", c.RcloneConfig, "--contimeout", "5s", "--timeout", "15s")
 }
 func (c *Controller) Create(r Request) error {
+	if strings.HasPrefix(r.Purpose, "source-") {
+		return errors.New("Thư mục nguồn phải tồn tại; không tạo thư mục dữ liệu từ dashboard")
+	}
 	if r.Location == "local" {
 		if err := c.LocalPath(r.Path, r.Purpose); err != nil {
 			return err

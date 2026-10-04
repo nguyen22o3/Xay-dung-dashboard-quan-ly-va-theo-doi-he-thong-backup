@@ -6,3 +6,6 @@ dist-ssr
 .env.*
 .DS_Store
 .vscode
+
+# Keep frontend tests locally, without adding them to Git.
+/tests/*.test.mjs

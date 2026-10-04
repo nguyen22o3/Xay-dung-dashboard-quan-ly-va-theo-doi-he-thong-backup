@@ -13,16 +13,18 @@ import (
 )
 
 type Preview struct {
-	Token           string   `json:"token"`
-	Changed         bool     `json:"changed"`
-	FilesToMove     int      `json:"filesToMove"`
-	BytesToMove     int64    `json:"bytesToMove"`
-	DaysToMove      int      `json:"daysToMove"`
-	ScriptsToUpdate int      `json:"scriptsToUpdate"`
-	LogsToMove      int      `json:"logsToMove"`
-	DriveChanged    bool     `json:"driveChanged"`
-	Config          Settings `json:"config"`
-	Version         string   `json:"version"`
+	Token           string           `json:"token"`
+	Changed         bool             `json:"changed"`
+	FilesToMove     int              `json:"filesToMove"`
+	BytesToMove     int64            `json:"bytesToMove"`
+	DaysToMove      int              `json:"daysToMove"`
+	ScriptsToUpdate int              `json:"scriptsToUpdate"`
+	LogsToMove      int              `json:"logsToMove"`
+	DriveChanged    bool             `json:"driveChanged"`
+	Config          Settings         `json:"config"`
+	Version         string           `json:"version"`
+	Schedule        *SchedulePreview `json:"schedule,omitempty"`
+	Sources         []SourcePreview  `json:"sources,omitempty"`
 }
 type scriptChange struct {
 	Source, Target    string
@@ -101,10 +103,22 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 		return nil, err
 	}
 	pairs := settingsPairs(old, new)
+	sources := []SourcePreview{}
+	for _, id := range []string{"backup-site", "backup-database", "backup-panel"} {
+		if configuredSource(old, id) != configuredSource(new, id) {
+			if configuredSource(new, id) == (SourceSpec{}) {
+				return nil, errors.New("Chọn nguồn mới rõ ràng; không xóa cấu hình nguồn đã lưu")
+			}
+			sources = append(sources, SourcePreview{id, effectiveSource(old, id), effectiveSource(new, id)})
+		}
+	}
 	p := &Proposal{Old: old, New: new, Scripts: []scriptChange{}, Logs: []logChange{}, Days: []dayChange{}}
 	for _, name := range ScriptNames {
 		source, target := filepath.Join(old.ScriptsDir, name), filepath.Join(new.ScriptsDir, name)
 		if !exists(source) && (name == "backup-monitor-run.sh" || name == "backup-panel.sh") {
+			if name == "backup-panel.sh" && configuredSource(old, "backup-panel") != configuredSource(new, "backup-panel") {
+				return nil, errors.New("Thiếu script backup-panel.sh; chưa lưu nguồn aaPanel")
+			}
 			continue
 		}
 		original, err := readRegular(source)
@@ -121,6 +135,15 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 			return nil, errors.New("Script vẫn dùng helper Python; hãy cài công cụ Go trước khi đổi cấu hình")
 		}
 		updated := []byte(Rewrite(string(original), pairs))
+		for _, source := range sources {
+			if name == source.ID+".sh" {
+				patched, err := PatchSource(string(updated), source.ID, source.Proposed)
+				if err != nil {
+					return nil, err
+				}
+				updated = []byte(patched)
+			}
+		}
 		p.Scripts = append(p.Scripts, scriptChange{source, target, original, updated})
 	}
 	logs := [][2]string{{old.DriveHistoryLog, new.DriveHistoryLog}}
@@ -218,11 +241,15 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 	if err != nil {
 		return nil, err
 	}
+	scheduledCron, schedulePreview, err := proposeSchedule(p.Cron, old.ScriptsDir, r.Schedule)
+	if err != nil {
+		return nil, err
+	}
 	managed := map[string]bool{}
 	for _, name := range ScriptNames {
 		managed[filepath.Join(old.ScriptsDir, name)] = true
 	}
-	lines := strings.Split(strings.TrimSuffix(string(p.Cron), "\n"), "\n")
+	lines := strings.Split(strings.TrimSuffix(string(scheduledCron), "\n"), "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") && !strings.HasPrefix(line, "# backup-monitor-paused ") {
 			continue
@@ -235,7 +262,7 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 		}
 	}
 	p.NewCron = []byte(strings.Join(lines, "\n") + "\n")
-	fingerprints := []interface{}{Version, version, new, hashBytes(p.Cron)}
+	fingerprints := []interface{}{Version, version, new, hashBytes(p.Cron), r.Schedule, hashBytes(p.NewCron)}
 	for _, script := range p.Scripts {
 		fingerprints = append(fingerprints, []string{script.Source, hashBytes(script.Original)})
 	}
@@ -249,7 +276,7 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.Summary = Preview{Token: hashBytes(raw), Changed: len(pairs) > 0, DaysToMove: len(p.Days), LogsToMove: len(p.Logs), DriveChanged: old.DriveRemote != new.DriveRemote || old.DriveFolder != new.DriveFolder, Config: new, Version: version}
+	p.Summary = Preview{Token: hashBytes(raw), Changed: len(pairs) > 0 || len(sources) > 0 || (schedulePreview != nil && schedulePreview.Changed), DaysToMove: len(p.Days), LogsToMove: len(p.Logs), DriveChanged: old.DriveRemote != new.DriveRemote || old.DriveFolder != new.DriveFolder, Config: new, Version: version, Schedule: schedulePreview, Sources: sources}
 	for _, script := range p.Scripts {
 		if script.Source != script.Target || string(script.Original) != string(script.Updated) {
 			p.Summary.ScriptsToUpdate++

@@ -1,9 +1,15 @@
+import { useEffect, useState } from 'react'
+import { Responsive, useContainerWidth } from 'react-grid-layout'
+import type { Layout } from 'react-grid-layout'
+import 'react-grid-layout/css/styles.css'
+import 'react-resizable/css/styles.css'
 import { Activity, ArrowUpRight, CalendarClock, Cloud, DatabaseBackup, HardDrive, Server, ShieldCheck } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useBackupStatus, useCronJobs, useServerStatus } from '../api'
 import { tr, type Lang } from '../language'
 import type { TabKey } from '../types'
 import { activityStamp, activityStatus, calendarDays, categoryLabel, formatBytes, nextCronRun, readPercentage, statusLabel } from '../utils'
+import { dashboardBreakpointForViewport, dashboardBreakpoints, dashboardColumns, dashboardGridStorageKey, readDashboardLayouts } from '../dashboardGrid'
 
 type DashboardProps = {
   isDark: boolean
@@ -23,7 +29,7 @@ function KpiCard({ label, value, detail, tone, icon: Icon, data }: {
 }) {
   return (
     <div className={`overview-kpi overview-kpi--${tone}`}>
-      <div className="overview-kpi-top">
+      <div className="overview-kpi-top overview-drag-handle">
         <span>{label}</span>
         <span className="overview-kpi-icon"><Icon size={22} strokeWidth={1.8} /></span>
       </div>
@@ -43,6 +49,29 @@ function KpiCard({ label, value, detail, tone, icon: Icon, data }: {
 }
 
 export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) {
+  const { width, containerRef, mounted } = useContainerWidth({ measureBeforeMount: true })
+  const [breakpoint, setBreakpoint] = useState(() => dashboardBreakpointForViewport(window.innerWidth))
+  useEffect(() => {
+    const onResize = () => setBreakpoint(dashboardBreakpointForViewport(window.innerWidth))
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  const [layouts, setLayouts] = useState(() => {
+    try { return readDashboardLayouts(localStorage.getItem(dashboardGridStorageKey)) }
+    catch { return readDashboardLayouts(null) }
+  })
+  const onLayoutChange = (_current: Layout, allLayouts: Partial<Record<string, Layout>>) => {
+    const next = readDashboardLayouts(JSON.stringify(allLayouts))
+    setLayouts(next)
+    try { localStorage.setItem(dashboardGridStorageKey, JSON.stringify(next)) }
+    catch { /* Dragging/resizing still works if browser storage is unavailable. */ }
+  }
+  const resetLayout = () => {
+    const defaults = readDashboardLayouts(null)
+    setLayouts(defaults)
+    try { localStorage.setItem(dashboardGridStorageKey, JSON.stringify(defaults)) }
+    catch { /* The default layout is still restored in memory. */ }
+  }
   const vi = lang === 'vi'
   const server = useServerStatus(30000)
   const backup = useBackupStatus(60000)
@@ -72,9 +101,12 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
           <h1>{vi ? 'Tổng quan' : 'Overview'}</h1>
           <p>{vi ? 'Theo dõi bản sao lưu trên máy chủ và Google Drive.' : 'Monitor backups across your server and Google Drive.'}</p>
         </div>
-        <button className="overview-secondary-action" type="button" onClick={() => onNavigate('available')}>
-          {vi ? 'Xem bản sao lưu' : 'View backups'} <ArrowUpRight size={16} />
-        </button>
+        <div className="overview-heading-actions">
+          <button className="overview-reset-layout" type="button" onClick={resetLayout}>{vi ? 'Bố cục mặc định' : 'Reset layout'}</button>
+          <button className="overview-secondary-action" type="button" onClick={() => onNavigate('available')}>
+            {vi ? 'Xem bản sao lưu' : 'View backups'} <ArrowUpRight size={16} />
+          </button>
+        </div>
       </div>
 
       {(server.error || backup.error) && (
@@ -85,16 +117,28 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
       )}
       {backupData?.driveStale && <p role="status" className="overview-kpi-detail">{vi ? 'Số liệu Drive đã lưu; cập nhật lần cuối: ' : 'Saved Drive data; last updated: '}{backupData.driveDataAt ? new Date(backupData.driveDataAt).toLocaleString(vi ? 'vi-VN' : 'en-GB', { hour12: false }) : '—'}</p>}
 
-      <div className="overview-kpi-grid">
-        <KpiCard label={tr(lang, 'backupFilesDrive')} value={backupData?.size?.count?.toLocaleString() ?? '—'} detail="" tone="green" icon={Cloud} data={chartData.map((item) => item.files)} />
-        <KpiCard label={tr(lang, 'backupSizeDrive')} value={backupData?.size?.bytes != null ? formatBytes(backupData.size.bytes) : '—'} detail="" tone="blue" icon={DatabaseBackup} data={chartData.map((item) => item.bytes)} />
-        <KpiCard label={tr(lang, 'backupFilesServer')} value={serverData?.local_backup?.count?.toLocaleString() ?? '—'} detail={serverData?.local_backup?.size ? `${vi ? 'Dung lượng' : 'Storage'} ${serverData.local_backup.size}` : (vi ? 'Trên máy chủ' : 'On server')} tone="amber" icon={HardDrive} />
-        <KpiCard label={tr(lang, 'scheduledJobsTitle')} value={cron.data?.length.toLocaleString() ?? '—'} detail={nextCronTime ? `${tr(lang, 'nextSchedule')}: ${nextCronTime}` : (vi ? 'Chưa xác nhận được lịch kế tiếp' : 'Next run is unconfirmed')} tone="purple" icon={CalendarClock} />
-      </div>
+      <div ref={containerRef}>
+        {mounted && width > 0 && <Responsive
+          width={width}
+          breakpoint={breakpoint}
+          className="overview-widget-grid"
+          layouts={layouts}
+          breakpoints={dashboardBreakpoints}
+          cols={dashboardColumns}
+          rowHeight={30}
+          margin={[18, 18]}
+          containerPadding={[0, 0]}
+          onLayoutChange={onLayoutChange}
+          dragConfig={{ handle: '.overview-drag-handle', cancel: 'button, a, input, select, textarea' }}
+          resizeConfig={{ handles: ['s', 'w', 'e', 'n', 'sw', 'nw', 'se', 'ne'] }}
+        >
+        <div key="drive-files"><KpiCard label={tr(lang, 'backupFilesDrive')} value={backupData?.size?.count?.toLocaleString() ?? '—'} detail="" tone="green" icon={Cloud} data={chartData.map((item) => item.files)} /></div>
+        <div key="drive-size"><KpiCard label={tr(lang, 'backupSizeDrive')} value={backupData?.size?.bytes != null ? formatBytes(backupData.size.bytes) : '—'} detail="" tone="blue" icon={DatabaseBackup} data={chartData.map((item) => item.bytes)} /></div>
+        <div key="server-files"><KpiCard label={tr(lang, 'backupFilesServer')} value={serverData?.local_backup?.count?.toLocaleString() ?? '—'} detail={serverData?.local_backup?.size ? `${vi ? 'Dung lượng' : 'Storage'} ${serverData.local_backup.size}` : (vi ? 'Trên máy chủ' : 'On server')} tone="amber" icon={HardDrive} /></div>
+        <div key="scheduled-jobs"><KpiCard label={tr(lang, 'scheduledJobsTitle')} value={cron.data?.length.toLocaleString() ?? '—'} detail={nextCronTime ? `${tr(lang, 'nextSchedule')}: ${nextCronTime}` : (vi ? 'Chưa xác nhận được lịch kế tiếp' : 'Next run is unconfirmed')} tone="purple" icon={CalendarClock} /></div>
 
-      <div className="overview-main-grid">
-        <section className="overview-panel overview-chart-panel">
-          <div className="overview-panel-heading">
+        <section key="history" className="overview-panel overview-chart-panel">
+          <div className="overview-panel-heading overview-drag-handle">
             <div><h2>{tr(lang, 'backupsHistory')}</h2><p>{vi ? 'Dung lượng theo ngày của bản sao lưu còn lưu trên Google Drive' : 'Daily size of backups retained on Google Drive'}</p></div>
             <span className="overview-period">{tr(lang, 'last14Days')}</span>
           </div>
@@ -114,8 +158,8 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
           ) : <div className="overview-empty">{backup.loading ? (vi ? 'Đang tải dữ liệu...' : 'Loading data...') : (vi ? 'Chưa có dữ liệu theo ngày' : 'No daily data yet')}</div>}
         </section>
 
-        <section className="overview-panel overview-distribution-panel">
-          <div className="overview-panel-heading"><div><h2>{tr(lang, 'dailyBackups')}</h2><p>{vi ? 'Bản sao lưu trên Google Drive' : 'Backups on Google Drive'}</p></div></div>
+        <section key="distribution" className="overview-panel overview-distribution-panel">
+          <div className="overview-panel-heading overview-drag-handle"><div><h2>{tr(lang, 'dailyBackups')}</h2><p>{vi ? 'Bản sao lưu trên Google Drive' : 'Backups on Google Drive'}</p></div></div>
           {todayTotal > 0 ? (
             <div className="overview-distribution-body">
               <div className="overview-donut">
@@ -126,19 +170,16 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
             </div>
           ) : <div className="overview-empty overview-empty--compact">{!backupData ? (backup.loading ? (vi ? 'Đang tải dữ liệu…' : 'Loading…') : (vi ? 'Không tải được dữ liệu' : 'Data unavailable')) : (vi ? 'Chưa có bản sao lưu trên Drive cho ngày máy chủ hiện tại' : 'No Drive backups for the current server date')}</div>}
         </section>
-      </div>
-
-      <div className="overview-lower-grid">
-        <section className="overview-panel overview-activity-panel">
-          <div className="overview-panel-heading"><div><h2>{vi ? 'Hoạt động gần đây' : 'Recent activity'}</h2><p>{vi ? 'Các lần sao lưu mới nhất' : 'Latest backup events'}</p></div><button type="button" className="overview-text-link" onClick={() => onNavigate('activity')}>{vi ? 'Xem tất cả' : 'View all'} <ArrowUpRight size={15} /></button></div>
+        <section key="activity" className="overview-panel overview-activity-panel">
+          <div className="overview-panel-heading overview-drag-handle"><div><h2>{vi ? 'Hoạt động gần đây' : 'Recent activity'}</h2><p>{vi ? 'Các lần sao lưu mới nhất' : 'Latest backup events'}</p></div><button type="button" className="overview-text-link" onClick={() => onNavigate('activity')}>{vi ? 'Xem tất cả' : 'View all'} <ArrowUpRight size={15} /></button></div>
           {activity.length > 0 ? <div className="overview-activity-list">{activity.map((entry, index) => {
             const successful = activityStatus(entry.status) === 'success'
             return <div className="overview-activity-row" key={`${entry.date}-${entry.time}-${entry.name}-${index}`}><span className={`overview-activity-symbol ${successful ? 'is-success' : 'is-warning'}`}><Activity size={17} /></span><div><strong>{entry.name || (vi ? 'Sao lưu' : 'Backup')}</strong><span>{activityStamp(entry)}</span></div><span className={`overview-status-pill ${successful ? 'is-success' : 'is-warning'}`}>{statusLabel(entry.status, lang)}</span></div>
           })}</div> : <div className="overview-empty overview-empty--compact">{vi ? 'Chưa có hoạt động sao lưu' : 'No backup activity yet'}</div>}
         </section>
 
-        <section className="overview-panel overview-health-panel">
-          <div className="overview-panel-heading"><div><h2>{vi ? 'Sức khỏe máy chủ' : 'Server health'}</h2><p>{vi ? 'Thông số hệ thống hiện tại' : 'Current system metrics'}</p></div><Server size={19} /></div>
+        <section key="health" className="overview-panel overview-health-panel">
+          <div className="overview-panel-heading overview-drag-handle"><div><h2>{vi ? 'Sức khỏe máy chủ' : 'Server health'}</h2><p>{vi ? 'Thông số hệ thống hiện tại' : 'Current system metrics'}</p></div><Server size={19} /></div>
           <div className="overview-health-list">
             {[
               { label: 'CPU', value: readPercentage(serverData?.cpu), color: '#00bd82' },
@@ -148,6 +189,7 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
           </div>
           <div className="overview-health-footer"><ShieldCheck size={16} /><span>{serverData?.uptime ? `${vi ? 'Hoạt động' : 'Uptime'}: ${serverData.uptime}` : (vi ? 'Đang chờ dữ liệu máy chủ' : 'Waiting for server data')}</span></div>
         </section>
+        </Responsive>}
       </div>
     </div>
   )

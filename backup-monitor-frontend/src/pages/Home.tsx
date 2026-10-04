@@ -231,20 +231,6 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
       {server.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc máy chủ: ${server.error}` : `Could not load server: ${server.error}`}</p>}
 
       <div style={{ margin: '0 -15px' }}>
-        <style
-          dangerouslySetInnerHTML={{
-            __html: `
-              .react-resizable-handle {
-                filter: invert(1);
-                opacity: 0.5;
-              }
-              .react-grid-item:hover .react-resizable-handle {
-                opacity: 1;
-              }
-            `,
-          }}
-        />
-
         <div ref={containerRef} style={{ minHeight: '500px', width: '100%' }}>
           {containerWidth > 0 && (
             <ErrorBoundary>

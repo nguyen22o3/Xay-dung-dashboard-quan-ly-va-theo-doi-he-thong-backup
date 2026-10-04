@@ -129,6 +129,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .overview-heading p, .overview-panel-heading p { color: var(--app-muted); margin: 0; font-size: 13px; }
 .overview-secondary-action { border: 1px solid var(--app-border); border-radius: 10px; padding: 10px 13px; display: flex; align-items: center; gap: 8px; background: var(--app-card); color: var(--app-text); font-size: 12px; font-weight: 650; white-space: nowrap; }
 .overview-secondary-action:hover { border-color: var(--app-accent); color: var(--app-accent); }
+.overview-heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.overview-reset-layout { border: 1px solid var(--app-border); border-radius: 10px; padding: 10px 13px; background: var(--app-card); color: var(--app-muted); font-size: 12px; font-weight: 650; }
+.overview-reset-layout:hover { border-color: var(--app-accent); color: var(--app-accent); }
 .overview-error { display: flex; gap: 16px; flex-wrap: wrap; padding: 12px 15px; margin: 0 0 18px; color: #fb7185; background: rgba(251,113,133,.07); border: 1px solid rgba(251,113,133,.23); border-radius: 10px; font-size: 12px; }
 .overview-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; margin-bottom: 20px; }
 .overview-kpi { --kpi-color: #00bd82; position: relative; min-height: 178px; padding: 22px 22px 16px; overflow: hidden; border-radius: 17px; background: var(--app-card); border: 1px solid var(--app-border); display: flex; flex-direction: column; }
@@ -183,6 +186,20 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .overview-health-footer { display: flex; align-items: center; gap: 8px; margin-top: 23px; padding-top: 17px; border-top: 1px solid var(--app-border); color: var(--app-muted); font-size: 11px; }
 .overview-health-footer svg { color: var(--app-accent); flex: 0 0 auto; }
 
+.overview-widget-grid .overview-kpi { height: 100%; min-height: 0; }
+.overview-widget-grid .overview-panel { display: flex; flex-direction: column; }
+.overview-widget-grid .overview-panel-heading { flex: 0 0 auto; }
+.overview-drag-handle { cursor: grab; touch-action: none; }
+.overview-widget-grid .react-draggable-dragging .overview-drag-handle { cursor: grabbing; }
+.overview-widget-grid .overview-chart { flex: 1; min-height: 0; height: auto; }
+.overview-widget-grid .overview-distribution-body { flex: 1; min-height: 0; overflow: auto; }
+.overview-widget-grid .overview-donut { height: min(220px, 100%); min-height: 150px; }
+.overview-widget-grid .overview-empty { flex: 1; min-height: 0; }
+.overview-widget-grid .overview-activity-list,
+.overview-widget-grid .overview-health-list { min-height: 0; overflow: auto; }
+.overview-widget-grid .overview-health-list { flex: 1; }
+.overview-widget-grid .overview-health-footer { flex: 0 0 auto; }
+
 .animate-fade-in { animation: appFadeIn .32s ease both; }
 .legacy-page { max-width: 1500px; margin: 0 auto; }
 .legacy-page > h2 { margin: 0 0 22px !important; color: var(--app-text) !important; font-size: 30px !important; line-height: 1.15; font-weight: 750 !important; letter-spacing: -.045em; }
@@ -190,6 +207,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .legacy-page table th { color: var(--app-text) !important; font-weight: 700 !important; }
 .legacy-page table td, .legacy-page table th { border-color: var(--app-border) !important; }
 .legacy-page .react-grid-item { border-radius: 17px !important; border: 1px solid var(--app-border) !important; box-shadow: none !important; }
+/* Hide resize arrows, retaining each handle's hit area and directional cursor. */
+.legacy-page .react-grid-item > .react-resizable-handle { background-image: none; }
+.legacy-page .react-grid-item > .react-resizable-handle::after { content: none; }
+.overview-widget-grid .react-grid-item > .react-resizable-handle { background-image: none; }
+.overview-widget-grid .react-grid-item > .react-resizable-handle::after { content: none; }
 .legacy-page table { border-radius: 14px; overflow: hidden; }
 .legacy-page div:has(> table) { border-radius: 17px !important; border-color: var(--app-border) !important; overflow: hidden; }
 .legacy-page table tbody tr { transition: background .18s ease; }
@@ -393,8 +415,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .backup-management .backup-system-fields > .apex-settings-field > :is(select, .backup-system-path, small) { grid-column: 2; }
 .backup-management .backup-system-fields > .apex-settings-field > :is(input, .backup-task-cycle) { grid-column: 2; }
 .backup-management :is(.backup-task-editor, .backup-task-embedded) .backup-system-fields input { width: 100%; min-width: 0; height: 36px; padding: 0 12px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-bg); color: var(--app-text); font-size: 12px; }
-.backup-storage-subheading { padding-top: 22px; margin: 26px 0 16px; border-top: 1px solid var(--app-border); color: var(--app-text); font-size: 14px; font-weight: 600; }
-.backup-task-type-field { margin-bottom: 18px; }
+.backup-unified-form .backup-task-embedded + .backup-system-fields { margin-top: 18px; }
 .backup-task-editor-anchor { scroll-margin-top: 100px; }
 .backup-management #backup-task-config { scroll-margin-top: 100px; }
 .backup-task-cycle { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }

@@ -134,15 +134,42 @@ all layout/prune commands in that deployment test are previews, not mutations.
 
 ## Backup system configuration
 
+### Source data selection
+
+The unified form replaces the Drive-connection row with a per-task source folder
+and explicit scope. The existing rclone remote is preserved. Preview/apply saves
+`siteSource`, `databaseSource` or `panelSource` alongside paths and the selected
+schedule, then patches the matching managed script atomically. A failed save
+restores script/cron originals. Source data and existing archives are not moved
+or deleted; scripts use the new source on subsequent cron/manual executions.
+
+For websites, `folder` archives the chosen directory; `children` creates a
+separate archive per first-level child, excluding `default` and symlinks. For
+databases, choose the MySQL data root with `children`, or one immediate user
+database subfolder with `folder`. This selects the database for **mysqldump +
+gzip**, never a tar archive of live database files. aaPanel sources must contain
+`data`, `config`, and `vhost`; its SQLite snapshots and ZIP process stay intact.
+
+Sources must already exist, have no
+symlink path components, and remain separate from backup/script/log storage.
+The source picker is read-only and cannot create folders. Credentials, dump
+options, backup publication, and the 14-date / 1-cron + 2-manual policy stay intact.
+Existing configuration without source fields retains its previous scripts until
+the user explicitly previews and confirms a source change.
+
 Settings → Backup system manages paths and the five existing cron schedules.
 The authoritative root-only JSON is `/root/backup-monitor/system-config.json`.
 Without that file, the existing `/www/backup`, `/root/scripts`, `/root` log
 directory, and `gdrive:Backup` are used. Retention stays at 14 backup dates;
 this screen does not alter that policy or remove intraday versions.
 
-Folder listing is read-only; creation requires an explicit click. Local paths
-must be absolute, ASCII, and within the displayed allowed roots, without
-symlinks. Script/log directories must be root-owned and not writable by other
+The local picker browses the real directory tree from `/`, independently of
+task type (which selects the execution script). Hidden directories are included;
+symlink directories are not traversed. Browsing is read-only; creation requires
+an explicit click. Local selection can use custom absolute ASCII paths anywhere
+on the server, without symlinks. `/` and `/proc`, `/sys`, `/dev`, `/run` trees
+cannot be saved as a source or destination. Sources and backup storage must not
+contain one another. Script/log directories must be root-owned and not writable by other
 users. Drive selection is restricted to existing rclone Google Drive remotes;
 credentials never appear in API responses. Arbitrary commands are not accepted.
 

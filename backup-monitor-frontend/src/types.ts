@@ -68,6 +68,7 @@ export interface WebsiteStatus {
   status: string
   code: string
   time: string
+  reason?: string
 }
 
 export type CronJobStatus = 'running' | 'success' | 'failed' | 'never' | 'unknown'

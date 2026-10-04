@@ -4,3 +4,6 @@
 .DS_Store
 
 alert_settings.json
+
+# Keep Go tests locally, without adding them to Git.
+*_test.go

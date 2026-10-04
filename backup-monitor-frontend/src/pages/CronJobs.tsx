@@ -5,7 +5,6 @@ import type { Lang } from '../language'
 import type { CronJob, CronJobLog } from '../types'
 import { formatCronSchedule } from '../utils'
 import BackupSystemSettings from '../components/BackupSystemSettings'
-import BackupTaskForm from '../components/BackupTaskForm'
 import { backupTaskLabels as jobLabels } from '../backupTasks'
 import type { BackupSystemState } from '../backupSystemApi'
 
@@ -57,7 +56,6 @@ export default function CronJobs({ lang }: { lang: Lang }) {
   const [logLoading, setLogLoading] = useState(false)
   const [logError, setLogError] = useState<string | null>(null)
   const logRequest = useRef(0)
-  const [savingSchedule, setSavingSchedule] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState('backup-database')
   const [editorRevision, setEditorRevision] = useState(0)
   const [taskExpanded, setTaskExpanded] = useState(true)
@@ -73,7 +71,7 @@ export default function CronJobs({ lang }: { lang: Lang }) {
   useDialogFocus(!!logJob, logDialog)
   useDialogFocus(!!deleteJob, deleteDialog)
   useDialogFocus(!!stateJob, stateDialog)
-  const mutating = storageBusy || savingSchedule || enablingTracking || runningJob !== null || deleteJob !== null || stateJob !== null
+  const mutating = storageBusy || enablingTracking || runningJob !== null || deleteJob !== null || stateJob !== null
   const currentDeleteJob = deleteJob ? jobs.find(job => job.id === deleteJob.id) : null
   const deleteStale = !!deleteJob && (!currentDeleteJob || currentDeleteJob.schedule !== deleteJob.schedule || currentDeleteJob.enabled !== deleteJob.enabled)
   const deleteRunning = currentDeleteJob?.status === 'running'
@@ -122,14 +120,6 @@ export default function CronJobs({ lang }: { lang: Lang }) {
       taskEditor.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       taskEditor.current?.querySelector<HTMLSelectElement>('#backup-task-type')?.focus({ preventScroll: true })
     })
-  }
-
-  const scheduleSaved = (job: CronJob, time: string) => {
-    setFeedback({ message: vi
-      ? `Đã lưu lịch "${jobLabels[job.id]?.vi ?? job.name}": ${time} (giờ máy chủ). Không chạy script ngay.`
-      : `Saved "${jobLabels[job.id]?.en ?? job.name}": ${time} (server time). The script was not run.`, error: false })
-    cron.reload()
-    window.dispatchEvent(new Event('force-refresh'))
   }
 
   const loadLog = async (job: CronJob) => {
@@ -265,9 +255,8 @@ export default function CronJobs({ lang }: { lang: Lang }) {
           <p>{vi ? 'Cấu hình nơi lưu trữ và quản lý lịch chạy trên cùng một trang.' : 'Storage configuration and scheduled tasks in one place.'}</p>
         </div>
       </div>
-      <div ref={taskEditor} className="backup-task-editor-anchor"><BackupSystemSettings lang={lang} expanded={taskExpanded} onToggle={() => setTaskExpanded(!taskExpanded)} onReload={cron.reload} locked={savingSchedule || enablingTracking || runningJob !== null || deleteJob !== null || stateJob !== null} onStateChange={setStorage} onBusyChange={setStorageBusy}>
-        <BackupTaskForm key={editorRevision} lang={lang} jobs={jobs} selectedId={selectedJobId} disabled={mutating} loading={cron.loading} error={cron.error} onSelect={setSelectedJobId} onBusyChange={setSavingSchedule} onSaved={scheduleSaved} />
-      </BackupSystemSettings></div>
+      <div ref={taskEditor} className="backup-task-editor-anchor"><BackupSystemSettings lang={lang} expanded={taskExpanded} onToggle={() => setTaskExpanded(!taskExpanded)} onReload={cron.reload} locked={enablingTracking || runningJob !== null || deleteJob !== null || stateJob !== null} onStateChange={setStorage} onBusyChange={setStorageBusy}
+        task={{ jobs, selectedId: selectedJobId, revision: editorRevision, loading: cron.loading, error: cron.error, onSelect: setSelectedJobId }} /></div>
       {feedback && <div className={`cron-feedback backup-management-feedback ${feedback.error ? 'cron-feedback--error' : ''}`} role={feedback.error ? 'alert' : 'status'}>{feedback.message}</div>}
       <section className="cron-panel backup-task-panel" id="backup-tasks" aria-labelledby="backup-tasks-title">
         <div className="cron-panel-heading">
