@@ -213,6 +213,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .overview-widget-grid .react-grid-item > .react-resizable-handle { background-image: none; }
 .overview-widget-grid .react-grid-item > .react-resizable-handle::after { content: none; }
 .legacy-page table { border-radius: 14px; overflow: hidden; }
+.backup-files-table .backup-file-name { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .legacy-page div:has(> table) { border-radius: 17px !important; border-color: var(--app-border) !important; overflow: hidden; }
 .legacy-page table tbody tr { transition: background .18s ease; }
 .legacy-page table tbody tr:hover { background: color-mix(in srgb, var(--app-accent) 6%, transparent) !important; }

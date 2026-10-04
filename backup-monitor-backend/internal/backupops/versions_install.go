@@ -11,13 +11,13 @@ import (
 
 func PatchDailyVersions(source, category string) (string, error) {
 	if strings.Contains(source, DailyLimitMarker) {
-		if category != "drive" && !strings.Contains(source, " versions commit "+category+" ") {
+		if category != "drive" && !strings.Contains(source, " versions commit "+category+" ") && !strings.Contains(source, " versions finalize "+category+" ") {
 			return "", errors.New("Incomplete daily-version script")
 		}
 		if category == "drive" && !strings.Contains(source, " versions drive ") {
 			return "", errors.New("Incomplete Drive daily-version script")
 		}
-		return source, nil
+		return PatchCleanArchiveNames(source, category)
 	}
 	if category == "panel" {
 		old := `PUBLISHED_FILE="$DAY_DIR/${DAY}_${STAMP:9:6}_${nonce}.zip"`
@@ -33,7 +33,11 @@ printf 'SOURCE=aaPanel data/config/vhost\nBACKUP=%s\n' "$PUBLISHED_FILE"`)
 		}
 		updated = strings.ReplaceAll(updated, "Does not install cron, upload to Drive, disable aaPanel, or delete old backups.", "Rotates tagged same-day versions after verification; no cron edits, Drive upload or old-date pruning.")
 		updated = strings.ReplaceAll(updated, "duration_ms=$duration; no existing backup was removed", "duration_ms=$duration; check preceding validation/rotation messages")
-		return addVersionOrigin(updated)
+		updated, err = addVersionOrigin(updated)
+		if err != nil {
+			return "", err
+		}
+		return PatchCleanArchiveNames(updated, category)
 	}
 	if !strings.Contains(source, LayoutMarker) {
 		return "", errors.New("Install date-first layout before daily limits")
@@ -57,7 +61,11 @@ printf 'SOURCE=aaPanel data/config/vhost\nBACKUP=%s\n' "$PUBLISHED_FILE"`)
 		if err != nil {
 			return "", err
 		}
-		return addVersionOrigin(updated)
+		updated, err = addVersionOrigin(updated)
+		if err != nil {
+			return "", err
+		}
+		return PatchCleanArchiveNames(updated, category)
 	}
 	if category == "drive" {
 		old := `        if ! rclone copy "$day_dir" "gdrive:Backup/$day" --config /root/.config/rclone/rclone.conf --include '*.tar.gz' --include '*.sql.gz' --include '*.zip'; then
@@ -70,7 +78,11 @@ printf 'SOURCE=aaPanel data/config/vhost\nBACKUP=%s\n' "$PUBLISHED_FILE"`)
 		if err != nil {
 			return "", err
 		}
-		return replaceOnce(updated, "#!/bin/bash", "#!/bin/bash\n"+DailyLimitMarker)
+		updated, err = replaceOnce(updated, "#!/bin/bash", "#!/bin/bash\n"+DailyLimitMarker)
+		if err != nil {
+			return "", err
+		}
+		return PatchCleanArchiveNames(updated, category)
 	}
 	return "", errors.New("Invalid daily-version category")
 }

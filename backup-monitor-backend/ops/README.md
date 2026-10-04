@@ -134,6 +134,26 @@ all layout/prune commands in that deployment test are previews, not mutations.
 
 ## Backup system configuration
 
+### Short archive filenames
+
+Managed archives now omit `_cron_<nonce>` and `_manual_<nonce>` from their
+published filenames, for example `web_web1.local_20261004_050001_site.tar.gz`,
+`db_sql_web1_local_20261004_043001_mysql_data.sql.gz`, and `2026-10-04_051002.zip`.
+Same-second collisions get `_2`, `_3`, etc.; existing files are never overwritten.
+Cron/manual origin is recorded in each day's `.backup-monitor-versions.json`,
+which is copied to Drive alongside archives. Preserve this metadata when moving
+backups: it maintains the separate 1-cron / 2-manual pools. Legacy unclassified
+files are never classified by their clock time.
+
+`backup-manager versions names --preview` inventories explicitly tagged files
+in configured local storage and Drive without changing them. `--apply` acquires
+the managed-job locks, renames them without replacement, verifies local SHA-256
+and Drive file IDs/hashes, and patches the four backup/sync scripts. It does not
+run a backup, prune, or rotate. Original scripts, original metadata, and the rename
+manifest are retained in `/root/backup-layout-migrations/before-clean-names-*`.
+On failure it attempts to restore archive names and scripts; metadata may retain
+unused origin entries, which do not trigger deletion without verified archives.
+
 ### Source data selection
 
 The unified form replaces the Drive-connection row with a per-task source folder

@@ -21,7 +21,7 @@ import (
 )
 
 const BinaryPath = "/usr/local/libexec/backup-monitor/backup-manager"
-const Version = "backup-manager-go-v5"
+const Version = "backup-manager-go-v6"
 const RetentionDays = 14
 const LayoutMarker = "# backup-monitor daily layout v1"
 
@@ -72,6 +72,7 @@ type State struct {
 type Runner func(args []string, input []byte) ([]byte, error)
 type Controller struct {
 	ConfigPath, RcloneConfig, RecoveryRoot, Binary string
+	RotationMarkers                                string
 	Defaults                                       Settings
 	Roots                                          map[string][]string
 	Locks                                          []string
@@ -87,7 +88,7 @@ func NewController() *Controller {
 		locks = append(locks, "/root/.backup-monitor-job-"+name+".lock")
 	}
 	return &Controller{ConfigPath: "/root/backup-monitor/system-config.json", RcloneConfig: "/root/.config/rclone/rclone.conf", RecoveryRoot: "/root/backup-layout-migrations", Binary: BinaryPath,
-		Defaults: DefaultSettings(), Roots: map[string][]string{"backup": {"/"}, "scripts": {"/"}, "logs": {"/"}, "source-site": {"/"}, "source-database": {"/"}, "source-panel": {"/"}},
+		RotationMarkers: "/run/backup-monitor-rotations", Defaults: DefaultSettings(), Roots: map[string][]string{"backup": {"/"}, "scripts": {"/"}, "logs": {"/"}, "source-site": {"/"}, "source-database": {"/"}, "source-panel": {"/"}},
 		Locks: locks, Run: runCommand, Write: AtomicWrite, RestartMonitor: restartMonitor}
 }
 func runCommand(args []string, input []byte) ([]byte, error) {

@@ -38,6 +38,9 @@ func run(args []string) error {
 	controller := backupops.NewController()
 	switch args[0] {
 	case "versions":
+		if len(args) == 3 && args[1] == "names" && (args[2] == "--preview" || args[2] == "--apply") {
+			return controller.MigrateCleanArchiveNames(args[2] == "--apply", os.Stdout)
+		}
 		if len(args) >= 3 && args[1] == "install" {
 			if len(args) == 3 && args[2] == "--apply" {
 				return controller.InstallDailyVersions(true, os.Stdout)
@@ -48,13 +51,24 @@ func run(args []string) error {
 			return errors.New("Use versions install --preview|--apply")
 		}
 		if len(args) < 3 {
-			return errors.New("Usage: backup-manager versions commit <category> <file> | drive <day> [--apply]")
+			return errors.New("Usage: backup-manager versions finalize|commit <category> <file> | drive <day> [--apply] | names --preview|--apply")
 		}
 		unlock, err := backupops.VersionLock()
 		if err != nil {
 			return err
 		}
 		defer unlock()
+		if args[1] == "finalize" && len(args) == 4 {
+			layout, err := controller.Layout()
+			if err != nil {
+				return err
+			}
+			path, err := layout.FinalizeVersion(args[2], args[3], os.Stderr)
+			if err == nil {
+				fmt.Fprintln(os.Stdout, path)
+			}
+			return err
+		}
 		if args[1] == "commit" && len(args) == 4 {
 			layout, err := controller.Layout()
 			if err != nil {

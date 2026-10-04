@@ -125,9 +125,12 @@ func verifyVersion(path, category string) error {
 }
 
 func (l *Layout) CommitVersion(category, path string, out io.Writer) error {
-	v, ok := ParseVersion(category, filepath.Base(path))
+	v, ok, err := l.archiveVersion(category, path)
+	if err != nil {
+		return err
+	}
 	if !ok {
-		return errors.New("Only explicitly tagged cron/manual archives may rotate")
+		return errors.New("Only archives with explicit cron/manual origin may rotate")
 	}
 	if filepath.Clean(path) != path || !within(path, filepath.Join(l.Root, v.Day, category)) {
 		return errors.New("Version is outside its configured day/category")
@@ -149,7 +152,10 @@ func (l *Layout) CommitVersion(category, path string, out io.Writer) error {
 		return err
 	}
 	for _, entry := range entries {
-		other, tagged := ParseVersion(category, entry.Name())
+		other, tagged, err := l.archiveVersion(category, filepath.Join(filepath.Dir(path), entry.Name()))
+		if err != nil {
+			return err
+		}
 		if !tagged || other.Day != v.Day || other.Entity != v.Entity || other.Origin != v.Origin {
 			continue
 		}
@@ -231,7 +237,7 @@ func versionGroup(relative string) (ArchiveVersion, string, bool) {
 	return v, strings.Join(parts[:len(parts)-1], "/") + "|" + v.Origin, true
 }
 
-// Reconcile only explicitly tagged obsolete versions in groups fully present
+// Reconcile only obsolete versions with explicit origin in groups fully present
 // locally. Never mirror arbitrary deletions, legacy files, or whole folders.
 func (c *Controller) ReconcileDriveVersions(day string, apply bool, out io.Writer) error {
 	if !ValidDay(day) {
@@ -249,6 +255,10 @@ func (c *Controller) ReconcileDriveVersions(day string, apply bool, out io.Write
 	if err = SafeParents(dayRoot); err != nil {
 		return err
 	}
+	ledger, err := layout.readVersionLedger(day)
+	if err != nil {
+		return err
+	}
 	localGroups := map[string]map[string]bool{}
 	for _, cat := range Categories {
 		archives, err := layout.Archives(cat, false)
@@ -264,7 +274,7 @@ func (c *Controller) ReconcileDriveVersions(day string, apply bool, out io.Write
 				return err
 			}
 			relative = filepath.ToSlash(relative)
-			v, key, ok := versionGroup(relative)
+			v, key, ok := versionGroupWithLedger(relative, ledger)
 			if !ok || v.Day != day {
 				continue
 			}
@@ -294,7 +304,7 @@ func (c *Controller) ReconcileDriveVersions(day string, apply bool, out io.Write
 	}
 	var obsolete []string
 	for _, f := range remote {
-		v, key, ok := versionGroup(f.Path)
+		v, key, ok := versionGroupWithLedger(f.Path, ledger)
 		if !ok || f.IsDir || v.Day != day {
 			continue
 		}

@@ -451,7 +451,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
             <div style={{ padding: '0 10px 10px 10px', flex: 1, overflow: 'hidden', minHeight: 0 }}>
               {localSnapshots.data && localSnapshots.data.length > 0 ? (
                 <div style={{ overflowY: 'auto', height: '100%' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                  <table className="backup-files-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' }}>
+                    <colgroup><col /><col style={{ width: '85px' }} /></colgroup>
                     <thead>
                       <tr style={{ borderBottom: `1px solid ${theme.gridLine}` }}>
                         <th style={{ padding: '6px 0', textAlign: 'left', color: theme.textSecondary, fontWeight: 'normal' }}>{tr(lang, 'fileName')}</th>
@@ -461,10 +462,10 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                     <tbody>
                       {localSnapshots.data.filter(s => last14Days.includes(s.date.split(' ')[0])).map((snap, i) => (
                         <tr key={i} style={{ borderBottom: `1px solid ${theme.gridLine}` }}>
-                          <td style={{ padding: '8px 0', color: theme.titleColor, whiteSpace: 'nowrap',  textOverflow: 'ellipsis', maxWidth: '120px' }} title={snap.name}>
-                            {snap.name}
+                          <td style={{ padding: '8px 8px 8px 0', color: theme.titleColor }} title={snap.name}>
+                            <span className="backup-file-name">{snap.name}</span>
                           </td>
-                          <td style={{ padding: '8px 0', textAlign: 'center', color: theme.titleColor }}>{formatBytes(snap.size)}</td>
+                          <td style={{ padding: '8px 0', textAlign: 'center', color: theme.titleColor, whiteSpace: 'nowrap' }}>{formatBytes(snap.size)}</td>
                         </tr>
                       ))}
                     </tbody>

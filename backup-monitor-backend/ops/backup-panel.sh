@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# backup-monitor clean archive names v1
 # Standalone aaPanel backup. Rotates tagged same-day versions; no cron edits.
 set -Eeuo pipefail
 # backup-monitor daily versions v1
@@ -235,6 +236,6 @@ install -m 600 -- "$WORK_DIR/archive.zip" "$PENDING_FILE"
 cmp -s -- "$WORK_DIR/archive.zip" "$PENDING_FILE" || fail 'Staged archive copy verification failed.'
 # Exclusive hard link is atomic within the destination filesystem: never mv -f.
 ln -- "$PENDING_FILE" "$PUBLISHED_FILE" || fail 'Archive destination already exists; nothing overwritten.'
-"$MANAGER" versions commit panel "$PUBLISHED_FILE"
+PUBLISHED_FILE=$("$MANAGER" versions finalize panel "$PUBLISHED_FILE")
 printf 'SOURCE=aaPanel data/config/vhost\nBACKUP=%s\n' "$PUBLISHED_FILE"
 # Existing cleanup/Drive cron handles retention and upload separately.

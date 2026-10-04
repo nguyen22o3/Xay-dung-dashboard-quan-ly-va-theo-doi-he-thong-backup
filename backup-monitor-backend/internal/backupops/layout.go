@@ -387,7 +387,11 @@ func (c *Controller) Layout() (*Layout, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Layout{Root: cfg.BackupRoot, LegacyRoot: "/www/backup", Markers: "/run/backup-monitor-rotations", Journal: c.RecoveryRoot}, nil
+	markers := c.RotationMarkers
+	if markers == "" {
+		markers = "/run/backup-monitor-rotations"
+	}
+	return &Layout{Root: cfg.BackupRoot, LegacyRoot: "/www/backup", Markers: markers, Journal: c.RecoveryRoot}, nil
 }
 
 // LayoutLock lets a shell script hold its existing shared layout lock while
