@@ -8,4 +8,10 @@ dist-ssr
 .vscode
 
 # Keep frontend tests locally, without adding them to Git.
-/tests/*.test.mjs
+tests/
+__tests__/
+*.test.*
+*.spec.*
+coverage/
+test-results/
+playwright-report/

@@ -3,7 +3,7 @@ import { Check, ChevronDown, X, Trash2 } from 'lucide-react'
 import type { Lang } from '../language'
 import { makeTheme } from '../theme'
 import { apiErrorMessage, clearLog, useBackupStatus } from '../api'
-import { activityStamp, activityStatus, formatTime24, statusLabel, summarizeLocalBackupActivity } from '../utils'
+import { activityStamp, activityStatus, formatTime24, localActivityDeletionKeys, statusLabel, summarizeLocalBackupActivity } from '../utils'
 const formatDurationSeconds = (duration: number | null) => {
   if (duration === null) return '—'
   return duration > 0 && duration < 0.01 ? `${duration.toFixed(3)}s` : `${duration.toFixed(2)}s`
@@ -15,16 +15,32 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
   const { data: driveData, reload, loading, error } = useBackupStatus(60000)
   const [isClearing, setIsClearing] = useState(false)
   const [clearError, setClearError] = useState('')
-  const [activeTab, setActiveTab] = useState<'server' | 'drive'>('drive')
+  const [activeTab, setActiveTab] = useState<'server' | 'drive'>(() => {
+    const saved = localStorage.getItem('activity-tab')
+    return saved === 'server' || saved === 'drive' ? saved : 'drive'
+  })
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
+  const driveActivities = [...(driveData?.activity ?? [])].sort((a, b) => activityStamp(b).localeCompare(activityStamp(a)))
+  const groupedLocal = useMemo(() => summarizeLocalBackupActivity(driveData?.localActivity ?? []), [driveData?.localActivity])
 
   const handleClear = async () => {
-    if (activeTab !== 'drive') return
-    if (window.confirm(isVi ? 'Xóa nhật ký các lần đẩy backup lên Drive? Các tệp backup vẫn được giữ nguyên.' : 'Clear Drive upload history? Backup files will be kept.')) {
+    const targetLabel = activeTab === 'drive' ? 'Google Drive' : (isVi ? 'máy chủ' : 'server')
+    const entries = activeTab === 'server'
+      ? [...new Set(groupedLocal.filter(row => selectedKeys.has(row.key)).flatMap(localActivityDeletionKeys))]
+      : [...selectedKeys]
+    if (selectedKeys.size > 0 && entries.length === 0) {
+      setClearError(isVi ? 'Danh sách nhật ký đã thay đổi. Hãy chọn lại dòng cần xóa.' : 'The log list changed. Please select the rows again.')
+      return
+    }
+    if (window.confirm(entries.length > 0
+      ? (isVi ? `Xóa ${selectedKeys.size} nhật ký đã chọn trên ${targetLabel}? Các tệp backup vẫn được giữ nguyên.` : `Clear ${selectedKeys.size} selected ${targetLabel} log entries? Backup files will be kept.`)
+      : (isVi ? `Xóa toàn bộ nhật ký trên ${targetLabel}? Các tệp backup vẫn được giữ nguyên.` : `Clear all ${targetLabel} logs? Backup files will be kept.`))) {
       setIsClearing(true)
       setClearError('')
       try {
-        await clearLog(activeTab)
+        await clearLog(activeTab, entries)
+        setSelectedKeys(new Set())
         reload()
       } catch (error: unknown) {
         setClearError(apiErrorMessage(error, isVi ? 'Không thể xóa nhật ký.' : 'Could not clear logs.'))
@@ -34,8 +50,15 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
     }
   }
 
-  const driveActivities = [...(driveData?.activity ?? [])].sort((a, b) => activityStamp(b).localeCompare(activityStamp(a)))
-  const groupedLocal = useMemo(() => summarizeLocalBackupActivity(driveData?.localActivity ?? []), [driveData?.localActivity])
+  const visibleKeys = activeTab === 'drive' ? driveActivities.map(entry => `${entry.date}|${entry.time}`) : groupedLocal.filter(entry => entry.source !== 'archive').map(entry => entry.key)
+  const allSelected = visibleKeys.length > 0 && visibleKeys.every((key) => selectedKeys.has(key))
+  const toggleSelected = (key: string) => setSelectedKeys((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next })
+  const toggleAll = () => setSelectedKeys((current) => { const next = new Set(current); if (allSelected) visibleKeys.forEach((key) => next.delete(key)); else visibleKeys.forEach((key) => next.add(key)); return next })
+  const selectTab = (tab: 'server' | 'drive') => {
+    setActiveTab(tab)
+    localStorage.setItem('activity-tab', tab)
+    setSelectedKeys(new Set())
+  }
   return (
     <div className="animate-fade-in legacy-page" style={{ padding: '20px' }}>
       <h2 style={{ margin: '0 0 20px 0', fontSize: '20px', fontWeight: '500', color: isDark ? t.titleColor : '#1a4175' }}>
@@ -52,7 +75,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
         <button className={`legacy-tab-button ${activeTab === 'server' ? 'is-active' : ''}`}
-          onClick={() => setActiveTab('server')}
+          onClick={() => selectTab('server')}
           style={{
             backgroundColor: activeTab === 'server' ? '#3b75af' : (isDark ? '#333' : '#e0e0e0'),
             color: activeTab === 'server' ? 'white' : (isDark ? '#ccc' : '#333'),
@@ -67,7 +90,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
           {isVi ? 'Trên máy chủ' : 'On Server'}
         </button>
         <button className={`legacy-tab-button ${activeTab === 'drive' ? 'is-active' : ''}`}
-          onClick={() => setActiveTab('drive')}
+          onClick={() => selectTab('drive')}
           style={{
             backgroundColor: activeTab === 'drive' ? '#3b75af' : (isDark ? '#333' : '#e0e0e0'),
             color: activeTab === 'drive' ? 'white' : (isDark ? '#ccc' : '#333'),
@@ -82,45 +105,29 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
           {isVi ? 'Trên Google Drive' : 'On Google Drive'}
         </button>
         <div style={{ flex: 1 }} />
-        {activeTab === 'drive' && <button className="legacy-danger-button"
-          onClick={handleClear}
-          disabled={isClearing}
-          style={{
-            backgroundColor: isDark ? '#b71c1c' : '#f44336',
-            color: 'white',
-            border: 'none',
-            padding: '8px 16px',
-            fontSize: '13px',
-            cursor: isClearing ? 'not-allowed' : 'pointer',
-            borderRadius: '2px',
-            transition: 'all 0.2s',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            opacity: isClearing ? 0.7 : 1
-          }}
-        >
+        <button className="legacy-danger-button" onClick={handleClear} disabled={isClearing} style={{ backgroundColor: isDark ? '#b71c1c' : '#f44336', color: 'white', border: 'none', padding: '8px 16px', fontSize: '13px', cursor: isClearing ? 'not-allowed' : 'pointer', borderRadius: '2px', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '6px', opacity: isClearing ? 0.7 : 1 }}>
           <Trash2 size={16} />
-          {isClearing ? (isVi ? 'Đang xóa...' : 'Clearing...') : (isVi ? 'Xóa nhật ký' : 'Clear Logs')}
-        </button>}
+          {isClearing ? (isVi ? 'Đang xóa...' : 'Clearing...') : (selectedKeys.size > 0 ? (isVi ? `Xóa nhật ký (${selectedKeys.size})` : `Clear Logs (${selectedKeys.size})`) : (isVi ? 'Xóa tất cả nhật ký' : 'Clear all logs'))}
+        </button>
       </div>
 
       <div style={{ backgroundColor: isDark ? t.cardBg : 'white', border: `1px solid ${isDark ? t.cardBorder : '#e0e0e0'}`, borderRadius: '2px' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${isDark ? t.cardBorder : '#e0e0e0'}` }}>
-              <th style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: t.textPrimary, width: '30%' }}>
+              <th style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: t.textPrimary, width: '28%' }}>
                 {isVi ? 'Hoạt động sao lưu' : 'Backup activity'}
               </th>
               <th style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: t.textPrimary, width: '25%' }}>
                 {isVi ? 'Trạng thái sao lưu' : 'Backup status'}
               </th>
               <th style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: t.textPrimary, width: '30%' }}>
-                {isVi ? 'Thời gian bắt đầu' : 'Start time'} ▼
+                {isVi ? 'Thời gian bắt đầu' : 'Start time'}
               </th>
               <th style={{ padding: '16px', textAlign: 'left', fontWeight: 'bold', color: t.textPrimary, width: '15%' }}>
-                {isVi ? 'Thời lượng ghi nhận' : 'Recorded duration'}
+                {isVi ? 'Thời gian thực hiện' : 'Execution time'}
               </th>
+              <th style={{ padding: '16px', width: '4%', textAlign: 'center' }}><input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label={isVi ? 'Chọn tất cả nhật ký' : 'Select all logs'} /></th>
             </tr>
           </thead>
           <tbody>
@@ -145,12 +152,13 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
                       <td style={{ padding: '16px', color: t.textSecondary }}>
                         {formatDurationSeconds(act.duration == null || act.duration === '' ? null : Number.isFinite(Number(act.duration)) ? Number(act.duration) : null)}
                       </td>
+                      <td style={{ padding: '16px', textAlign: 'center' }}><input type="checkbox" checked={selectedKeys.has(`${act.date}|${act.time}`)} onChange={() => toggleSelected(`${act.date}|${act.time}`)} aria-label={`${isVi ? 'Chọn' : 'Select'} ${act.date} ${act.time}`} /></td>
                     </tr>
                   )
                 })
               ) : (
                 <tr>
-                  <td colSpan={4} style={{ padding: '30px', textAlign: 'center', color: t.textSecondary }}>
+                  <td colSpan={5} style={{ padding: '30px', textAlign: 'center', color: t.textSecondary }}>
                     {loading ? (isVi ? 'Đang tải nhật ký…' : 'Loading activity…') : error ? (isVi ? 'Không tải được nhật ký.' : 'Activity unavailable.') : (isVi ? 'Chưa có hoạt động nào.' : 'No activity yet.')}
                   </td>
                 </tr>
@@ -177,29 +185,31 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
                           {statusLabel(act.status, lang)}
                         </span>
                       </td>
-                      <td style={{ padding: '16px', color: t.textSecondary }}>
+                      <td style={{ padding: '16px', color: t.textSecondary }} title={act.source === 'archive' ? (isVi ? 'Ngày từ tên tệp backup; không có giờ bắt đầu trong nhật ký' : 'Date from the backup filename; no logged start time') : undefined}>
                         {act.date} {formatTime24(act.time)}
                       </td>
-                      <td style={{ padding: '16px', color: t.textSecondary }} title={act.source === 'run'
+                      <td style={{ padding: '16px', color: t.textSecondary }} title={act.source === 'archive'
+                        ? (isVi ? 'Tệp backup cũ còn trên máy chủ; không có nhật ký thời lượng' : 'Legacy backup file on the server; no duration log')
+                        : act.source === 'run'
                         ? (isVi ? 'Thời lượng của cả lần chạy' : 'Duration of the whole run')
                         : (isVi ? 'Tổng thời lượng các tệp có cùng thời điểm bắt đầu; không phải thời lượng toàn bộ tác vụ' : 'Sum of file durations with the same start time, not the full job duration')}>
                         {formatDurationSeconds(act.duration)}
                       </td>
+                      <td style={{ padding: '16px', textAlign: 'center' }} onClick={(event) => event.stopPropagation()}>{act.source !== 'archive' ? <input type="checkbox" checked={selectedKeys.has(act.key)} onChange={() => toggleSelected(act.key)} aria-label={`${isVi ? 'Chọn' : 'Select'} ${act.name} ${act.date} ${act.time}`} /> : <span title={isVi ? 'Bản ghi từ tệp backup, không phải nhật ký có thể xóa' : 'Backup inventory, not a deletable log'}>—</span>}</td>
                     </tr>
                     {expanded && <tr>
-                      <td colSpan={4} className="activity-detail-cell">
+                      <td colSpan={5} className="activity-detail-cell">
                         <div id={detailId} role="region" aria-label={`${isVi ? 'Chi tiết' : 'Details'} ${act.name}`} className="activity-detail-panel">
                           <div className="activity-detail-heading">
                             <strong>{isVi ? 'Chi tiết' : 'Details'} {act.name}</strong>
-                            <span>{act.date} {act.time} · {act.details.length} {isVi ? 'bản ghi tệp' : 'file records'}</span>
                           </div>
-                          {act.source === 'files' && <p className="activity-detail-note">{isVi ? 'Log cũ: tổng hợp các tệp cùng thời điểm bắt đầu, chưa có bản ghi kết quả của cả tác vụ.' : 'Legacy logs: grouped file records with the same start time; a whole-run result is unavailable.'}</p>}
+                          {act.source === 'archive' && <p className="activity-detail-note">{isVi ? 'Bản backup cũ còn trên máy chủ. Ngày lấy từ tên tệp; không có log để xác nhận kết quả, giờ bắt đầu hoặc thời lượng.' : 'Legacy backup file still on the server. Its date comes from the filename; no log confirms the result, start time or duration.'}</p>}
                           {act.details.length > 0 ? <div className="activity-detail-table-wrap"><table className="activity-detail-table">
                             <thead><tr>
-                              <th>{isVi ? 'Website / Cơ sở dữ liệu' : 'Website / Database'}</th>
+                              <th>{act.name === 'Backup Site' ? 'Website' : act.name === 'Backup aaPanel' ? 'aaPanel' : (isVi ? 'Cơ sở dữ liệu' : 'Database')}</th>
                               <th>{isVi ? 'Trạng thái' : 'Status'}</th>
                               <th>{isVi ? 'Thời điểm ghi nhận' : 'Recorded time'}</th>
-                              <th>{isVi ? 'Thời lượng tệp' : 'File duration'}</th>
+                              <th>{isVi ? 'Thời gian thực thi' : 'Execution time'}</th>
                             </tr></thead>
                             <tbody>{act.details.map((detail, detailIndex) => {
                               const status = activityStatus(detail.status)
@@ -221,7 +231,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
                 })
               ) : (
                 <tr>
-                  <td colSpan={4} style={{ padding: '30px', textAlign: 'center', color: t.textSecondary }}>
+                  <td colSpan={5} style={{ padding: '30px', textAlign: 'center', color: t.textSecondary }}>
                     {loading ? (isVi ? 'Đang tải nhật ký…' : 'Loading activity…') : error ? (isVi ? 'Không tải được nhật ký.' : 'Activity unavailable.') : (isVi ? 'Chưa có hoạt động nào.' : 'No activity yet.')}
                   </td>
                 </tr>

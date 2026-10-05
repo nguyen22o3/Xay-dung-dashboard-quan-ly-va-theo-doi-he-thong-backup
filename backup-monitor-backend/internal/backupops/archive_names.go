@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -94,12 +95,18 @@ func versionGroupWithLedger(relative string, ledger VersionLedger) (ArchiveVersi
 	return v, strings.Join(parts[:len(parts)-1], "/") + "|" + v.Origin, true
 }
 
-func (l *Layout) readVersionLedger(day string) (VersionLedger, error) {
+func (l *Layout) versionLedgerPath(day string) (string, error) {
+	if !ValidDay(day) || l.MetadataDir == "" || !filepath.IsAbs(l.MetadataDir) || filepath.Clean(l.MetadataDir) != l.MetadataDir || within(l.MetadataDir, l.Root) || within(l.Root, l.MetadataDir) {
+		return "", errors.New("Invalid private version metadata directory")
+	}
+	return filepath.Join(l.MetadataDir, day+".json"), nil
+}
+
+func readVersionLedgerFile(day, path string) (VersionLedger, error) {
 	ledger := VersionLedger{Format: 1, Origins: map[string]string{}}
 	if !ValidDay(day) {
 		return ledger, errors.New("Invalid ledger day")
 	}
-	path := filepath.Join(l.Root, day, VersionLedgerName)
 	if err := SafeParents(path); err != nil {
 		return ledger, err
 	}
@@ -132,12 +139,59 @@ func (l *Layout) readVersionLedger(day string) (VersionLedger, error) {
 	return ledger, nil
 }
 
+func mergeVersionLedgers(a, b VersionLedger) (VersionLedger, error) {
+	result := VersionLedger{Format: 1, Origins: map[string]string{}}
+	for _, ledger := range []VersionLedger{a, b} {
+		for key, origin := range ledger.Origins {
+			if previous, ok := result.Origins[key]; ok && previous != origin {
+				return result, errors.New("Conflicting cron/manual origin metadata")
+			}
+			result.Origins[key] = origin
+		}
+	}
+	if len(result.Origins) > 100000 {
+		return result, errors.New("Version metadata exceeds safe limit")
+	}
+	return result, nil
+}
+
+// Read legacy metadata during migration, but all new writes use the private store.
+func (l *Layout) readVersionLedger(day string) (VersionLedger, error) {
+	central := VersionLedger{Format: 1, Origins: map[string]string{}}
+	if l.MetadataDir != "" {
+		path, err := l.versionLedgerPath(day)
+		if err != nil {
+			return central, err
+		}
+		central, err = readVersionLedgerFile(day, path)
+		if err != nil {
+			return central, err
+		}
+	}
+	legacy, err := readVersionLedgerFile(day, filepath.Join(l.Root, day, VersionLedgerName))
+	if err != nil {
+		return central, err
+	}
+	return mergeVersionLedgers(central, legacy)
+}
+
 func (l *Layout) writeVersionLedger(day string, ledger VersionLedger) error {
+	path, err := l.versionLedgerPath(day)
+	if err != nil {
+		return err
+	}
 	raw, err := json.MarshalIndent(ledger, "", "  ")
 	if err != nil {
 		return err
 	}
-	return AtomicWrite(filepath.Join(l.Root, day, VersionLedgerName), append(raw, '\n'), 0600)
+	if err = mkdirPrivate(l.MetadataDir); err != nil {
+		return err
+	}
+	info, err := os.Stat(l.MetadataDir)
+	if err != nil || !info.IsDir() || !privateRootOwned(info) || (runtime.GOOS == "linux" && info.Mode().Perm()&0077 != 0) {
+		return errors.New("Version metadata store must be root-private")
+	}
+	return AtomicWrite(path, append(raw, '\n'), 0600)
 }
 
 func (l *Layout) archiveVersion(category, path string) (ArchiveVersion, bool, error) {

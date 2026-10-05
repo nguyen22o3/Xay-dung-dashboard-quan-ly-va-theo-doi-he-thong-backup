@@ -1,5 +1,33 @@
 # React + TypeScript + Vite
 
+## Cron Import / Export
+
+The Cron task list exports and imports dashboard JSON files (maximum 64 KB):
+
+```json
+{
+  "format": "backup-monitor-cron",
+  "version": 1,
+  "exportedAt": "2026-10-05T00:00:00Z",
+  "jobs": [{ "id": "backup-site", "schedule": "30 4 * * *" }]
+}
+```
+
+Only the six dashboard-managed tasks and the seven supported recurrence types
+are accepted. aaPanel exports and arbitrary shell commands are not supported.
+Exports contain schedules only, not credentials, scripts, paths, logs or backups.
+Import preserves existing enabled/paused states; missing tasks are created enabled.
+Tasks not listed in the file are untouched. Import does not execute scripts.
+
+After file validation, a dialog shows current and imported schedules. No server
+write occurs before confirmation. Every changed task is preflighted before any
+write, then applied through the existing guarded server transaction with a fresh
+preview token and verified by reading back the schedule. Storage and sources
+cannot change through Import. The batch is sequential, not globally atomic:
+failures stop later tasks and report verified saved items and uncertain writes.
+
+Run regression tests with `node --test tests/cron-transfer.test.mjs`.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

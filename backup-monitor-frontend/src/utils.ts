@@ -20,6 +20,16 @@ export function formatDuration(seconds: number): string {
   return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
 }
 
+export function formatUptime(uptime: string, lang: 'vi' | 'en'): string {
+  if (lang !== 'vi') return uptime
+  const units: Record<string, string> = {
+    year: 'năm', month: 'tháng', week: 'tuần', day: 'ngày',
+    hour: 'giờ', minute: 'phút', second: 'giây',
+  }
+  return uptime.replace(/\b(\d+)\s+(years?|months?|weeks?|days?|hours?|minutes?|seconds?)\b/gi,
+    (_, count: string, unit: string) => `${count} ${units[unit.toLowerCase().replace(/s$/, '')]}`)
+}
+
 export function readPercentage(value?: string): number | null {
   const number = Number.parseFloat(value ?? '')
   return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : null
@@ -113,19 +123,28 @@ export function activityStamp(entry: BackupActivityEntry): string {
 
 export interface BackupActivitySummary {
   key: string
-  name: 'Backup Site' | 'Backup Database'
+  name: 'Backup Site' | 'Backup Database' | 'Backup aaPanel'
   date: string
   time: string
   duration: number | null
   status: string
-  source: 'run' | 'files'
+  source: 'run' | 'files' | 'archive'
   details: BackupActivityEntry[]
 }
 
-function localBackupType(entry: BackupActivityEntry): 'site' | 'database' | null {
+// A table row can contain several file records from one run. Delete their log
+// records too, otherwise they reappear as a legacy row after removing the run.
+export function localActivityDeletionKeys(row: BackupActivitySummary): string[] {
+  if (row.source === 'archive') return []
+  const kind = row.name === 'Backup Site' ? 'site' : row.name === 'Backup aaPanel' ? 'panel' : 'database'
+  return [...new Set([row, ...row.details].map(entry => `${entry.date}|${formatTime24(entry.time)}|${kind}`))]
+}
+
+function localBackupType(entry: BackupActivityEntry): 'site' | 'database' | 'panel' | null {
   const name = (entry.name ?? '').trim().toLowerCase()
   if (/^(?:backup (?:website|site)\b|website backup\b|(?:lần chạy )?sao lưu website\b)/.test(name)) return 'site'
   if (/^(?:backup database\b|database backup\b|(?:lần chạy )?sao lưu cơ sở dữ liệu)/.test(name)) return 'database'
+  if (/^(?:backup (?:aapanel|panel)\b|(?:lần chạy )?sao lưu cấu hình aapanel\b)/.test(name)) return 'panel'
   return null
 }
 
@@ -153,7 +172,7 @@ export function summarizeLocalBackupActivity(entries: BackupActivityEntry[]): Ba
     runCounts.set(stampKey, ordinal + 1)
     return {
       key: `${stampKey}:${ordinal}`,
-      name: type === 'site' ? 'Backup Site' : 'Backup Database',
+      name: type === 'site' ? 'Backup Site' : type === 'panel' ? 'Backup aaPanel' : 'Backup Database',
       date: entry.date,
       time: formatTime24(entry.time),
       duration,
@@ -167,6 +186,16 @@ export function summarizeLocalBackupActivity(entries: BackupActivityEntry[]): Ba
   const severity = { success: 0, unknown: 1, running: 2, failed: 3 }
   for (const { entry, type } of classified) {
     if (entry.kind === 'run') continue
+    if (entry.kind === 'archive') {
+      // Backfill only days without aaPanel log records. Never merge inventory
+      // into a timed run or expose inventory as a deletable log.
+      if (type !== 'panel' || classified.some(item => item.type === 'panel' && item.entry.kind !== 'archive' && item.entry.date === entry.date)) continue
+      const key = `archive:panel:${entry.date}`
+      if (seenFiles.has(key)) continue
+      seenFiles.add(key)
+      rows.push({ key, name: 'Backup aaPanel', date: entry.date, time: '', duration: null, status: 'unknown', source: 'archive', details: [entry] })
+      continue
+    }
     const fingerprint = JSON.stringify([type, activityStamp(entry), entry.name, entry.duration, entry.status])
     if (seenFiles.has(fingerprint)) continue
     seenFiles.add(fingerprint)
@@ -186,7 +215,7 @@ export function summarizeLocalBackupActivity(entries: BackupActivityEntry[]): Ba
     const group = legacyGroups.get(key)
     if (!group) {
       legacyGroups.set(key, { row: {
-        key, name: type === 'site' ? 'Backup Site' : 'Backup Database',
+        key, name: type === 'site' ? 'Backup Site' : type === 'panel' ? 'Backup aaPanel' : 'Backup Database',
         date: entry.date, time: formatTime24(entry.time), duration, status, source: 'files', details: [entry],
       }, missingDuration: duration === null })
       continue
@@ -229,6 +258,9 @@ export function formatCronSchedule(schedule: string, lang: 'vi' | 'en' = 'vi'): 
   const dayOfMonth = parts[2]
   const month = parts[3]
   const dow = parts[4]
+  if (/^\*\/[1-9]\d?$/.test(min) && hour === '*' && dayOfMonth === '*' && month === '*' && dow === '*') return lang === 'vi' ? `Mỗi ${Number(min.slice(2))} phút (tính từ phút 0 mỗi giờ)` : `Every ${Number(min.slice(2))} minutes (from minute 0 each hour)`
+  if (/^\d{1,2}$/.test(min) && /^\*\/[1-9]\d?$/.test(hour) && dayOfMonth === '*' && month === '*' && dow === '*') return lang === 'vi' ? `Mỗi ${Number(hour.slice(2))} giờ, phút ${min.padStart(2, '0')} (tính từ 00:00 mỗi ngày)` : `Every ${Number(hour.slice(2))} hours at minute ${min.padStart(2, '0')} (from 00:00 daily)`
+  if (/^\d{1,2}$/.test(min) && /^\d{1,2}$/.test(hour) && /^\*\/[1-9]\d?$/.test(dayOfMonth) && month === '*' && dow === '*') return lang === 'vi' ? `${hour.padStart(2, '0')}:${min.padStart(2, '0')}, cách ${Number(dayOfMonth.slice(2))} ngày trong tháng (từ ngày 1)` : `${hour.padStart(2, '0')}:${min.padStart(2, '0')}, every ${Number(dayOfMonth.slice(2))} calendar days (from day 1)`
   if (!/^(?:\d{1,2}|\*)$/.test(min) || !/^(?:\d{1,2}|\*)$/.test(hour)) return schedule
 
   if (min === '*' && hour === '*' && dayOfMonth === '*' && month === '*' && dow === '*') {

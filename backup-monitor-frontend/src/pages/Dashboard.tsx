@@ -8,7 +8,7 @@ import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContaine
 import { useBackupStatus, useCronJobs, useServerStatus } from '../api'
 import { tr, type Lang } from '../language'
 import type { TabKey } from '../types'
-import { activityStamp, activityStatus, calendarDays, categoryLabel, formatBytes, nextCronRun, readPercentage, statusLabel } from '../utils'
+import { activityStamp, activityStatus, calendarDays, categoryLabel, formatBytes, formatUptime, nextCronRun, readPercentage, statusLabel } from '../utils'
 import { dashboardBreakpointForViewport, dashboardBreakpoints, dashboardColumns, dashboardGridStorageKey, readDashboardLayouts } from '../dashboardGrid'
 
 type DashboardProps = {
@@ -66,12 +66,6 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
     try { localStorage.setItem(dashboardGridStorageKey, JSON.stringify(next)) }
     catch { /* Dragging/resizing still works if browser storage is unavailable. */ }
   }
-  const resetLayout = () => {
-    const defaults = readDashboardLayouts(null)
-    setLayouts(defaults)
-    try { localStorage.setItem(dashboardGridStorageKey, JSON.stringify(defaults)) }
-    catch { /* The default layout is still restored in memory. */ }
-  }
   const vi = lang === 'vi'
   const server = useServerStatus(30000)
   const backup = useBackupStatus(60000)
@@ -102,7 +96,6 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
           <p>{vi ? 'Theo dõi bản sao lưu trên máy chủ và Google Drive.' : 'Monitor backups across your server and Google Drive.'}</p>
         </div>
         <div className="overview-heading-actions">
-          <button className="overview-reset-layout" type="button" onClick={resetLayout}>{vi ? 'Bố cục mặc định' : 'Reset layout'}</button>
           <button className="overview-secondary-action" type="button" onClick={() => onNavigate('available')}>
             {vi ? 'Xem bản sao lưu' : 'View backups'} <ArrowUpRight size={16} />
           </button>
@@ -187,7 +180,7 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
               { label: vi ? 'Ổ đĩa' : 'Disk', value: readPercentage(serverData?.disk?.usage), color: '#e8a318' },
             ].map((metric) => <div className="overview-health-row" key={metric.label}><div><span>{metric.label}</span><strong>{metric.value !== null ? `${metric.value.toFixed(1)}%` : '—'}</strong></div><div className="overview-health-track"><span style={{ width: `${metric.value ?? 0}%`, background: metric.color }} /></div></div>)}
           </div>
-          <div className="overview-health-footer"><ShieldCheck size={16} /><span>{serverData?.uptime ? `${vi ? 'Hoạt động' : 'Uptime'}: ${serverData.uptime}` : (vi ? 'Đang chờ dữ liệu máy chủ' : 'Waiting for server data')}</span></div>
+          <div className="overview-health-footer"><ShieldCheck size={16} /><span>{serverData?.uptime ? `${vi ? 'Hoạt động' : 'Uptime'}: ${formatUptime(serverData.uptime, lang)}` : (vi ? 'Đang chờ dữ liệu máy chủ' : 'Waiting for server data')}</span></div>
         </section>
         </Responsive>}
       </div>

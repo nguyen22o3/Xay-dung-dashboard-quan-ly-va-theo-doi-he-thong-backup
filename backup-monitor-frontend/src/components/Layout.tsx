@@ -15,7 +15,7 @@ const overviewItems: NavItem[] = [
 
 const managementItems: NavItem[] = [
   { tab: 'available', icon: Archive, vi: 'Bản sao lưu', en: 'Backups' },
-  { tab: 'jobs', icon: CalendarClock, vi: 'Quản lý sao lưu', en: 'Backup management' },
+  { tab: 'jobs', icon: CalendarClock, vi: 'Cron', en: 'Cron' },
   { tab: 'activity', icon: Activity, vi: 'Nhật ký hoạt động', en: 'Activity log' },
   { tab: 'settings', icon: Settings, vi: 'Cài đặt', en: 'Settings' },
 ]

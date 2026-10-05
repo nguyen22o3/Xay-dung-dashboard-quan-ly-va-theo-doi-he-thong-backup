@@ -140,9 +140,11 @@ Managed archives now omit `_cron_<nonce>` and `_manual_<nonce>` from their
 published filenames, for example `web_web1.local_20261004_050001_site.tar.gz`,
 `db_sql_web1_local_20261004_043001_mysql_data.sql.gz`, and `2026-10-04_051002.zip`.
 Same-second collisions get `_2`, `_3`, etc.; existing files are never overwritten.
-Cron/manual origin is recorded in each day's `.backup-monitor-versions.json`,
-which is copied to Drive alongside archives. Preserve this metadata when moving
-backups: it maintains the separate 1-cron / 2-manual pools. Legacy unclassified
+Cron/manual origin is stored outside the backup directories in
+`/root/backup-monitor/metadata/versions/YYYY-MM-DD.json` on AlmaLinux (directory
+mode 0700, files 0600). It never uploads to Drive. This fixed management path
+continues to work when configured backup storage moves, maintaining the separate
+1-cron / 2-manual pools. Legacy unclassified
 files are never classified by their clock time.
 
 `backup-manager versions names --preview` inventories explicitly tagged files
@@ -153,6 +155,14 @@ run a backup, prune, or rotate. Original scripts, original metadata, and the ren
 manifest are retained in `/root/backup-layout-migrations/before-clean-names-*`.
 On failure it attempts to restore archive names and scripts; metadata may retain
 unused origin entries, which do not trigger deletion without verified archives.
+
+`backup-manager versions metadata --preview|--apply` migrates old per-day
+`.backup-monitor-versions.json` files to the private store. All origin entries
+are merged and verified before the old JSON files are removed. Conflicting,
+malformed or symlinked files are rejected. Originals and a manifest are retained
+under `/root/backup-layout-migrations/before-metadata-store-*`. Archive data,
+filenames, cron schedules and Drive are untouched. New backups write only to the
+private store; old metadata can still be read during the transition.
 
 ### Source data selection
 
@@ -212,3 +222,24 @@ The isolated configuration/layout/installer tests live in
 `internal/backupops/*_test.go`; the normal Windows test run does not SSH or
 touch production storage. Linux-only root-ownership/flock/symlink behavior
 is also exercised on AlmaLinux using the opt-in Linux unit-test executable.
+
+### Dashboard recurrence editor (Go helper v9)
+
+The shared preview/apply transaction accepts an optional structured `cycle`
+for daily, hourly, calendar-day steps, hour steps, minute steps, weekly and
+monthly schedules. Clock-only requests remain backwards compatible. A cycle
+change replaces only the five cron fields; script arguments, redirection and
+the paused marker remain unchanged. Calendar-day steps restart on day 1 of
+each month; hour/minute steps restart at each day/hour boundary. A monthly
+date absent from a month is skipped. Sub-minute and one-off execution are not
+supported and are visibly disabled in the UI.
+
+`create: true` adds a missing allowlisted task only. It requires an empty
+expected schedule, an absent-task snapshot, an existing managed script, and a
+fresh preview token. Existing or duplicate schedules are rejected. Creation
+does not execute the script. Scheduled backups use the installed tracked
+runner when available. Dashboard polling and refresh after apply update the
+task list; native aaPanel tasks are not imported or modified.
+
+The source-scope selector is hidden; existing folder/children policy remains
+in the configuration and is not reset by changing a recurrence.

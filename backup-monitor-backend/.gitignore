@@ -7,3 +7,8 @@ alert_settings.json
 
 # Keep Go tests locally, without adding them to Git.
 *_test.go
+testdata/
+tests/
+coverage/
+coverage.out
+coverage.html

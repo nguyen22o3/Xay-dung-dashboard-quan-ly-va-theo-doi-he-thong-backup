@@ -1,7 +1,8 @@
 import { client } from './api'
 export type BackupSource = { path: string; scope: 'folder' | 'children' }
 export type BackupSystemConfig = { backupRoot: string; scriptsDir: string; logsDir: string; driveRemote: string; driveFolder: string; driveHistoryLog: string; siteSource?: BackupSource; databaseSource?: BackupSource; panelSource?: BackupSource }
-export type CronScheduleChange = { id: string; clock: string; expectedSchedule: string; expectedEnabled: boolean }
+export type ScheduleCycle = { type: 'daily' | 'days' | 'hourly' | 'hours' | 'minutes' | 'weekly' | 'monthly'; every?: number; weekday?: number; day?: number }
+export type CronScheduleChange = { id: string; clock: string; expectedSchedule: string; expectedEnabled: boolean; cycle?: ScheduleCycle; create?: boolean }
 export type BackupSystemState = {
   config: BackupSystemConfig; version: string; remotes: string[]; ready: boolean
   localRetentionDays: number; driveRetentionDays: number; allowedRoots: Record<string, string[]>

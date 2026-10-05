@@ -72,6 +72,7 @@ type Move struct {
 }
 type Layout struct {
 	Root, LegacyRoot, Markers, Journal string
+	MetadataDir                        string
 	Now                                func() time.Time
 }
 
@@ -391,7 +392,7 @@ func (c *Controller) Layout() (*Layout, error) {
 	if markers == "" {
 		markers = "/run/backup-monitor-rotations"
 	}
-	return &Layout{Root: cfg.BackupRoot, LegacyRoot: "/www/backup", Markers: markers, Journal: c.RecoveryRoot}, nil
+	return &Layout{Root: cfg.BackupRoot, LegacyRoot: "/www/backup", Markers: markers, Journal: c.RecoveryRoot, MetadataDir: c.VersionMetadataDir}, nil
 }
 
 // LayoutLock lets a shell script hold its existing shared layout lock while

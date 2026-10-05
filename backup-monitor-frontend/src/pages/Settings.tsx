@@ -1,18 +1,18 @@
 import { useEffect, useState } from 'react'
-import { Check, CheckCircle2, ChevronDown, CircleAlert, Cloud, Hash, Languages, Mail, MessageCircle, Moon, Save, ShieldCheck, Sun } from 'lucide-react'
+import { CheckCircle2, ChevronDown, CircleAlert, Cloud, Hash, Languages, Mail, MessageCircle, Moon, Sun } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { apiErrorMessage, fetchAlertSettings, saveAlertSettings } from '../api'
 import type { Lang } from '../language'
 
 type Section = 'alerts' | 'monitoring' | 'appearance'
 type ChannelId = 'telegram' | 'discord' | 'email'
-type Props = { isDark: boolean; onToggleDark: () => void; lang: Lang; onToggleLang: () => void; onOpenBackupManagement: () => void }
+type Props = { isDark: boolean; onToggleDark: () => void; lang: Lang; onToggleLang: () => void }
 type Channel = { id: ChannelId; title: string; vi: string; en: string; icon: LucideIcon }
 
 const channels: Channel[] = [
-  { id: 'telegram', title: 'Telegram', vi: 'Nhận cảnh báo qua Telegram Bot và Chat ID', en: 'Receive alerts through a Telegram Bot and Chat ID', icon: MessageCircle },
-  { id: 'discord', title: 'Discord', vi: 'Gửi thông báo tới một kênh qua webhook', en: 'Deliver notifications to a channel through a webhook', icon: Hash },
-  { id: 'email', title: 'Email', vi: 'Gửi cảnh báo qua Gmail SMTP', en: 'Send alerts through Gmail SMTP', icon: Mail },
+  { id: 'telegram', title: 'Telegram', vi: 'Nhận thông báo qua Telegram', en: 'Receive alerts through a Telegram', icon: MessageCircle },
+  { id: 'discord', title: 'Discord', vi: 'Nhận thông báo qua kênh trên Discord', en: 'Deliver notifications to a channel through a webhook', icon: Hash },
+  { id: 'email', title: 'Email', vi: 'Nhận thông báo qua Gmail SMTP', en: 'Send alerts through Gmail SMTP', icon: Mail },
 ]
 
 const tabs: { id: Section; vi: string; en: string }[] = [
@@ -21,22 +21,29 @@ const tabs: { id: Section; vi: string; en: string }[] = [
   { id: 'appearance', vi: 'Giao diện', en: 'Appearance' },
 ]
 
-export default function Settings({ isDark, onToggleDark, lang, onToggleLang, onOpenBackupManagement }: Props) {
+export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: Props) {
   const vi = lang === 'vi'
-  const [section, setSection] = useState<Section>('alerts')
-  const [expanded, setExpanded] = useState<ChannelId | null>(null)
+  const [section, setSection] = useState<Section>(() => {
+    const saved = localStorage.getItem('settings-section')
+    return saved === 'alerts' || saved === 'monitoring' || saved === 'appearance' ? saved : 'alerts'
+  })
+  const [expanded, setExpanded] = useState<Record<ChannelId, boolean>>({ telegram: false, discord: false, email: false })
   const [telegramToken, setTelegramToken] = useState('')
   const [telegramChat, setTelegramChat] = useState('')
   const [discordWebhook, setDiscordWebhook] = useState('')
   const [smtpEmail, setSmtpEmail] = useState('')
   const [smtpPassword, setSmtpPassword] = useState('')
   const [targetEmail, setTargetEmail] = useState('')
-  const [threshold, setThreshold] = useState(14)
+  const [threshold, setThreshold] = useState<number | ''>(14)
   const [configured, setConfigured] = useState<Record<ChannelId, boolean>>({ telegram: false, discord: false, email: false })
+  const [enabled, setEnabled] = useState<Record<ChannelId, boolean>>({ telegram: false, discord: false, email: false })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [savingChannel, setSavingChannel] = useState<ChannelId | null>(null)
+  const [toggling, setToggling] = useState(false)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error' | null>(null)
+  const [lastSavedChannel, setLastSavedChannel] = useState<ChannelId | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -48,6 +55,7 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang, onO
         setTargetEmail(settings.targetEmail || '')
         setThreshold(settings.threshold || 14)
         setConfigured({ telegram: settings.telegramConfigured, discord: settings.discordConfigured, email: settings.smtpConfigured })
+        setEnabled({ telegram: settings.telegramEnabled ?? settings.telegramConfigured, discord: settings.discordEnabled ?? settings.discordConfigured, email: settings.smtpEnabled ?? settings.smtpConfigured })
       })
       .catch((error: unknown) => {
         if (!alive) return
@@ -58,86 +66,94 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang, onO
     return () => { alive = false }
   }, [])
 
-  const save = async () => {
-    setSaving(true)
+  const save = async (nextEnabled = enabled, source: 'form' | 'toggle' = 'form', channel?: ChannelId) => {
+    if (source === 'form') setSaving(true)
+    else setToggling(true)
+    if (source === 'form') setSavingChannel(channel || null)
     setMessage('')
     setMessageType(null)
+    setLastSavedChannel(null)
     try {
-      const settings = await saveAlertSettings({ telegramToken, telegramChat, discordWebhook, smtpEmail, smtpPassword, targetEmail, threshold: Number(threshold) })
+      const settings = await saveAlertSettings({ telegramToken, telegramChat, discordWebhook, smtpEmail, smtpPassword, targetEmail, threshold: Number(threshold), telegramEnabled: nextEnabled.telegram, discordEnabled: nextEnabled.discord, smtpEnabled: nextEnabled.email })
       setTelegramToken('')
       setDiscordWebhook('')
       setSmtpPassword('')
       setConfigured({ telegram: settings.telegramConfigured, discord: settings.discordConfigured, email: settings.smtpConfigured })
+      // Keep the requested state when an older backend omits the new fields.
+      setEnabled({ telegram: settings.telegramEnabled ?? nextEnabled.telegram, discord: settings.discordEnabled ?? nextEnabled.discord, email: settings.smtpEnabled ?? nextEnabled.email })
       setMessageType('success')
-      setMessage(vi ? 'Đã lưu cấu hình thành công.' : 'Settings saved successfully.')
+      setMessage(vi ? 'Đã lưu' : 'Saved')
+      setLastSavedChannel(channel || null)
     } catch (error: unknown) {
       setMessageType('error')
       setMessage(apiErrorMessage(error, vi ? 'Không thể lưu cấu hình.' : 'Could not save settings.'))
     } finally {
-      setSaving(false)
+      if (source === 'form') setSaving(false)
+      else setToggling(false)
+      if (source === 'form') setSavingChannel(null)
     }
   }
-
-  const secretPlaceholder = (isConfigured: boolean, example: string) => isConfigured
-    ? (vi ? 'Đã cấu hình — để trống để giữ nguyên' : 'Configured — leave blank to keep it')
-    : example
 
   const saveFooter = <div className="apex-settings-footer">
     {message && <div className={`apex-settings-feedback ${messageType === 'error' ? 'is-error' : ''}`} role={messageType === 'error' ? 'alert' : 'status'}>
       {messageType === 'error' ? <CircleAlert size={16} /> : <CheckCircle2 size={16} />}
       <span>{message}</span>
     </div>}
-    <button className="apex-settings-save" type="button" onClick={save} disabled={loading || saving}><Save size={16} />{saving ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu thay đổi' : 'Save changes')}</button>
   </div>
+
+  const toggleExpanded = (id: ChannelId) => setExpanded((current) => ({ ...current, [id]: !current[id] }))
+  const selectSection = (next: Section) => {
+    setSection(next)
+    localStorage.setItem('settings-section', next)
+  }
 
   return <div className="apex-settings-page animate-fade-in">
     <header className="apex-settings-heading"><h1>{vi ? 'Cài đặt' : 'Settings'}</h1><p>{vi ? 'Quản lý cảnh báo, giám sát và giao diện.' : 'Manage alerts, monitoring, and appearance.'}</p></header>
-    <div className="settings-backup-link"><span>{vi ? 'Nơi lưu trữ và lịch cron đã được gộp vào Quản lý sao lưu.' : 'Storage and cron schedules are now together in Backup management.'}</span><button type="button" className="backup-system-secondary" onClick={onOpenBackupManagement}>{vi ? 'Mở Quản lý sao lưu' : 'Open Backup management'} →</button></div>
     <div className="apex-settings-tabs" role="tablist" aria-label={vi ? 'Nhóm cài đặt' : 'Settings sections'}>
-      {tabs.map((tab) => <button key={tab.id} id={`settings-tab-${tab.id}`} role="tab" type="button" aria-controls={`settings-panel-${tab.id}`} aria-selected={section === tab.id} tabIndex={section === tab.id ? 0 : -1} className={section === tab.id ? 'is-active' : ''} onClick={() => setSection(tab.id)} onKeyDown={(event) => {
+      {tabs.map((tab) => <button key={tab.id} id={`settings-tab-${tab.id}`} role="tab" type="button" aria-controls={`settings-panel-${tab.id}`} aria-selected={section === tab.id} tabIndex={section === tab.id ? 0 : -1} className={section === tab.id ? 'is-active' : ''} onClick={() => selectSection(tab.id)} onKeyDown={(event) => {
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
         event.preventDefault()
         const index = tabs.findIndex((item) => item.id === section)
         const next = tabs[(index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length]
-        setSection(next.id)
+        selectSection(next.id)
         document.getElementById(`settings-tab-${next.id}`)?.focus()
       }}>{vi ? tab.vi : tab.en}</button>)}
     </div>
 
     {section === 'alerts' && <section className="apex-settings-panel" role="tabpanel" id="settings-panel-alerts" aria-labelledby="settings-tab-alerts">
-      <div className="apex-settings-panel-heading"><h2>{vi ? 'Kênh cảnh báo' : 'Alert channels'}</h2><p>{vi ? 'Chọn nơi nhận thông báo khi hệ thống phát hiện sự cố sao lưu. “Đã cấu hình” xác nhận thông tin đã lưu, chưa xác nhận gửi được thông báo.' : 'Choose where to receive backup alerts. “Configured” means settings are saved; delivery has not been verified.'}</p></div>
+      <div className="apex-settings-panel-heading"><h2>{vi ? 'Kênh cảnh báo' : 'Alert channels'}</h2><p>{vi ? 'Chọn nơi nhận thông báo khi hệ thống phát hiện sự cố sao lưu.' : 'Choose where to receive backup alerts.'}</p></div>
       <div className="apex-settings-list">
-        {channels.map(({ id, title, vi: viSubtitle, en: enSubtitle, icon: Icon }) => <div className={`apex-settings-channel ${expanded === id ? 'is-expanded' : ''}`} key={id}>
-          <button type="button" className="apex-settings-row apex-settings-row-button" aria-expanded={expanded === id} aria-controls={`settings-channel-${id}`} onClick={() => setExpanded(expanded === id ? null : id)}>
+        {channels.map(({ id, title, vi: viSubtitle, en: enSubtitle, icon: Icon }) => <div className={`apex-settings-channel ${expanded[id] ? 'is-expanded' : ''}`} key={id}>
+          <button type="button" className="apex-settings-row apex-settings-row-button" aria-expanded={expanded[id]} aria-controls={`settings-channel-${id}`} onClick={() => toggleExpanded(id)}>
             <span className="apex-settings-row-icon"><Icon size={19} /></span>
             <span className="apex-settings-row-copy"><strong>{title}</strong><small>{vi ? viSubtitle : enSubtitle}</small></span>
-            <span className={`apex-settings-status ${configured[id] ? 'is-configured' : ''}`}>{configured[id] && <Check size={12} />}{configured[id] ? (vi ? 'Đã cấu hình' : 'Configured') : (vi ? 'Chưa cấu hình' : 'Not configured')}</span>
+            <button type="button" className={`apex-settings-switch ${enabled[id] ? 'is-on' : ''}`} role="switch" aria-checked={enabled[id]} aria-label={`${title} ${vi ? 'bật cảnh báo' : 'enable alerts'}`} disabled={!configured[id] || loading || saving || toggling} onClick={(event) => { event.stopPropagation(); const next = { ...enabled, [id]: !enabled[id] }; setEnabled(next); void save(next, 'toggle', id) }}><span className="apex-settings-switch-thumb" /></button>
             <ChevronDown className="apex-settings-chevron" size={17} />
           </button>
-          {expanded === id && <div className="apex-settings-fields" id={`settings-channel-${id}`}>
+          {expanded[id] && <div className="apex-settings-fields" id={`settings-channel-${id}`}>
             {id === 'telegram' && <div className="apex-settings-field-grid">
-              <label className="apex-settings-field"><span>Bot Token</span><input type="password" autoComplete="new-password" value={telegramToken} onChange={(event) => setTelegramToken(event.target.value)} placeholder={secretPlaceholder(configured.telegram, '123456789:ABCdef...')} /><small>{vi ? 'Lấy từ BotFather; để trống để giữ token hiện tại.' : 'Get this from BotFather; leave blank to keep the current token.'}</small></label>
-              <label className="apex-settings-field"><span>Chat ID</span><input type="text" value={telegramChat} onChange={(event) => setTelegramChat(event.target.value)} placeholder="123456789" /><small>{vi ? 'ID người dùng, nhóm hoặc kênh nhận cảnh báo.' : 'User, group, or channel receiving alerts.'}</small></label>
+              <label className="apex-settings-field"><span>Bot Token</span><input type="password" autoComplete="new-password" value={telegramToken} onChange={(event) => setTelegramToken(event.target.value)} /></label>
+              <label className="apex-settings-field"><span>Chat ID</span><input type="text" value={telegramChat} onChange={(event) => setTelegramChat(event.target.value)} /></label>
             </div>}
-            {id === 'discord' && <div className="apex-settings-field-grid apex-settings-field-grid--single"><label className="apex-settings-field"><span>Webhook URL</span><input type="password" autoComplete="new-password" value={discordWebhook} onChange={(event) => setDiscordWebhook(event.target.value)} placeholder={secretPlaceholder(configured.discord, 'https://discord.com/api/webhooks/...')} /><small>{vi ? 'Webhook của kênh Discord muốn nhận thông báo.' : 'Webhook for the Discord channel receiving notifications.'}</small></label></div>}
+            {id === 'discord' && <div className="apex-settings-field-grid apex-settings-field-grid--single"><label className="apex-settings-field"><span>Webhook URL</span><input type="password" autoComplete="new-password" value={discordWebhook} onChange={(event) => setDiscordWebhook(event.target.value)} /></label></div>}
             {id === 'email' && <div className="apex-settings-field-grid">
-              <label className="apex-settings-field"><span>{vi ? 'Email gửi' : 'Sender email'}</span><input type="email" value={smtpEmail} onChange={(event) => setSmtpEmail(event.target.value)} placeholder="sender@gmail.com" /></label>
-              <label className="apex-settings-field"><span>{vi ? 'Mật khẩu ứng dụng' : 'App password'}</span><input type="password" autoComplete="new-password" value={smtpPassword} onChange={(event) => setSmtpPassword(event.target.value)} placeholder={secretPlaceholder(configured.email, 'xxxx xxxx xxxx xxxx')} /></label>
-              <label className="apex-settings-field apex-settings-field--wide"><span>{vi ? 'Email nhận cảnh báo' : 'Recipient email'}</span><input type="email" value={targetEmail} onChange={(event) => setTargetEmail(event.target.value)} placeholder="admin@example.com" /></label>
+              <label className="apex-settings-field"><span>{vi ? 'Email gửi' : 'Sender email'}</span><input type="email" value={smtpEmail} onChange={(event) => setSmtpEmail(event.target.value)} /></label>
+              <label className="apex-settings-field"><span>{vi ? 'Mật khẩu ứng dụng' : 'App password'}</span><input type="password" autoComplete="new-password" value={smtpPassword} onChange={(event) => setSmtpPassword(event.target.value)} /></label>
+              <label className="apex-settings-field apex-settings-field--wide"><span>{vi ? 'Email nhận cảnh báo' : 'Recipient email'}</span><input type="email" value={targetEmail} onChange={(event) => setTargetEmail(event.target.value)} /></label>
             </div>}
+            <div className="apex-settings-channel-actions"><span className={`apex-settings-channel-saved ${lastSavedChannel === id && messageType === 'success' ? '' : 'is-placeholder'}`}>{vi ? 'Đã lưu' : 'Saved'}</span><button type="button" className="apex-settings-save" onClick={() => void save(enabled, 'form', id)} disabled={loading || toggling || (saving && savingChannel === id)}>{saving && savingChannel === id ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu' : 'Save')}</button></div>
           </div>}
         </div>)}
       </div>
-      {saveFooter}
+      {messageType === 'error' && saveFooter}
     </section>}
 
     {section === 'monitoring' && <section className="apex-settings-panel" role="tabpanel" id="settings-panel-monitoring" aria-labelledby="settings-tab-monitoring">
-      <div className="apex-settings-panel-heading"><h2>{vi ? 'Quy tắc giám sát' : 'Monitoring rule'}</h2><p>{vi ? 'Điều chỉnh ngưỡng để phát hiện thiếu bản sao lưu trên Google Drive.' : 'Set the threshold used to detect missing Drive backups.'}</p></div>
       <div className="apex-settings-list">
-        <div className="apex-settings-row"><span className="apex-settings-row-icon"><Cloud size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folders'}</strong><small>{vi ? 'Cảnh báo nếu số thư mục ngày trong nơi lưu trữ Drive đã chọn ít hơn ngưỡng này.' : 'Alert when dated folders in the configured Drive location fall below this threshold.'}</small></span><input className="apex-settings-number" type="number" min={1} max={365} value={threshold} aria-label={vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folders'} onChange={(event) => setThreshold(Number(event.target.value))} /></div>
-        <div className="apex-settings-row"><span className="apex-settings-row-icon"><ShieldCheck size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Phạm vi giám sát đã cấu hình' : 'Configured monitoring scope'}</strong><small>{vi ? 'Theo dõi xóa tệp trên máy chủ và đếm thư mục Drive theo lịch. Chưa kiểm tra checksum hoặc khả năng khôi phục tệp.' : 'Watch server file deletion and count Drive folders on a schedule. Checksums and restorability are not verified.'}</small></span><span className="apex-settings-source">Server + Google Drive</span></div>
+        <div className="apex-settings-row"><span className="apex-settings-row-icon"><Cloud size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Giám sát bản sao lưu Google Drive — đặt số thư mục backup tối thiểu' : 'Google Drive backup monitoring — minimum backup folder count'}</strong><small>{vi ? 'Nếu Drive có ít hơn số này, hệ thống sẽ cảnh báo.' : 'The system warns you when Drive has fewer than this number.'}</small></span><input className="apex-settings-number" type="text" inputMode="numeric" pattern="[0-9]*" value={threshold} aria-label={vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folder count'} onChange={(event) => setThreshold(event.target.value === '' ? '' : Number(event.target.value.replace(/\D/g, '')))} /></div>
       </div>
-      {saveFooter}
+      <div className="apex-settings-channel-actions"><span /> <button type="button" className="apex-settings-save" onClick={() => void save()} disabled={loading || saving || toggling}>{saving ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu' : 'Save')}</button></div>
+      {messageType === 'error' && saveFooter}
     </section>}
 
     {section === 'appearance' && <section className="apex-settings-panel apex-settings-panel--appearance" role="tabpanel" id="settings-panel-appearance" aria-labelledby="settings-tab-appearance">

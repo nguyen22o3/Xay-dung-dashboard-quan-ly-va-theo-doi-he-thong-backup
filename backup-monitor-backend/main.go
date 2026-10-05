@@ -740,13 +740,16 @@ func validSnapshotPath(p string) bool {
 // Alert settings are stored locally. Secret values are accepted on writes but are
 // never serialized in API responses.
 type AlertSettings struct {
-	TelegramToken  string `json:"telegramToken"`
-	TelegramChat   string `json:"telegramChat"`
-	DiscordWebhook string `json:"discordWebhook"`
-	SmtpEmail      string `json:"smtpEmail"`
-	SmtpPassword   string `json:"smtpPassword"`
-	TargetEmail    string `json:"targetEmail"`
-	Threshold      int    `json:"threshold"`
+	TelegramToken   string `json:"telegramToken"`
+	TelegramChat    string `json:"telegramChat"`
+	DiscordWebhook  string `json:"discordWebhook"`
+	SmtpEmail       string `json:"smtpEmail"`
+	SmtpPassword    string `json:"smtpPassword"`
+	TargetEmail     string `json:"targetEmail"`
+	Threshold       int    `json:"threshold"`
+	TelegramEnabled *bool  `json:"telegramEnabled,omitempty"`
+	DiscordEnabled  *bool  `json:"discordEnabled,omitempty"`
+	SmtpEnabled     *bool  `json:"smtpEnabled,omitempty"`
 }
 
 type AlertSettingsResponse struct {
@@ -757,6 +760,16 @@ type AlertSettingsResponse struct {
 	TelegramConfigured bool   `json:"telegramConfigured"`
 	DiscordConfigured  bool   `json:"discordConfigured"`
 	SmtpConfigured     bool   `json:"smtpConfigured"`
+	TelegramEnabled    bool   `json:"telegramEnabled"`
+	DiscordEnabled     bool   `json:"discordEnabled"`
+	SmtpEnabled        bool   `json:"smtpEnabled"`
+}
+
+func alertChannelEnabled(value *bool, configured bool) bool {
+	if value == nil {
+		return configured
+	}
+	return *value && configured
 }
 
 var (
@@ -773,6 +786,9 @@ func safeAlertSettings(settings AlertSettings) AlertSettingsResponse {
 		TelegramConfigured: settings.TelegramToken != "",
 		DiscordConfigured:  settings.DiscordWebhook != "",
 		SmtpConfigured:     settings.SmtpPassword != "",
+		TelegramEnabled:    alertChannelEnabled(settings.TelegramEnabled, settings.TelegramToken != ""),
+		DiscordEnabled:     alertChannelEnabled(settings.DiscordEnabled, settings.DiscordWebhook != ""),
+		SmtpEnabled:        alertChannelEnabled(settings.SmtpEnabled, settings.SmtpPassword != ""),
 	}
 }
 
@@ -855,6 +871,15 @@ func readAlertSettings(path string) (AlertSettings, error) {
 }
 
 func mergeAlertSecrets(current, incoming AlertSettings) AlertSettings {
+	if incoming.TelegramEnabled == nil {
+		incoming.TelegramEnabled = current.TelegramEnabled
+	}
+	if incoming.DiscordEnabled == nil {
+		incoming.DiscordEnabled = current.DiscordEnabled
+	}
+	if incoming.SmtpEnabled == nil {
+		incoming.SmtpEnabled = current.SmtpEnabled
+	}
 	if strings.TrimSpace(incoming.TelegramToken) == "" {
 		incoming.TelegramToken = current.TelegramToken
 	}
@@ -979,6 +1004,21 @@ TARGET_EMAIL=$(decode_value '%s')`,
 		encodeForShell(settings.SmtpPassword),
 		encodeForShell(settings.TargetEmail),
 	)
+	if alertChannelEnabled(settings.DiscordEnabled, settings.DiscordWebhook != "") {
+		variables += "\nDISCORD_ENABLED=1"
+	} else {
+		variables += "\nDISCORD_ENABLED=0"
+	}
+	if alertChannelEnabled(settings.TelegramEnabled, settings.TelegramToken != "") {
+		variables += "\nTELEGRAM_ENABLED=1"
+	} else {
+		variables += "\nTELEGRAM_ENABLED=0"
+	}
+	if alertChannelEnabled(settings.SmtpEnabled, settings.SmtpPassword != "") {
+		variables += "\nSMTP_ENABLED=1"
+	} else {
+		variables += "\nSMTP_ENABLED=0"
+	}
 
 	integrityScript := fmt.Sprintf(`#!/bin/bash
 set -u
@@ -992,9 +1032,9 @@ echo "[$(date '+%%F %%T')] Da kiem tra Drive: $BACKUP_COUNT thu muc Backup"
 if [ "$BACKUP_COUNT" -lt %d ]; then
     MSG="CANH BAO THIEU THU MUC BACKUP: Google Drive hien co $BACKUP_COUNT/%d thu muc. Vui long kiem tra!"
 	echo "[$(date '+%%F %%T')] CẢNH BÁO: $MSG"
-    if [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$MSG\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
-    if [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$MSG" >/dev/null; fi
-    if [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [ALERT] Backup Monitor\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$MSG" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
+    if [ "$DISCORD_ENABLED" = 1 ] && [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$MSG\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
+    if [ "$TELEGRAM_ENABLED" = 1 ] && [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$MSG" >/dev/null; fi
+    if [ "$SMTP_ENABLED" = 1 ] && [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [ALERT] Backup Monitor\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$MSG" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
     exit 1
 fi
 exit 0`, variables, settings.Threshold, settings.Threshold)
@@ -1006,9 +1046,9 @@ set -u
 send_delete_alert() {
     local file="$1" msg
     msg="BAO DONG KHAN CAP: File backup [$file] vua bi XOA khoi may chu! Thoi gian: $(date)"
-    if [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$msg\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
-    if [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$msg" >/dev/null; fi
-    if [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [URGENT] File Deleted\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$msg" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
+    if [ "$DISCORD_ENABLED" = 1 ] && [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$msg\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
+    if [ "$TELEGRAM_ENABLED" = 1 ] && [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$msg" >/dev/null; fi
+    if [ "$SMTP_ENABLED" = 1 ] && [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [URGENT] File Deleted\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$msg" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
 }
 
 check_panel_zip_replacement() {
@@ -1409,9 +1449,11 @@ LOCAL_LOGS=$(awk '
     ' /www/server/cron/*.log 2>/dev/null | sed 's/,$//')
 CUSTOM_LOCAL_LOGS=$(` + customLocalActivityCommand() + `)
 RUN_LOGS=$(` + backupRunActivityCommand() + `)
+PANEL_LOGS=$(` + panelActivityCommand() + `)
+PANEL_ARCHIVES=$(` + panelArchiveActivityCommand() + `)
 LOCAL_ACTIVITY="["
 SEP=""
-for ENTRIES in "$LOCAL_LOGS" "$CUSTOM_LOCAL_LOGS" "$RUN_LOGS"; do
+for ENTRIES in "$LOCAL_LOGS" "$CUSTOM_LOCAL_LOGS" "$RUN_LOGS" "$PANEL_LOGS" "$PANEL_ARCHIVES"; do
   if [ -n "$ENTRIES" ]; then LOCAL_ACTIVITY="$LOCAL_ACTIVITY$SEP$ENTRIES"; SEP=","; fi
 done
 LOCAL_ACTIVITY="$LOCAL_ACTIVITY]"
@@ -1995,7 +2037,8 @@ fi
 
 		auth.POST("/clear-log", func(c *gin.Context) {
 			var req struct {
-				Target string `json:"target"`
+				Target  string   `json:"target"`
+				Entries []string `json:"entries"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Lỗi tham số"})
@@ -2005,8 +2048,30 @@ fi
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Target không hợp lệ"})
 				return
 			}
+			for _, entry := range req.Entries {
+				if !activityLogKeyPattern.MatchString(entry) || (req.Target == "drive" && strings.Count(entry, "|") != 1) {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Nhật ký được chọn không hợp lệ"})
+					return
+				}
+			}
 			if req.Target == "drive" {
-				_, err := executeSSHCommand("> /var/log/aapanel_backup.log")
+				if len(req.Entries) == 0 {
+					_, err := executeSSHCommand("> /var/log/aapanel_backup.log")
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa nhật ký", "detail": err.Error()})
+						return
+					}
+					invalidate("backup-status")
+					c.JSON(http.StatusOK, gin.H{"message": "Đã xóa toàn bộ nhật ký Google Drive"})
+					return
+				}
+				conditions := make([]string, 0, len(req.Entries))
+				for _, entry := range req.Entries {
+					parts := strings.SplitN(entry, "|", 2)
+					conditions = append(conditions, `$1=="`+parts[0]+`" && $2=="`+parts[1]+`"`)
+				}
+				filter := "awk -F'|' '!(" + strings.Join(conditions, " || ") + ")' /var/log/aapanel_backup.log > /tmp/backup-monitor-drive-log && mv /tmp/backup-monitor-drive-log /var/log/aapanel_backup.log"
+				_, err := executeSSHCommand(filter)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa log", "detail": err.Error()})
 					return
@@ -2025,7 +2090,17 @@ fi
 				c.JSON(http.StatusOK, gin.H{"message": "Đã xóa nhật ký trên Google Drive"})
 				return
 			}
-			c.JSON(http.StatusNotImplemented, gin.H{"error": "Xóa nhật ký máy chủ chưa được hỗ trợ an toàn"})
+			out, err := executeSSHCommandRaw(serverActivityClearCommand(req.Entries))
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa nhật ký máy chủ", "detail": err.Error()})
+				return
+			}
+			invalidate("backup-status", "server-status")
+			if len(req.Entries) > 0 && strings.Contains(out, "LOG_FILES_CHANGED=0\n") {
+				c.JSON(http.StatusConflict, gin.H{"error": "Không tìm thấy nhật ký đã chọn trên máy chủ. Hãy tải lại danh sách và thử lại."})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "Đã xóa nhật ký trên máy chủ"})
 		})
 
 	}

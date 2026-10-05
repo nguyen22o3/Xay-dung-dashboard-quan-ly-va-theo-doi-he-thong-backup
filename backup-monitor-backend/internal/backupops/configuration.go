@@ -241,7 +241,7 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 	if err != nil {
 		return nil, err
 	}
-	scheduledCron, schedulePreview, err := proposeSchedule(p.Cron, old.ScriptsDir, r.Schedule)
+	scheduledCron, schedulePreview, err := proposeSchedule(p.Cron, old.ScriptsDir, r.Schedule, old.LogsDir)
 	if err != nil {
 		return nil, err
 	}

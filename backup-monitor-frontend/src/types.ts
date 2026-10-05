@@ -37,7 +37,7 @@ export interface ServerStatus {
 }
 
 export interface BackupActivityEntry {
-  kind?: 'file' | 'run'
+  kind?: 'file' | 'run' | 'archive'
   name?: string
   date: string
   time: string
@@ -74,6 +74,7 @@ export interface WebsiteStatus {
 export type CronJobStatus = 'running' | 'success' | 'failed' | 'never' | 'unknown'
 
 export interface CronJob {
+  isNew?: boolean
   id: string
   name: string
   script: string
@@ -122,6 +123,9 @@ export interface AlertSettings {
   telegramConfigured: boolean
   discordConfigured: boolean
   smtpConfigured: boolean
+  telegramEnabled?: boolean
+  discordEnabled?: boolean
+  smtpEnabled?: boolean
 }
 
 export interface AlertSettingsUpdate {
@@ -132,6 +136,9 @@ export interface AlertSettingsUpdate {
   smtpPassword: string
   targetEmail: string
   threshold: number
+  telegramEnabled: boolean
+  discordEnabled: boolean
+  smtpEnabled: boolean
 }
 
 export type TabKey = 'dashboard' | 'home' | 'server' | 'settings' | 'jobs' | 'activity' | 'available' | 'options' | 'logs' | 'registration' | 'crypto'

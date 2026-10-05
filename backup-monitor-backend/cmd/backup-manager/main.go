@@ -38,6 +38,9 @@ func run(args []string) error {
 	controller := backupops.NewController()
 	switch args[0] {
 	case "versions":
+		if len(args) == 3 && args[1] == "metadata" && (args[2] == "--preview" || args[2] == "--apply") {
+			return controller.MigrateVersionMetadata(args[2] == "--apply", os.Stdout)
+		}
 		if len(args) == 3 && args[1] == "names" && (args[2] == "--preview" || args[2] == "--apply") {
 			return controller.MigrateCleanArchiveNames(args[2] == "--apply", os.Stdout)
 		}

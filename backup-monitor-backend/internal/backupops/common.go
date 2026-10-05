@@ -21,7 +21,8 @@ import (
 )
 
 const BinaryPath = "/usr/local/libexec/backup-monitor/backup-manager"
-const Version = "backup-manager-go-v6"
+const Version = "backup-manager-go-v9"
+const VersionMetadataDir = "/root/backup-monitor/metadata/versions"
 const RetentionDays = 14
 const LayoutMarker = "# backup-monitor daily layout v1"
 
@@ -73,6 +74,7 @@ type Runner func(args []string, input []byte) ([]byte, error)
 type Controller struct {
 	ConfigPath, RcloneConfig, RecoveryRoot, Binary string
 	RotationMarkers                                string
+	VersionMetadataDir                             string
 	Defaults                                       Settings
 	Roots                                          map[string][]string
 	Locks                                          []string
@@ -88,7 +90,7 @@ func NewController() *Controller {
 		locks = append(locks, "/root/.backup-monitor-job-"+name+".lock")
 	}
 	return &Controller{ConfigPath: "/root/backup-monitor/system-config.json", RcloneConfig: "/root/.config/rclone/rclone.conf", RecoveryRoot: "/root/backup-layout-migrations", Binary: BinaryPath,
-		RotationMarkers: "/run/backup-monitor-rotations", Defaults: DefaultSettings(), Roots: map[string][]string{"backup": {"/"}, "scripts": {"/"}, "logs": {"/"}, "source-site": {"/"}, "source-database": {"/"}, "source-panel": {"/"}},
+		RotationMarkers: "/run/backup-monitor-rotations", VersionMetadataDir: VersionMetadataDir, Defaults: DefaultSettings(), Roots: map[string][]string{"backup": {"/"}, "scripts": {"/"}, "logs": {"/"}, "source-site": {"/"}, "source-database": {"/"}, "source-panel": {"/"}},
 		Locks: locks, Run: runCommand, Write: AtomicWrite, RestartMonitor: restartMonitor}
 }
 func runCommand(args []string, input []byte) ([]byte, error) {
@@ -353,6 +355,9 @@ func (c *Controller) Remotes() ([]string, error) {
 	return result, nil
 }
 func (c *Controller) Validate(s Settings) error {
+	if c.VersionMetadataDir != "" && (within(c.VersionMetadataDir, s.BackupRoot) || within(s.BackupRoot, c.VersionMetadataDir)) {
+		return errors.New("Kho metadata quản lý phải tách khỏi thư mục backup")
+	}
 	for _, v := range []struct{ value, purpose string }{{s.BackupRoot, "backup"}, {s.ScriptsDir, "scripts"}, {s.LogsDir, "logs"}} {
 		if err := c.LocalPath(v.value, v.purpose); err != nil {
 			return err

@@ -41,16 +41,37 @@ type nameMigrationPlan struct {
 	Ledgers map[string]VersionLedger
 }
 
+// Keep origin metadata locally; only compressed archives belong on Drive.
+func PatchDriveArchiveOnly(source string) (string, error) {
+	filters := `--include '*.tar.gz' --include '*.sql.gz' --include '*.zip'`
+	if strings.Count(source, filters) != 1 {
+		return "", errors.New("Unexpected Drive archive upload filters")
+	}
+	source = strings.ReplaceAll(source, ` --include '`+VersionLedgerName+`'`, "")
+	exclude := `--exclude '` + VersionLedgerName + `' `
+	if strings.Contains(source, exclude+filters) {
+		return source, nil
+	}
+	return replaceOnce(source, filters, exclude+filters)
+}
+
 func PatchCleanArchiveNames(source, category string) (string, error) {
 	if !strings.Contains(source, DailyLimitMarker) {
 		return "", errors.New("Install daily versions before clean archive names")
 	}
+	if category == "drive" {
+		updated, err := PatchDriveArchiveOnly(source)
+		if err != nil {
+			return "", err
+		}
+		if strings.Contains(updated, CleanNamesMarker) {
+			return updated, nil
+		}
+		return replaceOnce(updated, DailyLimitMarker, DailyLimitMarker+"\n"+CleanNamesMarker)
+	}
 	if strings.Contains(source, CleanNamesMarker) {
 		if category != "drive" && !strings.Contains(source, " versions finalize "+category+" ") {
 			return "", errors.New("Incomplete clean-name script")
-		}
-		if category == "drive" && !strings.Contains(source, "--include '"+VersionLedgerName+"'") {
-			return "", errors.New("Incomplete metadata upload")
 		}
 		return source, nil
 	}
@@ -62,9 +83,6 @@ func PatchCleanArchiveNames(source, category string) (string, error) {
 	case "panel":
 		old = `"$MANAGER" versions commit panel "$PUBLISHED_FILE"`
 		new = `PUBLISHED_FILE=$("$MANAGER" versions finalize panel "$PUBLISHED_FILE")`
-	case "drive":
-		old = `--include '*.tar.gz' --include '*.sql.gz' --include '*.zip'`
-		new = old + ` --include '` + VersionLedgerName + `'`
 	default:
 		return "", errors.New("Invalid clean-name script category")
 	}
@@ -409,7 +427,11 @@ func (c *Controller) MigrateCleanArchiveNames(apply bool, out io.Writer) (result
 		}
 	}()
 	for day, ledger := range plan.Ledgers {
-		before, err := readRegular(filepath.Join(plan.Config.BackupRoot, day, VersionLedgerName))
+		ledgerPath, err := layout.versionLedgerPath(day)
+		if err != nil {
+			return err
+		}
+		before, err := readRegular(ledgerPath)
 		if err == nil {
 			if err = AtomicWrite(filepath.Join(recovery, day+".ledger.before.json"), before, 0600); err != nil {
 				return err
@@ -472,15 +494,7 @@ func (c *Controller) MigrateCleanArchiveNames(apply bool, out io.Writer) (result
 			return err
 		}
 	}
-	// Copy only small origin metadata, never the archive contents. Existing cloud
-	// metadata is not overwritten by this migration; normal sync uploads updates.
-	for day := range plan.Ledgers {
-		target := plan.Config.DriveRemote + ":" + plan.Config.DriveFolder + "/" + day + "/" + VersionLedgerName
-		_, err = c.Run([]string{"rclone", "copyto", filepath.Join(plan.Config.BackupRoot, day, VersionLedgerName), target, "--ignore-existing", "--retries", "1", "--config", c.RcloneConfig}, nil)
-		if err != nil {
-			return errors.New("Could not preserve Drive origin metadata")
-		}
-	}
+	// Origin ledgers remain on the server; never upload JSON to Drive.
 	fmt.Fprintf(out, "CLEAN_NAMES_APPLIED local=%d drive=%d scripts=%d; bytes/checksums preserved; no backup or rotation run; recovery=%s\n", localCount, remoteCount, len(plan.Scripts), recovery)
 	return nil
 }

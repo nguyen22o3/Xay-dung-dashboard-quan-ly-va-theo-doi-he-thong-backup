@@ -236,8 +236,8 @@ export async function fetchLogs(type: 'backup' | 'system' | 'secure'): Promise<s
   return data
 }
 
-export async function clearLog(target: 'server' | 'drive'): Promise<void> {
-  await client.post('/api/clear-log', { target })
+export async function clearLog(target: 'server' | 'drive', entries: string[] = []): Promise<void> {
+  await client.post('/api/clear-log', { target, entries })
 }
 
 export async function refreshData(): Promise<void> {
@@ -298,6 +298,7 @@ export interface PollState<T> {
   error: string | null
   loading: boolean
   reload: () => void
+  updateData: (updater: (current: T | null) => T | null) => void
 }
 
 function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, initialData: () => T | null = () => null): PollState<T> {
@@ -345,7 +346,7 @@ function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, initialData: 
     }
   }, [fetcher, intervalMs, tick])
 
-  return { data, error, loading, reload }
+  return { data, error, loading, reload, updateData: setData }
 }
 
 export function useServerStatus(interval = 30000): PollState<ServerStatus> {
