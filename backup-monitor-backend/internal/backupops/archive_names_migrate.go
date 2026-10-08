@@ -43,16 +43,29 @@ type nameMigrationPlan struct {
 
 // Keep origin metadata locally; only compressed archives belong on Drive.
 func PatchDriveArchiveOnly(source string) (string, error) {
-	filters := `--include '*.tar.gz' --include '*.sql.gz' --include '*.zip'`
-	if strings.Count(source, filters) != 1 {
+	if strings.Count(source, "rclone copy ") != 1 {
+		return "", errors.New("Unexpected Drive upload command count")
+	}
+	if strings.Count(source, DriveArchiveFilters) == 1 {
+		if strings.Count(source, "--filter ") != 5 || strings.Contains(source, "--include ") || strings.Contains(source, "--exclude ") {
+			return "", errors.New("Unexpected mixed Drive archive upload filters")
+		}
+		return source, nil
+	}
+	if strings.Contains(source, "--filter ") || strings.Count(source, legacyDriveArchiveIncludes) != 1 {
 		return "", errors.New("Unexpected Drive archive upload filters")
 	}
 	source = strings.ReplaceAll(source, ` --include '`+VersionLedgerName+`'`, "")
 	exclude := `--exclude '` + VersionLedgerName + `' `
-	if strings.Contains(source, exclude+filters) {
-		return source, nil
+	if strings.Count(source, exclude) > 1 {
+		return "", errors.New("Unexpected duplicate Drive metadata exclusion")
 	}
-	return replaceOnce(source, filters, exclude+filters)
+	source = strings.ReplaceAll(source, exclude, "")
+	updated, err := replaceOnce(source, legacyDriveArchiveIncludes, DriveArchiveFilters)
+	if err != nil || strings.Contains(updated, "--include ") || strings.Contains(updated, "--exclude ") {
+		return "", errors.New("Unexpected additional Drive archive upload filters")
+	}
+	return updated, nil
 }
 
 func PatchCleanArchiveNames(source, category string) (string, error) {

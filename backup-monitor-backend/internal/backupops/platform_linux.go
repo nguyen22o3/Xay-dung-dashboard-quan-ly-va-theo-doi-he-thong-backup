@@ -17,6 +17,30 @@ func privateRootOwned(info os.FileInfo) bool {
 	s, ok := info.Sys().(*syscall.Stat_t)
 	return ok && s.Uid == 0 && info.Mode().Perm()&0022 == 0
 }
+func scriptProcessRunning(path string) (bool, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if _, err := strconv.Atoi(entry.Name()); err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return false, err
+		}
+		args := strings.Split(string(raw), "\x00")
+		// Includes direct Bash runs, but does not guess from log timestamps.
+		if len(args) >= 2 && (filepath.Base(args[0]) == "bash" || filepath.Base(args[0]) == "sh") && args[1] == path {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 func device(info os.FileInfo) uint64 { return uint64(info.Sys().(*syscall.Stat_t).Dev) }
 func inode(info os.FileInfo) uint64  { return info.Sys().(*syscall.Stat_t).Ino }
 func openRegular(path string) (*os.File, error) {

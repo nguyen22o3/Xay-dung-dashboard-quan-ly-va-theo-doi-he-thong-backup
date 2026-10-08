@@ -1,0 +1,380 @@
+/* Shared design tokens and controls. Legacy aliases keep existing event handlers intact. */
+:root {
+  --ui-control-height: 40px;
+  --ui-control-small: 36px;
+  --ui-control-radius: 9px;
+  --ui-panel-radius: 16px;
+  --app-card: #ffffff;
+  --app-border: #dde6e2;
+  --app-text: #17211d;
+  --app-muted: #64746c;
+  --app-accent: #008d62;
+  --app-soft-accent: rgba(0, 141, 98, .1);
+  --app-danger: #d5344e;
+  --app-on-accent: #ffffff;
+}
+.app-shell { --app-danger: #fb7185; --app-on-accent: #05291d; }
+.app-shell[data-theme="light"] { --app-danger: #d5344e; --app-on-accent: #ffffff; }
+
+:is(.ui-button, .legacy-tab-button, .legacy-secondary-button, .legacy-danger-button,
+    .backup-system-secondary, .backup-system-primary, .apex-settings-save,
+    .app-topbar-primary, .overview-secondary-action, .cron-run,
+    .cron-view-log, .cron-delete-confirm, .activity-summary-toggle) {
+  --control-bg: var(--app-card);
+  --control-color: var(--app-text);
+  --control-border: var(--app-border);
+  --control-hover-bg: var(--app-soft-accent);
+  --control-hover-color: var(--app-accent);
+  --control-hover-border: var(--app-accent);
+  --control-height: var(--ui-control-height);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--control-height);
+  height: auto;
+  min-width: 0;
+  max-width: 100%;
+  padding: 8px 14px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--ui-control-radius);
+  background: var(--control-bg);
+  color: var(--control-color);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+:is(.ui-button[data-variant="primary"], .ui-button[data-variant="success"],
+    .backup-system-primary, .apex-settings-save, .app-topbar-primary) {
+  --control-bg: var(--app-accent);
+  --control-color: var(--app-on-accent);
+  --control-border: var(--app-accent);
+  --control-hover-bg: color-mix(in srgb, var(--app-accent) 88%, var(--app-text));
+  --control-hover-color: var(--app-on-accent);
+  --control-hover-border: var(--control-hover-bg);
+}
+:is(.ui-button[data-variant="soft"], .cron-run, .activity-summary-toggle,
+    .legacy-tab-button.is-active, .cron-export-button) {
+  --control-bg: var(--app-soft-accent);
+  --control-color: var(--app-accent);
+  --control-border: color-mix(in srgb, var(--app-accent) 28%, var(--app-border));
+  --control-hover-bg: color-mix(in srgb, var(--app-accent) 16%, var(--app-card));
+}
+:is(.ui-button[data-variant="danger"], .legacy-danger-button, .cron-delete-confirm) {
+  --control-bg: #d5344e;
+  --control-color: #ffffff;
+  --control-border: #d5344e;
+  --control-hover-bg: #b82840;
+  --control-hover-color: #ffffff;
+  --control-hover-border: #b82840;
+}
+:is(.ui-button[data-variant="danger-outline"], .cron-delete) {
+  --control-bg: color-mix(in srgb, var(--app-danger) 8%, var(--app-card));
+  --control-color: var(--app-danger);
+  --control-border: color-mix(in srgb, var(--app-danger) 28%, var(--app-border));
+  --control-hover-bg: color-mix(in srgb, var(--app-danger) 16%, var(--app-card));
+  --control-hover-color: var(--app-danger);
+  --control-hover-border: var(--app-danger);
+}
+:is(.ui-button, .legacy-tab-button, .legacy-secondary-button, .legacy-danger-button,
+    .backup-system-secondary, .backup-system-primary, .apex-settings-save,
+    .app-topbar-primary, .overview-secondary-action, .cron-run,
+    .cron-view-log, .cron-delete-confirm, .activity-summary-toggle):hover:not(:disabled) {
+  background: var(--control-hover-bg);
+  border-color: var(--control-hover-border);
+  color: var(--control-hover-color);
+}
+.ui-button[data-size="small"], .cron-actions > button,
+.ops-panel table .ui-button, .available-page table .legacy-secondary-button {
+  --control-height: var(--ui-control-small);
+  padding: 6px 10px;
+  font-size: 12px;
+}
+:is(.ui-button, .legacy-tab-button, .legacy-secondary-button, .legacy-danger-button,
+    .backup-system-secondary, .backup-system-primary, .apex-settings-save,
+    .app-topbar-primary, .overview-secondary-action, .cron-run,
+    .cron-view-log, .cron-delete-confirm, .activity-summary-toggle):disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+:where(.app-shell) :is(button, a, input, select, textarea, summary):focus-visible,
+.ui-button:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 3px;
+}
+:is(.ui-button, .backup-system-secondary, .cron-run, .cron-view-log, .apex-settings-save) svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+/* Icon controls stay square; navigation rows and switches are intentionally not action buttons. */
+.ui-button--icon, .app-icon-button:not(.app-logout-button, .app-mobile-menu, .app-mobile-close), .cron-log-controls button,
+.backup-edit-heading-actions .backup-system-secondary, .backup-system-heading > .backup-system-secondary,
+.backup-system-path > .backup-system-secondary:has(> svg:only-child),
+.cron-log-heading > .backup-system-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ui-control-height);
+  height: var(--ui-control-height);
+  min-height: var(--ui-control-height);
+  flex: 0 0 var(--ui-control-height);
+  padding: 0;
+  border: 1px solid var(--app-border);
+  border-radius: var(--ui-control-radius);
+  color: var(--app-muted);
+  background: var(--app-card);
+}
+.cron-log-controls button:hover:not(:disabled), .app-icon-button:not(.app-logout-button, .app-mobile-menu, .app-mobile-close):hover:not(:disabled) {
+  border-color: var(--app-accent);
+  background: var(--app-soft-accent);
+  color: var(--app-accent);
+}
+.cron-log-controls button:disabled { opacity: .5; cursor: not-allowed; }
+.ui-table-actions, .ops-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ui-table-actions { justify-content: flex-end; min-width: 230px; }
+.ui-data-table-wrap { max-width: 100%; overflow-x: auto; border-radius: var(--ui-panel-radius); }
+.available-page .ui-data-table-wrap table { min-width: 720px; }
+.ui-data-table-wrap > table { min-width: 650px; }
+.ops-scroll > table { min-width: 560px; }
+.ops-panel td .ops-actions { margin: 0; }
+.activity-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.ui-page-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+
+.ui-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-muted) 10%, var(--app-card));
+  color: var(--app-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.ui-status[data-tone="success"] { color: var(--app-accent); background: var(--app-soft-accent); }
+.ui-status[data-tone="failed"] { color: var(--app-danger); background: color-mix(in srgb, var(--app-danger) 10%, var(--app-card)); }
+.ui-status[data-tone="warning"] { color: #9a6500; background: rgba(232, 163, 24, .12); }
+.app-shell[data-theme="dark"] .ui-status[data-tone="warning"] { color: #fbbf24; }
+
+/* Shared field geometry, excluding checkboxes, segmented switches, and the script editor. */
+.app-shell :is(.backup-system-path input, .backup-system-fields select, 
+    .backup-task-toolbar > select, .apex-settings-field input,
+    .apex-settings-number, .backup-filters select, .backup-filters input,
+    .ops-panel input:not([type="checkbox"]), .ops-panel select,
+    .ops-log-tools input[type="search"], .ops-log-tools select) {
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--ui-control-height);
+  height: var(--ui-control-height);
+  padding: 0 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--ui-control-radius);
+  background: var(--app-card);
+  color: var(--app-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 450;
+  line-height: 1.4;
+}
+.app-shell :is(input, select, textarea):disabled { opacity: .55; cursor: not-allowed; }
+.app-shell input[type="checkbox"] { accent-color: var(--app-accent); }
+.app-shell :is(.backup-task-search, .app-search) { min-height: var(--ui-control-height); border-radius: var(--ui-control-radius); }
+.app-shell .backup-task-search input { height: 38px; }
+.app-shell :is(.backup-system-path input, .apex-settings-field input, .ops-panel input, .ops-panel select):focus-visible { border-color: var(--app-accent); }
+.apex-settings-tabs button { min-height: var(--ui-control-height); border-radius: var(--ui-control-radius); font-size: 13px; }
+.apex-settings-tabs button.is-active { color: var(--app-accent); background: var(--app-soft-accent); }
+
+.app-shell :is(.dashboard-overview, .legacy-page, .cron-page, .apex-settings-page) { max-width: 1560px; }
+.app-shell :is(.cron-page-heading h1, .apex-settings-heading h1, .overview-heading h1) { font-size: clamp(26px, 2.4vw, 31px); }
+.app-shell :is(.ops-panel, .cron-panel, .backup-system-panel, .apex-settings-panel) { border-radius: var(--ui-panel-radius); }
+.app-shell :is(.backup-folder-dialog, .cron-log-dialog, .cron-import-dialog, .backup-task-edit-dialog) { border-radius: var(--ui-panel-radius); }
+.app-shell :is(.ops-heading h3, .cron-panel-heading h2, .backup-storage-heading h2, .apex-settings-panel-heading h2) {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.app-shell :is(.cron-table, .ops-panel table, .available-page table, .activity-detail-table) { font-size: 13px; }
+.app-shell :is(.cron-table, .ops-panel table, .available-page table, .activity-detail-table) th {
+  padding: 14px 12px;
+  font-size: 12px;
+  font-weight: 650;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--app-muted);
+  background: var(--app-bg);
+}
+.app-shell :is(.ops-panel table, .activity-detail-table) td { padding: 12px; vertical-align: middle; }
+.ops-panel { line-height: 1.6; }
+.ops-scroll { border: 1px solid var(--app-border); border-radius: 10px; }
+.ops-scroll > p { padding: 0 12px; }
+.ops-test-label { font-weight: 600; }
+.ops-delivery-list { display: grid; gap: 10px; }
+.ops-delivery-item { padding: 10px 12px; border: 1px solid var(--app-border); border-radius: 8px; }
+.ops-delivery-item .cron-log-error { margin: 6px 0 0; }
+.ops-options { gap: 16px; background: var(--app-bg); }
+.ops-options legend { padding: 0 6px; font-size: 13px; font-weight: 650; }
+.ops-options > .ui-button { margin-left: auto; }
+.ops-log-tools { gap: 8px; }
+.ops-log-tools select { flex: 0 1 auto; }
+.cron-log-error, .backup-system-error { color: var(--app-danger); }
+.login-page { padding: 20px; }
+.login-page input { min-height: var(--ui-control-height); }
+.login-page input:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 3px; }
+.login-page[data-theme="dark"] { --app-accent: #08c889; }
+
+@media (max-width: 760px) {
+  .app-topbar-primary, .overview-secondary-action { display: none; }
+}
+
+@media (max-width: 600px) {
+  .app-shell { --ui-control-height: 44px; --ui-control-small: 44px; }
+  .app-shell :is(.ui-button, .backup-system-secondary, .apex-settings-save, .legacy-secondary-button) {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .ops-heading { align-items: flex-start; }
+  .ops-log-tools input[type="search"] { flex-basis: 100%; }
+  .ops-log-tools select { flex: 1; }
+  .app-shell .backup-task-search input { height: 42px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-shell *, .ui-button { transition-duration: 0s; animation-duration: 0s; }
+}
+.task-progress { display: flex; flex-direction: column; gap: .3rem; min-width: 0; max-width: 24rem; padding-top: .5rem; }
+.task-progress span, .task-progress small { overflow-wrap: anywhere; white-space: normal; }
+.task-progress progress { width: 100%; height: .5rem; accent-color: var(--accent, #00b989); }
+.cron-table td > small { display: block; white-space: normal; overflow-wrap: anywhere; }
+
+.backup-task-cycle { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
+.app-shell .backup-management .backup-task-cycle > select {
+  min-width: 0;
+  max-width: 100%;
+  height: var(--ui-control-height);
+  min-height: var(--ui-control-height);
+  padding: 0 12px;
+  border-radius: var(--ui-control-radius);
+  font-size: 13px;
+}
+.backup-task-clock { display: flex; flex-wrap: wrap; gap: 8px; max-width: 100%; }
+.backup-time-unit {
+  display: inline-flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  max-width: 100%;
+  height: var(--ui-control-height);
+  border: 1px solid var(--app-border);
+  border-radius: var(--ui-control-radius);
+  background: var(--app-card);
+}
+.backup-management .backup-task-embedded .backup-time-unit > input {
+  flex: 0 0 52px;
+  width: 52px;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: calc(var(--ui-control-radius) - 1px) 0 0 calc(var(--ui-control-radius) - 1px);
+  outline: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--app-text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.backup-time-unit > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  padding: 0 10px;
+  border-left: 1px solid var(--app-border);
+  border-radius: 0 calc(var(--ui-control-radius) - 1px) calc(var(--ui-control-radius) - 1px) 0;
+  background: var(--app-bg);
+  color: var(--app-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.backup-time-unit:focus-within { border-color: var(--app-accent); box-shadow: 0 0 0 3px var(--app-soft-accent); }
+.backup-time-unit:has(input:disabled) { opacity: .55; }
+.backup-management .backup-task-embedded .backup-time-unit > input:disabled { opacity: 1; }
+.backup-cycle-preview { flex-basis: 100%; min-width: 0; color: var(--app-accent); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+
+/* Size the task list to its panel, including when the sidebar is expanded. */
+.backup-management .cron-table-wrap { overflow: visible; }
+.backup-management .cron-table :is(th, td) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.backup-management .cron-table th:nth-child(1) { width: 14%; }
+.backup-management .cron-table th:nth-child(2) { width: 9%; }
+.backup-management .cron-table th:nth-child(3) { width: 10%; }
+.backup-management .cron-table th:nth-child(4) { width: 14%; }
+.backup-management .cron-table th:nth-child(5) { width: 12%; }
+.backup-management .cron-table th:nth-child(6) { width: 41%; }
+.backup-management .cron-table td:last-child { width: auto; }
+.backup-management .cron-actions > button { padding: 6px 8px; gap: 5px; }
+.backup-management .cron-schedule-state { max-width: 100%; white-space: normal; }
+
+@container (max-width: 1060px) {
+  .backup-management .cron-table { display: block; }
+  .backup-management .cron-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .backup-management .cron-table tbody { display: block; }
+  .backup-management .cron-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 16px;
+    gap: 12px 24px;
+  }
+  .backup-management .cron-table tbody tr + tr { border-top: 1px solid var(--app-border); }
+  .backup-management .cron-table tbody td {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+  .backup-management .cron-table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: var(--app-muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .backup-management .cron-table td:first-child,
+  .backup-management .cron-table td:last-child { grid-column: 1 / -1; }
+  .backup-management .cron-table td:first-child::before { display: none; }
+  .backup-management .cron-table td strong { font-size: 14px; }
+  .backup-management .cron-actions { justify-content: flex-start; gap: 8px; }
+}
+@container (max-width: 520px) {
+  .backup-management .cron-table tbody tr { grid-template-columns: minmax(0, 1fr); padding: 14px; }
+  .backup-management .cron-actions > button { flex: 1 1 auto; white-space: normal; overflow-wrap: anywhere; }
+  .backup-task-toolbar > select, .backup-task-toolbar .backup-task-search { width: 100%; }
+}

@@ -80,11 +80,15 @@ fi
 	if err != nil {
 		return "", err
 	}
-	return replaceOnce(source, "#!/bin/bash", "#!/bin/bash\n"+LayoutMarker+`
+	source, err = replaceOnce(source, "#!/bin/bash", "#!/bin/bash\n"+LayoutMarker+`
 exec 7>/run/backup-monitor-layout.lock
 flock -s 7
 exec 6>/run/backup-monitor-drive.lock
 flock -n 6 || { echo 'Drive upload already running' >&2; exit 75; }`)
+	if err != nil {
+		return "", err
+	}
+	return PatchDriveExitStatus(source)
 }
 func CleanupScript() string {
 	return `#!/usr/bin/env bash
@@ -124,6 +128,11 @@ func (c *Controller) InstallPlan() ([]scriptChange, error) {
 			return nil, err
 		}
 		content := string(original)
+		// Generated templates already call the stable Go helper and must not
+		// be fed into a legacy script rewriter.
+		if strings.Contains(content, GeneratedTaskMarker) {
+			continue
+		}
 		var updated string
 		if strings.Contains(content, LayoutMarker) {
 			reference := "/usr/bin/python3 " + filepath.ToSlash(filepath.Join(cfg.ScriptsDir, "daily_backup_layout.py"))

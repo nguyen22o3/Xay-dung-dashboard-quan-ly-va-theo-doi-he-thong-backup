@@ -4,10 +4,12 @@ dist-ssr
 *.local
 .env
 .env.*
+!.env.example
+!*.env.example
 .DS_Store
 .vscode
 
-# Keep frontend tests locally, without adding them to Git.
+# Do not commit temporary checks or generated artifacts.
 tests/
 __tests__/
 *.test.*
@@ -15,3 +17,6 @@ __tests__/
 coverage/
 test-results/
 playwright-report/
+*.tsbuildinfo
+*.tmp
+*.bak

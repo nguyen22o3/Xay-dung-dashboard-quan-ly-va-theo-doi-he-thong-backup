@@ -21,7 +21,7 @@ import (
 )
 
 const BinaryPath = "/usr/local/libexec/backup-monitor/backup-manager"
-const Version = "backup-manager-go-v9"
+const Version = "backup-manager-go-v14"
 const VersionMetadataDir = "/root/backup-monitor/metadata/versions"
 const RetentionDays = 14
 const LayoutMarker = "# backup-monitor daily layout v1"
@@ -52,23 +52,28 @@ type Request struct {
 	ExpectedVersion string          `json:"expectedVersion,omitempty"`
 	PreviewToken    string          `json:"previewToken,omitempty"`
 	Schedule        *ScheduleChange `json:"schedule,omitempty"`
+	Script          *ScriptRequest  `json:"script,omitempty"`
+	Log             *LogRequest     `json:"log,omitempty"`
+	Task            *TaskRequest    `json:"task,omitempty"`
+	Restore         *RestoreRequest `json:"restore,omitempty"`
 	Purpose         string          `json:"purpose,omitempty"`
 	Location        string          `json:"location,omitempty"`
 	Path            string          `json:"path,omitempty"`
 	Remote          string          `json:"remote,omitempty"`
 }
 type State struct {
-	Config             Settings              `json:"config"`
-	Version            string                `json:"version"`
-	Remotes            []string              `json:"remotes"`
-	LocalRetentionDays int                   `json:"localRetentionDays"`
-	DriveRetentionDays int                   `json:"driveRetentionDays"`
-	AllowedRoots       map[string][]string   `json:"allowedRoots"`
-	Ready              bool                  `json:"ready"`
-	Applied            bool                  `json:"applied"`
-	RecoveryDir        string                `json:"recoveryDir,omitempty"`
-	Warnings           []string              `json:"warnings"`
-	Sources            map[string]SourceSpec `json:"sources"`
+	SupportsMultipleSchedules bool                  `json:"supportsMultipleSchedules"`
+	Config                    Settings              `json:"config"`
+	Version                   string                `json:"version"`
+	Remotes                   []string              `json:"remotes"`
+	LocalRetentionDays        int                   `json:"localRetentionDays"`
+	DriveRetentionDays        int                   `json:"driveRetentionDays"`
+	AllowedRoots              map[string][]string   `json:"allowedRoots"`
+	Ready                     bool                  `json:"ready"`
+	Applied                   bool                  `json:"applied"`
+	RecoveryDir               string                `json:"recoveryDir,omitempty"`
+	Warnings                  []string              `json:"warnings"`
+	Sources                   map[string]SourceSpec `json:"sources"`
 }
 type Runner func(args []string, input []byte) ([]byte, error)
 type Controller struct {
@@ -248,7 +253,7 @@ func randomID() string {
 }
 func DecodeRequest(reader io.Reader) (Request, error) {
 	var request Request
-	decoder := json.NewDecoder(io.LimitReader(reader, 32769))
+	decoder := json.NewDecoder(io.LimitReader(reader, 1024*1024+1))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		return request, errors.New("Dữ liệu cấu hình không hợp lệ")
@@ -434,7 +439,7 @@ func (c *Controller) Get() (State, error) {
 	}
 	info, err := os.Stat(c.Binary)
 	ready := err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0100 != 0 && SafeParents(c.Binary) == nil
-	return State{Config: cfg, Version: version, Remotes: remotes, LocalRetentionDays: RetentionDays, DriveRetentionDays: RetentionDays, AllowedRoots: c.Roots, Ready: ready, Warnings: []string{}, Sources: sourceSelections(cfg)}, nil
+	return State{SupportsMultipleSchedules: true, Config: cfg, Version: version, Remotes: remotes, LocalRetentionDays: RetentionDays, DriveRetentionDays: RetentionDays, AllowedRoots: c.Roots, Ready: ready, Warnings: []string{}, Sources: sourceSelections(cfg)}, nil
 }
 
 type Folder struct {
@@ -572,8 +577,25 @@ func (c *Controller) Create(r Request) error {
 }
 func (c *Controller) Dispatch(r Request) (interface{}, error) {
 	switch r.Operation {
+	case "restore-preview":
+		return c.RestorePreview(r)
+	case "restore-start":
+		return c.RestoreStart(r)
+	case "restore-status":
+		return c.RestoreStatus(r)
+	case "restore-check-status":
+		entries, err := c.RestoreCheckStatus()
+		return map[string]interface{}{"entries": entries}, err
+	case "log-read":
+		return c.LogPage(r)
+	case "task-status", "task-cancel":
+		return c.TaskOperation(r)
 	case "get":
 		return c.Get()
+	case "script-read":
+		return c.ReadScript(r)
+	case "script-save":
+		return c.SaveScript(r)
 	case "list":
 		return c.List(r)
 	case "create":

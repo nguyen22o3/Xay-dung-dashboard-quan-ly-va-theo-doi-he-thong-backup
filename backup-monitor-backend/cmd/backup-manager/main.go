@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
+	"syscall"
+	"time"
 
 	"backup-monitor-backend/internal/backupops"
 )
@@ -37,6 +41,30 @@ func run(args []string) error {
 	}
 	controller := backupops.NewController()
 	switch args[0] {
+	case "progress-install":
+		if len(args) != 1 {
+			return errors.New("progress-install takes no arguments")
+		}
+		return controller.InstallProgress()
+	case "restore-check":
+		if len(args) != 1 {
+			return errors.New("restore-check takes no arguments")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Hour)
+		defer cancel()
+		return controller.RestoreCheckRun(ctx)
+	case "restore-run":
+		if len(args) != 2 {
+			return errors.New("Use restore-run <token>")
+		}
+		return controller.RestoreRun(args[1])
+	case "drive-script":
+		if len(args) != 2 || args[1] != "--preview" && args[1] != "--apply" {
+			return errors.New("Use drive-script --preview|--apply")
+		}
+		return controller.RepairDriveScript(args[1] == "--apply", os.Stdout)
 	case "versions":
 		if len(args) == 3 && args[1] == "metadata" && (args[2] == "--preview" || args[2] == "--apply") {
 			return controller.MigrateVersionMetadata(args[2] == "--apply", os.Stdout)

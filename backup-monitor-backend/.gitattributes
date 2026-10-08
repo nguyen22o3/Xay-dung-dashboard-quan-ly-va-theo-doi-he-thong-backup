@@ -1,0 +1,5 @@
+# Linux runtime artifacts must remain LF even with Windows core.autocrlf.
+ops/backup-monitor-api.service text eol=lf
+ops/backend.env.example text eol=lf
+ops/backup-monitor-restore-check.service text eol=lf
+ops/backup-monitor-restore-check.timer text eol=lf

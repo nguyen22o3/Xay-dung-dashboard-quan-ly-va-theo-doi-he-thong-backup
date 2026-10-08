@@ -1,0 +1,27 @@
+[Unit]
+Description=Backup Monitor API and file-backed notifications
+After=network-online.target
+Wants=network-online.target
+# Retry if the network is temporarily unavailable at boot.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/backup-monitor
+EnvironmentFile=/root/backup-monitor/backend.env
+ExecStart=/usr/local/libexec/backup-monitor/backup-monitor-backend
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=180
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Account, channel settings and operations JSON remain outside the executable.
+ReadWritePaths=/root/backup-monitor
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

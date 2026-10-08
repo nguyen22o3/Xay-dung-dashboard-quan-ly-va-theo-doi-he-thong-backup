@@ -80,7 +80,7 @@ var scheduleTokens = regexp.MustCompile(`[^ \t]+`)
 
 // Update only a known direct/wrapped task and preserve its arguments, recurrence
 // and pause marker. This runs inside the storage transaction, never on its own.
-func proposeSchedule(cron []byte, scriptsDir string, change *ScheduleChange, logsDirs ...string) ([]byte, *SchedulePreview, error) {
+func proposeSchedulePlanned(cron []byte, scriptsDir string, change *ScheduleChange, planned map[string]bool, logsDirs ...string) ([]byte, *SchedulePreview, error) {
 	if change == nil {
 		return cron, nil, nil
 	}
@@ -105,6 +105,7 @@ func proposeSchedule(cron []byte, scriptsDir string, change *ScheduleChange, log
 	wrapper := filepath.Join(scriptsDir, "backup-monitor-run.sh")
 	lines := strings.Split(string(cron), "\n")
 	matches := 0
+	otherSchedules := map[string]bool{}
 	var preview *SchedulePreview
 	for i, original := range lines {
 		paused := strings.HasPrefix(original, pausedSchedulePrefix)
@@ -116,17 +117,19 @@ func proposeSchedule(cron []byte, scriptsDir string, change *ScheduleChange, log
 		if len(fields) < 7 || strings.HasPrefix(fields[0], "#") || fields[5] != "/bin/bash" {
 			continue
 		}
-		wrapped := len(fields) >= 8 && fields[6] == wrapper && fields[7] == change.ID &&
-			(change.ID == "backup-site" || change.ID == "backup-database" || change.ID == "backup-panel")
+		wrapped := len(fields) >= 8 && fields[6] == wrapper && fields[7] == change.ID
 		if fields[6] != script && !wrapped {
 			continue
 		}
-		matches++
-		if creating {
-			return nil, nil, errors.New("Tác vụ đã có lịch; hãy tải lại và dùng chức năng sửa")
-		}
 		actual := strings.Join(fields[:5], " ")
-		if actual != change.ExpectedSchedule || !paused != *change.ExpectedEnabled {
+		// A task type may have several schedules. Only the selected schedule
+		// is editable; other rows and their enabled states stay unchanged.
+		if creating || actual != change.ExpectedSchedule {
+			otherSchedules[actual] = true
+			continue
+		}
+		matches++
+		if !paused != *change.ExpectedEnabled {
 			return nil, nil, errors.New("Lịch hoặc trạng thái cron đã thay đổi; hãy tải lại")
 		}
 		proposed := strconv.Itoa(minute) + " " + strconv.Itoa(hour) + " " + strings.Join(fields[2:5], " ")
@@ -146,30 +149,43 @@ func proposeSchedule(cron []byte, scriptsDir string, change *ScheduleChange, log
 			lines[i] = updated
 		}
 	}
-	if matches == 0 {
-		if creating {
-			if len(logsDirs) != 1 || SafeParents(script) != nil {
-				return nil, nil, errors.New("Không xác nhận được script hoặc thư mục log")
-			}
-			info, err := os.Stat(script)
-			if err != nil || !info.Mode().IsRegular() {
-				return nil, nil, errors.New("Script tác vụ chưa tồn tại")
-			}
-			logNames := map[string]string{"backup-site": "backup-site.log", "backup-database": "backup-database.log", "backup-panel": "backup-panel.log", "cleanup-panel": "cleanup-panel-backups.log", "drive-sync": "auto_backup.log", "integrity-check": "check_integrity.log"}
-			command := "/bin/bash " + script
-			if (change.ID == "backup-site" || change.ID == "backup-database" || change.ID == "backup-panel") && exists(wrapper) && SafeParents(wrapper) == nil {
-				command = "/bin/bash " + wrapper + " " + change.ID
-			}
-			if change.ID == "cleanup-panel" {
-				command += " --delete"
-			}
-			command += " >> " + filepath.Join(logsDirs[0], logNames[change.ID]) + " 2>&1"
-			return []byte(strings.TrimRight(string(cron), "\n") + "\n" + cycle + " " + command + "\n"), &SchedulePreview{change.ID, "", cycle, true, true}, nil
+	if creating {
+		if otherSchedules[cycle] {
+			return nil, nil, errors.New("Loại tác vụ này đã có đúng lịch đã chọn (kể cả lịch tạm dừng); hãy chọn giờ hoặc chu kỳ khác")
 		}
+		if len(logsDirs) != 1 || SafeParents(script) != nil {
+			return nil, nil, errors.New("Không xác nhận được script hoặc thư mục log")
+		}
+		info, err := os.Stat(script)
+		if !planned[script] && (err != nil || !info.Mode().IsRegular()) {
+			return nil, nil, errors.New("Script tác vụ chưa tồn tại")
+		}
+		logNames := map[string]string{"backup-site": "backup-site.log", "backup-database": "backup-database.log", "backup-panel": "backup-panel.log", "cleanup-panel": "cleanup-panel-backups.log", "drive-sync": "auto_backup.log", "integrity-check": "check_integrity.log"}
+		command := "/bin/bash " + script
+		// Older wrappers only support the three backup jobs. Preserve them;
+		// maintenance jobs stay direct until an explicit tracking upgrade.
+		supported := change.ID == "backup-site" || change.ID == "backup-database" || change.ID == "backup-panel" || planned[wrapper]
+		if !supported && exists(wrapper) {
+			data, readErr := readRegular(wrapper)
+			supported = readErr == nil && strings.Contains(string(data), TaskControlMarker+"\n")
+		}
+		if supported && (exists(wrapper) || planned[wrapper]) && SafeParents(wrapper) == nil {
+			command = "/bin/bash " + wrapper + " " + change.ID
+		}
+		if change.ID == "cleanup-panel" {
+			command += " --delete"
+		}
+		command += " >> " + filepath.Join(logsDirs[0], logNames[change.ID]) + " 2>&1"
+		return []byte(strings.TrimRight(string(cron), "\n") + "\n" + cycle + " " + command + "\n"), &SchedulePreview{change.ID, "", cycle, true, true}, nil
+	}
+	if matches == 0 {
 		return nil, nil, errors.New("Không tìm thấy lịch cron được quản lý; hãy tải lại")
 	}
 	if matches != 1 {
-		return nil, nil, errors.New("Có nhiều lịch cho cùng tác vụ; hãy xử lý lịch trùng trước")
+		return nil, nil, errors.New("Có nhiều dòng cùng loại và cùng lịch; hãy xử lý dòng trùng trước")
+	}
+	if otherSchedules[preview.Proposed] {
+		return nil, nil, errors.New("Loại tác vụ này đã có đúng lịch mới; hãy chọn giờ hoặc chu kỳ khác")
 	}
 	return []byte(strings.Join(lines, "\n")), preview, nil
 }

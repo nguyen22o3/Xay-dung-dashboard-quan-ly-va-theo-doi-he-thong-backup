@@ -1,0 +1,60 @@
+name: backup-monitor-release
+
+services:
+  backend:
+    image: nguyen22o3/backup-monitor-backend:1.0.1
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      API_BIND_ADDR: ":8080"
+      CORS_ALLOWED_ORIGINS: "http://localhost:8090,http://127.0.0.1:8090"
+      ADMIN_ACCOUNT_FILE: /data/admin_account.json
+      OPERATIONS_STATE_FILE: /data/operations_state.json
+      SSH_KNOWN_HOSTS: /run/config/known_hosts
+      SSH_INSECURE_IGNORE_HOST_KEY: "false"
+      MONITOR_TIMEZONE: Asia/Ho_Chi_Minh
+    volumes:
+      - app-data:/data
+      - type: bind
+        source: ./config
+        target: /run/config
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 180s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 4
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: nguyen22o3/backup-monitor-frontend:1.0.0
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8090:80"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  app-data:

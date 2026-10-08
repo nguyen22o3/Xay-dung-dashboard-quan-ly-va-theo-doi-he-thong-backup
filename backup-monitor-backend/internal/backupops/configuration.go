@@ -19,6 +19,7 @@ type Preview struct {
 	BytesToMove     int64            `json:"bytesToMove"`
 	DaysToMove      int              `json:"daysToMove"`
 	ScriptsToUpdate int              `json:"scriptsToUpdate"`
+	ScriptsToCreate []string         `json:"scriptsToCreate"`
 	LogsToMove      int              `json:"logsToMove"`
 	DriveChanged    bool             `json:"driveChanged"`
 	Config          Settings         `json:"config"`
@@ -113,8 +114,49 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 		}
 	}
 	p := &Proposal{Old: old, New: new, Scripts: []scriptChange{}, Logs: []logChange{}, Days: []dayChange{}}
+	planned := map[string]bool{}
+	creating := r.Schedule != nil && r.Schedule.Create
+	if creating {
+		if _, ok := TaskScripts[r.Schedule.ID]; !ok {
+			return nil, errors.New("Loại tác vụ không hợp lệ")
+		}
+	}
 	for _, name := range ScriptNames {
 		source, target := filepath.Join(old.ScriptsDir, name), filepath.Join(new.ScriptsDir, name)
+		if !exists(source) && creating {
+			isTask := name == TaskScripts[r.Schedule.ID]
+			isRunner := name == "backup-monitor-run.sh"
+			if isTask || isRunner {
+				if exists(target) || SafeParents(target) != nil {
+					return nil, errors.New("Script đích đã tồn tại hoặc không an toàn: " + target)
+				}
+				var data []byte
+				if isRunner {
+					data = []byte(ScheduledRunner(new))
+				} else {
+					if r.Schedule.ID == "backup-site" || r.Schedule.ID == "backup-database" || r.Schedule.ID == "backup-panel" {
+						if err = c.ValidateSource(new, r.Schedule.ID, effectiveSource(new, r.Schedule.ID)); err != nil {
+							return nil, err
+						}
+					}
+					data, err = GenerateTaskScript(r.Schedule.ID, new)
+					if err != nil {
+						return nil, err
+					}
+				}
+				p.Scripts = append(p.Scripts, scriptChange{source, target, nil, data})
+				planned[source] = true
+				continue
+			}
+			// A new installation can start with only the selected task. Missing
+			// scripts referenced by an existing cron are rejected below.
+			for _, change := range sources {
+				if name == change.ID+".sh" {
+					return nil, errors.New("Thiếu script để cập nhật nguồn: " + name)
+				}
+			}
+			continue
+		}
 		if !exists(source) && (name == "backup-monitor-run.sh" || name == "backup-panel.sh") {
 			if name == "backup-panel.sh" && configuredSource(old, "backup-panel") != configuredSource(new, "backup-panel") {
 				return nil, errors.New("Thiếu script backup-panel.sh; chưa lưu nguồn aaPanel")
@@ -241,7 +283,22 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 	if err != nil {
 		return nil, err
 	}
-	scheduledCron, schedulePreview, err := proposeSchedule(p.Cron, old.ScriptsDir, r.Schedule, old.LogsDir)
+	if creating {
+		for _, name := range ScriptNames {
+			path := filepath.Join(old.ScriptsDir, name)
+			if exists(path) || planned[path] {
+				continue
+			}
+			for _, line := range strings.Split(string(p.Cron), "\n") {
+				for _, field := range strings.Fields(line) {
+					if field == path {
+						return nil, errors.New("Cron hiện có trỏ tới script bị thiếu: " + name)
+					}
+				}
+			}
+		}
+	}
+	scheduledCron, schedulePreview, err := proposeSchedulePlanned(p.Cron, old.ScriptsDir, r.Schedule, planned, old.LogsDir)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +321,7 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 	p.NewCron = []byte(strings.Join(lines, "\n") + "\n")
 	fingerprints := []interface{}{Version, version, new, hashBytes(p.Cron), r.Schedule, hashBytes(p.NewCron)}
 	for _, script := range p.Scripts {
-		fingerprints = append(fingerprints, []string{script.Source, hashBytes(script.Original)})
+		fingerprints = append(fingerprints, []string{script.Source, script.Target, hashBytes(script.Original), hashBytes(script.Updated)})
 	}
 	for _, log := range p.Logs {
 		fingerprints = append(fingerprints, []string{log.Source, log.Hash})
@@ -277,8 +334,12 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 		return nil, err
 	}
 	p.Summary = Preview{Token: hashBytes(raw), Changed: len(pairs) > 0 || len(sources) > 0 || (schedulePreview != nil && schedulePreview.Changed), DaysToMove: len(p.Days), LogsToMove: len(p.Logs), DriveChanged: old.DriveRemote != new.DriveRemote || old.DriveFolder != new.DriveFolder, Config: new, Version: version, Schedule: schedulePreview, Sources: sources}
+	p.Summary.ScriptsToCreate = []string{}
 	for _, script := range p.Scripts {
-		if script.Source != script.Target || string(script.Original) != string(script.Updated) {
+		if script.Original == nil {
+			p.Summary.ScriptsToCreate = append(p.Summary.ScriptsToCreate, script.Target)
+			p.Summary.Changed = true
+		} else if script.Source != script.Target || string(script.Original) != string(script.Updated) {
 			p.Summary.ScriptsToUpdate++
 		}
 	}
@@ -376,6 +437,9 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 		return state, err
 	}
 	for _, script := range p.Scripts {
+		if script.Original == nil {
+			continue
+		}
 		if err = c.Write(filepath.Join(recovery, filepath.Base(script.Source)), script.Original, 0600); err != nil {
 			return state, err
 		}
@@ -405,7 +469,14 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 		for i := len(installed) - 1; i >= 0; i-- {
 			script := installed[i]
 			var err error
-			if script.Source == script.Target {
+			if script.Original == nil {
+				sum, readErr := Digest(script.Target)
+				if readErr != nil || sum != hashBytes(script.Updated) {
+					err = errors.New("Script mới đã thay đổi; không xóa")
+				} else {
+					err = os.Remove(script.Target)
+				}
+			} else if script.Source == script.Target {
 				err = c.Write(script.Source, script.Original, 0700)
 			} else {
 				err = os.Remove(script.Target)
@@ -462,11 +533,22 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 		}
 	}
 	for _, script := range p.Scripts {
+		if script.Original == nil {
+			if err = writeScriptExclusive(script.Target, script.Updated); err != nil {
+				return state, err
+			}
+			installed = append(installed, script)
+			continue
+		}
 		if script.Source == script.Target && string(script.Original) == string(script.Updated) {
 			continue
 		}
 		if script.Source != script.Target && exists(script.Target) {
 			return state, errors.New("Script đích đã xuất hiện sau xem trước")
+		}
+		current, readErr := readRegular(script.Source)
+		if readErr != nil || hashBytes(current) != hashBytes(script.Original) {
+			return state, errors.New("Script đã thay đổi sau xem trước; chưa ghi đè")
 		}
 		if err = c.Write(script.Target, script.Updated, 0700); err != nil {
 			return state, err

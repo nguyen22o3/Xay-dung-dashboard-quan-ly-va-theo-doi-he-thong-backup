@@ -1,0 +1,17 @@
+[Unit]
+Description=Backup Monitor isolated weekly restore verification
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/libexec/backup-monitor/backup-manager restore-check
+TimeoutStartSec=2h
+TimeoutStopSec=45s
+KillMode=control-group
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+# Podman creates its own namespaces and per-container resource limits.
+# Do not use PrivateTmp or ProtectSystem here: the runtime needs its private store.
+

@@ -1,14 +1,36 @@
 ﻿*.exe
 *.log
 .env
+.env.*
+!.env.example
+history.env
+backend.env
+postgresql-backup.env
+/backup-monitor-backend-linux-*
 .DS_Store
 
 alert_settings.json
 
-# Keep Go tests locally, without adding them to Git.
+# Do not commit temporary checks or generated artifacts.
 *_test.go
 testdata/
 tests/
 coverage/
 coverage.out
 coverage.html
+/backup-manager
+/backup-manager-linux-*
+/backup-monitor-backend
+/api
+build/
+*.tmp
+*.bak
+# Persisted administrator state and incomplete private atomic writes.
+admin_account.json
+.admin-account-*
+.admin-env-*
+
+# Private JSON operations state and atomic writes.
+operations_state.json
+operations_state.json.lock
+.operations-state-*

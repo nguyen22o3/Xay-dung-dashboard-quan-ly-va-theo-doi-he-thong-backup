@@ -1,0 +1,11 @@
+[Unit]
+Description=Verify backups every Sunday at 03:30 Vietnam time
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00 Asia/Ho_Chi_Minh
+Persistent=true
+AccuracySec=1min
+Unit=backup-monitor-restore-check.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,65 @@
+# Docker runtime contains private credentials and writable notification settings.
+/.docker/
+/.env
+/config/
+
+# Local credentials; keep configuration templates for new installations.
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+rclone.conf
+credentials.json
+service-account*.json
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.key
+*.pem
+known_hosts
+known_hosts.old
+.ssh/
+.aws/
+
+# Runtime state, never shared between installations.
+admin_account.json
+alert_settings.json
+operations_state.json
+operations_state.json.lock
+.admin-account-*
+.admin-env-*
+.operations-state-*
+*.log
+/logs/
+/backups/
+*.sql.gz
+
+# Dependencies, compiled output and caches (keep dependency lockfiles).
+node_modules/
+dist/
+dist-ssr/
+build/
+.cache/
+.vite/
+*.exe
+*.tsbuildinfo
+coverage/
+coverage.out
+coverage.html
+test-results/
+playwright-report/
+
+# Local editor settings, OS files and temporary copies.
+/.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.bak
+*.orig
+*.swp
+*.swo
+*~

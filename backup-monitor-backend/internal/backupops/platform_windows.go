@@ -10,9 +10,10 @@ import (
 	"os"
 )
 
-func privateRootOwned(info os.FileInfo) bool { return true } // Only isolated Windows tests; CLI refuses Windows.
-func device(info os.FileInfo) uint64         { return 1 }
-func inode(info os.FileInfo) uint64          { return 0 }
+func privateRootOwned(info os.FileInfo) bool         { return true }       // Only isolated Windows tests; CLI refuses Windows.
+func scriptProcessRunning(path string) (bool, error) { return false, nil } // Production is Linux-only.
+func device(info os.FileInfo) uint64                 { return 1 }
+func inode(info os.FileInfo) uint64                  { return 0 }
 func openRegular(path string) (*os.File, error) {
 	f, err := os.Open(path)
 	if err != nil {

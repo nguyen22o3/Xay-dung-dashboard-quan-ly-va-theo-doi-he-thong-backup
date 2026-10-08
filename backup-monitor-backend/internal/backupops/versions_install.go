@@ -112,11 +112,18 @@ func (c *Controller) DailyVersionsPlan() ([]scriptChange, error) {
 			return nil, err
 		}
 		text := string(before)
+		if strings.Contains(text, GeneratedTaskMarker) {
+			continue
+		}
 		if item.category == "drive" {
 			old := "gdrive:Backup/$day"
 			actual := cfg.DriveRemote + ":" + cfg.DriveFolder + "/$day"
 			text = strings.ReplaceAll(text, actual, old)
 			after, err := PatchDailyVersions(text, item.category)
+			if err != nil {
+				return nil, err
+			}
+			after, err = PatchDriveReliability(after)
 			if err != nil {
 				return nil, err
 			}
