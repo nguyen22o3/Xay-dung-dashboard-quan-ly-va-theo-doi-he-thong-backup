@@ -1,6 +1,6 @@
 # Hướng dẫn tải từ Docker Hub và cài đặt Backup Monitor
 
-Tài liệu này dành cho máy **AlmaLinux x86_64 đã cài aaPanel**. Dashboard, Docker và aaPanel chạy trên cùng một máy. Bản được dùng trong ví dụ là `1.1.6`, gồm ba image đã phát hành trên Docker Hub:
+Tài liệu này dành cho máy **AlmaLinux x86_64 đã cài aaPanel**. Dashboard, Docker và aaPanel chạy trên cùng một máy. Bản được dùng trong ví dụ là `1.1.6`; chỉ thực hiện các lệnh tải/cập nhật sau khi cả ba image đã được phát hành trên Docker Hub:
 
 - `nguyen22o3/backup-monitor:host-tools-1.1.6`: bộ cài và chương trình kết nối với hệ điều hành;
 - `nguyen22o3/backup-monitor:backend-1.1.6`: API;
@@ -66,7 +66,7 @@ Mở địa chỉ đó trên trình duyệt của máy có thể kết nối đ�
 ## 4. Kiểm tra sau cài đặt
 
 ```bash
-sudo docker compose -f /opt/backup-monitor-local/compose.yaml ps
+sudo docker compose -f /opt/backup-monitor/deployment/compose.yaml ps
 sudo systemctl status backup-monitor-agent --no-pager
 curl -fsS http://192.168.37.130:8090/api/health
 ```
@@ -74,8 +74,8 @@ curl -fsS http://192.168.37.130:8090/api/health
 Hai container cần ở trạng thái chạy, backend cần đạt `healthy`, host agent cần `active (running)` và API health cần phản hồi thành công. Khi cần xem lỗi:
 
 ```bash
-sudo docker compose -f /opt/backup-monitor-local/compose.yaml logs --tail=100 backend
-sudo docker compose -f /opt/backup-monitor-local/compose.yaml logs --tail=100 frontend
+sudo docker compose -f /opt/backup-monitor/deployment/compose.yaml logs --tail=100 backend
+sudo docker compose -f /opt/backup-monitor/deployment/compose.yaml logs --tail=100 frontend
 sudo journalctl -u backup-monitor-agent -n 100 --no-pager
 ```
 
@@ -83,10 +83,12 @@ Sau khi đăng nhập, vào mục **Cron** để kết nối tài khoản Google
 
 ## 5. Cập nhật lên bản mới
 
-Chỉ thay `X.Y.Z` bằng phiên bản mà cả ba tag `host-tools`, `backend` và `frontend` đã được phát hành. Dùng lại script được bộ cài lưu trên máy:
+Chỉ cập nhật khi cả ba tag `host-tools`, `backend` và `frontend` của cùng một phiên bản đã được phát hành. Chờ các tác vụ backup/khôi phục đang chạy hoàn tất. Khi nâng từ bản cũ lên `1.1.6`, tải **script bộ cài mới** từ image `host-tools-1.1.6` theo bước 3, kiểm tra nội dung rồi chạy với `--version 1.1.6`. Nếu bộ cài hỏi thư mục ứng dụng, chọn đúng thư mục đang dùng; xem kỹ bản xem trước và chỉ nhập `yes` khi đường dẫn nguồn/đích đúng.
+
+Sau khi cài `1.1.6`, script cập nhật được lưu ở `<thư mục ứng dụng>/deployment/install-local.sh`. Nếu dùng thư mục mặc định `/opt/backup-monitor`, lệnh cập nhật cho **các phiên bản sau** là:
 
 ```bash
-sudo bash /opt/backup-monitor-local/install-local.sh --host 192.168.37.130 --version X.Y.Z
+sudo bash /opt/backup-monitor/deployment/install-local.sh --host 192.168.37.130 --version X.Y.Z
 ```
 
 Bộ cài lưu bản sao cấu hình/dịch vụ trước khi thay thế và giữ Docker volume chứa tài khoản, JWT secret và trạng thái ứng dụng. Nên sao lưu dữ liệu quan trọng trước khi cập nhật. Không chạy `docker compose down -v`: tùy chọn `-v` sẽ xóa volume dữ liệu.
@@ -102,4 +104,4 @@ Bộ cài lưu bản sao cấu hình/dịch vụ trước khi thay thế và gi�
 | Import Cron trả `Không hoàn tất được lệnh hệ thống: crontab` | Chạy `sudo crontab -l` trên AlmaLinux. Nếu kết quả là `no crontab for root`, chạy `sudo crontab -e`, thêm một dòng chú thích như `# Backup Monitor schedules`, lưu rồi import lại. Nếu có lịch hoặc báo lỗi khác, không ghi đè crontab; kiểm tra `cronie` và quyền chạy lệnh. |
 | Không mở được trang web | Kiểm tra `docker compose ps`, mạng máy ảo và quy tắc tường lửa cho cổng `8090` trong mạng tin cậy. |
 
-Đường dẫn sau khi cài: Compose và script cập nhật ở `/opt/backup-monitor-local/`; dữ liệu ứng dụng nằm trong Docker volume của dự án `backup-monitor-local`; socket và khóa kết nối host agent ở `/var/lib/backup-monitor-agent/`.
+Đường dẫn mặc định sau khi cài: Compose và script cập nhật ở `/opt/backup-monitor/deployment/`; dữ liệu ứng dụng ở `/opt/backup-monitor/`, còn tài khoản và JWT secret nằm trong Docker volume của dự án `backup-monitor-local`; socket và khóa kết nối host agent ở `/var/lib/backup-monitor-agent/`.
