@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -25,6 +26,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"backup-monitor-backend/internal/hostagent"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -52,6 +55,8 @@ type AppConfig struct {
 	APIBindAddr      string
 	CORSAllowOrigins []string
 	SSH              SSHSettings
+	HostAgent        *hostagent.Client
+	HostIdentity     string
 }
 
 type loginAttempt struct {
@@ -81,11 +86,12 @@ type snapshotFile struct {
 }
 
 type localSnapshot struct {
-	Date     string `json:"date"`
-	Category string `json:"category"`
-	Name     string `json:"name"`
-	Size     int64  `json:"size"`
-	Modified string `json:"modified"`
+	LocalPath string `json:"localPath"`
+	Date      string `json:"date"`
+	Category  string `json:"category"`
+	Name      string `json:"name"`
+	Size      int64  `json:"size"`
+	Modified  string `json:"modified"`
 }
 
 var backupDateInName = regexp.MustCompile(`(?:^|[^0-9])(20[0-9]{2})-?([0-9]{2})-?([0-9]{2})(?:[_-]([0-9]{2})([0-9]{2})([0-9]{2}))?`)
@@ -109,18 +115,33 @@ func backupTimestamp(name, modified string) string {
 }
 
 func parseLocalSnapshots(output string) []localSnapshot {
+	snapshots := parseLocalInventory(output)
+	if len(snapshots) > 500 {
+		return snapshots[:500]
+	}
+	return snapshots
+}
+
+func parseLocalInventory(output string) []localSnapshot {
 	snapshots := make([]localSnapshot, 0)
+	seen := map[string]bool{}
 	for _, line := range strings.Split(output, "\n") {
 		parts := strings.SplitN(strings.TrimSpace(line), "|", 3)
 		if len(parts) != 3 {
 			continue
 		}
 		size, err := strconv.ParseInt(parts[1], 10, 64)
-		if err != nil {
+		if err != nil || size < 0 || seen[parts[2]] {
 			continue
 		}
-		prefix := backupSystemSettings().BackupRoot + "/"
-		if !strings.HasPrefix(parts[2], prefix) {
+		prefix := ""
+		for _, root := range configuredLocalBackupRoots() {
+			if strings.HasPrefix(parts[2], root+"/") {
+				prefix = root + "/"
+				break
+			}
+		}
+		if prefix == "" {
 			continue
 		}
 		path := strings.TrimPrefix(parts[2], prefix)
@@ -143,9 +164,11 @@ func parseLocalSnapshots(output string) []localSnapshot {
 			modified = modified[:19]
 		}
 		snapshots = append(snapshots, localSnapshot{
-			Date: backupTimestamp(name, modified), Category: category,
+			LocalPath: parts[2],
+			Date:      backupTimestamp(name, modified), Category: category,
 			Name: name, Size: size, Modified: modified,
 		})
+		seen[parts[2]] = true
 	}
 	sort.Slice(snapshots, func(i, j int) bool {
 		if snapshots[i].Date != snapshots[j].Date {
@@ -153,9 +176,6 @@ func parseLocalSnapshots(output string) []localSnapshot {
 		}
 		return snapshots[i].Modified > snapshots[j].Modified
 	})
-	if len(snapshots) > 500 {
-		return snapshots[:500]
-	}
 	return snapshots
 }
 
@@ -310,7 +330,14 @@ func parseCORSOrigins(raw string) ([]string, error) {
 }
 
 func loadConfigFromEnv() (AppConfig, error) {
-	jwtSecret, err := requiredEnv("JWT_SECRET")
+	mode := strings.TrimSpace(os.Getenv("HOST_CONNECTION_MODE"))
+	if mode == "" {
+		mode = "ssh"
+	}
+	if mode != "ssh" && mode != "local-agent" {
+		return AppConfig{}, fmt.Errorf("unsupported HOST_CONNECTION_MODE")
+	}
+	jwtSecret, err := loadJWTSecret(mode)
 	if err != nil {
 		return AppConfig{}, err
 	}
@@ -318,38 +345,18 @@ func loadConfigFromEnv() (AppConfig, error) {
 		return AppConfig{}, fmt.Errorf("JWT_SECRET must be at least 32 characters")
 	}
 
-	sshHost, err := requiredEnv("SSH_HOST")
+	var sshSettings SSHSettings
+	var agent *hostagent.Client
+	identity := ""
+	if mode == "local-agent" {
+		agent, err = loadLocalAgent()
+		identity = "local-agent"
+	} else {
+		sshSettings, err = loadSSHSettingsFromEnv()
+		identity = sshSettings.Host
+	}
 	if err != nil {
 		return AppConfig{}, err
-	}
-	if _, _, err := net.SplitHostPort(sshHost); err != nil {
-		return AppConfig{}, fmt.Errorf("SSH_HOST must use host:port format: %w", err)
-	}
-	sshUser, err := requiredEnv("SSH_USER")
-	if err != nil {
-		return AppConfig{}, err
-	}
-	allowRoot, err := explicitBoolEnv("ALLOW_ROOT_SSH")
-	if err != nil {
-		return AppConfig{}, err
-	}
-	if sshUser == "root" && !allowRoot {
-		return AppConfig{}, fmt.Errorf("SSH_USER=root requires explicit ALLOW_ROOT_SSH=true")
-	}
-
-	insecureHostKey, err := explicitBoolEnv("SSH_INSECURE_IGNORE_HOST_KEY")
-	if err != nil {
-		return AppConfig{}, err
-	}
-	knownHostsPath := strings.TrimSpace(os.Getenv("SSH_KNOWN_HOSTS"))
-	if !insecureHostKey && knownHostsPath == "" {
-		return AppConfig{}, fmt.Errorf("SSH_KNOWN_HOSTS is required unless SSH_INSECURE_IGNORE_HOST_KEY=true")
-	}
-
-	sshPassword := os.Getenv("SSH_PASSWORD")
-	privateKeyPath := strings.TrimSpace(os.Getenv("SSH_PRIVATE_KEY_PATH"))
-	if sshPassword == "" && privateKeyPath == "" {
-		return AppConfig{}, fmt.Errorf("set SSH_PASSWORD or SSH_PRIVATE_KEY_PATH")
 	}
 
 	bindAddr := strings.TrimSpace(os.Getenv("API_BIND_ADDR"))
@@ -359,34 +366,66 @@ func loadConfigFromEnv() (AppConfig, error) {
 	if _, _, err := net.SplitHostPort(bindAddr); err != nil {
 		return AppConfig{}, fmt.Errorf("API_BIND_ADDR must use host:port format: %w", err)
 	}
-
 	corsOrigins, err := parseCORSOrigins(os.Getenv("CORS_ALLOWED_ORIGINS"))
 	if err != nil {
 		return AppConfig{}, err
 	}
-
-	cfg := AppConfig{
-		JWTSecret:        []byte(jwtSecret),
-		APIBindAddr:      bindAddr,
-		CORSAllowOrigins: corsOrigins,
-		SSH: SSHSettings{
-			Host:                 sshHost,
-			User:                 sshUser,
-			Password:             sshPassword,
-			PrivateKeyPath:       privateKeyPath,
-			PrivateKeyPassphrase: os.Getenv("SSH_PRIVATE_KEY_PASSPHRASE"),
-			KnownHostsPath:       knownHostsPath,
-			InsecureHostKey:      insecureHostKey,
-		},
-	}
-	if _, err := buildSSHClientConfig(cfg.SSH); err != nil {
-		return AppConfig{}, fmt.Errorf("invalid SSH configuration: %w", err)
-	}
+	cfg := AppConfig{JWTSecret: []byte(jwtSecret), APIBindAddr: bindAddr, CORSAllowOrigins: corsOrigins,
+		SSH: sshSettings, HostAgent: agent, HostIdentity: identity}
 	cfg.Account, err = initializeAdminAccount()
 	if err != nil {
 		return AppConfig{}, err
 	}
 	return cfg, nil
+}
+
+func loadSSHSettingsFromEnv() (SSHSettings, error) {
+	sshHost, err := requiredEnv("SSH_HOST")
+	if err != nil {
+		return SSHSettings{}, err
+	}
+	if _, _, err := net.SplitHostPort(sshHost); err != nil {
+		return SSHSettings{}, fmt.Errorf("SSH_HOST must use host:port format: %w", err)
+	}
+	sshUser, err := requiredEnv("SSH_USER")
+	if err != nil {
+		return SSHSettings{}, err
+	}
+	allowRoot, err := explicitBoolEnv("ALLOW_ROOT_SSH")
+	if err != nil {
+		return SSHSettings{}, err
+	}
+	if sshUser == "root" && !allowRoot {
+		return SSHSettings{}, fmt.Errorf("SSH_USER=root requires explicit ALLOW_ROOT_SSH=true")
+	}
+
+	insecureHostKey, err := explicitBoolEnv("SSH_INSECURE_IGNORE_HOST_KEY")
+	if err != nil {
+		return SSHSettings{}, err
+	}
+	knownHostsPath := strings.TrimSpace(os.Getenv("SSH_KNOWN_HOSTS"))
+	if !insecureHostKey && knownHostsPath == "" {
+		return SSHSettings{}, fmt.Errorf("SSH_KNOWN_HOSTS is required unless SSH_INSECURE_IGNORE_HOST_KEY=true")
+	}
+
+	sshPassword := os.Getenv("SSH_PASSWORD")
+	privateKeyPath := strings.TrimSpace(os.Getenv("SSH_PRIVATE_KEY_PATH"))
+	if sshPassword == "" && privateKeyPath == "" {
+		return SSHSettings{}, fmt.Errorf("set SSH_PASSWORD or SSH_PRIVATE_KEY_PATH")
+	}
+	settings := SSHSettings{
+		Host:                 sshHost,
+		User:                 sshUser,
+		Password:             sshPassword,
+		PrivateKeyPath:       privateKeyPath,
+		PrivateKeyPassphrase: os.Getenv("SSH_PRIVATE_KEY_PASSPHRASE"),
+		KnownHostsPath:       knownHostsPath,
+		InsecureHostKey:      insecureHostKey,
+	}
+	if _, err := buildSSHClientConfig(settings); err != nil {
+		return SSHSettings{}, fmt.Errorf("invalid SSH configuration: %w", err)
+	}
+	return settings, nil
 }
 
 // ========================
@@ -482,16 +521,17 @@ func cachedGetWithPolicy(key string, ttl time.Duration, producer func() ([]byte,
 		}
 		return value
 	}
+	flightMu.Lock()
 	cacheMu.Lock()
 	entry, hasEntry := cache[key]
 	isFresh := hasEntry && time.Now().Before(entry.expiresAt)
 	cacheMu.Unlock()
 
 	if isFresh {
+		flightMu.Unlock()
 		return entry.value, nil
 	}
 
-	flightMu.Lock()
 	call, isRunning := inFlight[key]
 	if isRunning {
 		flightMu.Unlock()
@@ -508,7 +548,9 @@ func cachedGetWithPolicy(key string, ttl time.Duration, producer func() ([]byte,
 
 	doWork := func() ([]byte, error) {
 		b, err := producer()
-		if err == nil {
+		flightMu.Lock()
+		current := inFlight[key] == call
+		if err == nil && current {
 			valueTTL := ttl
 			if ttlForValue != nil {
 				valueTTL = ttlForValue(b)
@@ -521,8 +563,9 @@ func cachedGetWithPolicy(key string, ttl time.Duration, producer func() ([]byte,
 		call.val = b
 		call.err = err
 
-		flightMu.Lock()
-		delete(inFlight, key)
+		if current {
+			delete(inFlight, key)
+		}
 		close(call.done)
 		flightMu.Unlock()
 
@@ -543,11 +586,15 @@ func cachedGetWithPolicy(key string, ttl time.Duration, producer func() ([]byte,
 }
 
 func invalidate(keys ...string) {
+	flightMu.Lock()
 	cacheMu.Lock()
 	for _, k := range keys {
 		delete(cache, k)
+		// Old reads may finish later, but cannot refill the new configuration's cache.
+		delete(inFlight, k)
 	}
 	cacheMu.Unlock()
+	flightMu.Unlock()
 }
 
 // ===== SSH CONNECTION POOL =====
@@ -693,6 +740,16 @@ func executeSSHCommandRaw(command string) (string, error) {
 }
 
 func executeSSHCommandInputRaw(command string, input []byte) (string, error) {
+	return executeSSHCommandInputRawTimeout(command, input, 60*time.Second)
+}
+
+func executeSSHCommandInputRawTimeout(command string, input []byte, timeout time.Duration) (string, error) {
+	command = configuredRuntimeCommand(command)
+	if runtimeConfig.HostAgent != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout+5*time.Second)
+		defer cancel()
+		return runtimeConfig.HostAgent.Execute(ctx, command, input)
+	}
 	session, err := newSSHSession()
 	if err != nil {
 		return "", err
@@ -716,9 +773,9 @@ func executeSSHCommandInputRaw(command string, input []byte) (string, error) {
 	}()
 
 	select {
-	case <-time.After(60 * time.Second):
+	case <-time.After(timeout):
 		session.Signal(ssh.SIGKILL)
-		return "", fmt.Errorf("SSH command timed out after 60s")
+		return "", fmt.Errorf("SSH command timed out after %s; reload state before retrying", timeout)
 	case res := <-done:
 		if res.err != nil {
 			return "", fmt.Errorf("Lệnh lỗi: %v, Chi tiết: %s", res.err, stderrBuf.String())
@@ -758,29 +815,31 @@ func validSnapshotPath(p string) bool {
 // Alert settings are stored locally. Secret values are accepted on writes but are
 // never serialized in API responses.
 type AlertSettings struct {
-	TelegramToken   string `json:"telegramToken"`
-	TelegramChat    string `json:"telegramChat"`
-	DiscordWebhook  string `json:"discordWebhook"`
-	SmtpEmail       string `json:"smtpEmail"`
-	SmtpPassword    string `json:"smtpPassword"`
-	TargetEmail     string `json:"targetEmail"`
-	Threshold       int    `json:"threshold"`
-	TelegramEnabled *bool  `json:"telegramEnabled,omitempty"`
-	DiscordEnabled  *bool  `json:"discordEnabled,omitempty"`
-	SmtpEnabled     *bool  `json:"smtpEnabled,omitempty"`
+	TelegramToken   string   `json:"telegramToken"`
+	TelegramChat    string   `json:"telegramChat"`
+	DiscordWebhook  string   `json:"discordWebhook"`
+	SmtpEmail       string   `json:"smtpEmail"`
+	SmtpPassword    string   `json:"smtpPassword"`
+	TargetEmail     string   `json:"targetEmail"`
+	Threshold       int      `json:"threshold"`
+	MonitorPaths    []string `json:"monitorPaths,omitempty"`
+	TelegramEnabled *bool    `json:"telegramEnabled,omitempty"`
+	DiscordEnabled  *bool    `json:"discordEnabled,omitempty"`
+	SmtpEnabled     *bool    `json:"smtpEnabled,omitempty"`
 }
 
 type AlertSettingsResponse struct {
-	TelegramChat       string `json:"telegramChat"`
-	SmtpEmail          string `json:"smtpEmail"`
-	TargetEmail        string `json:"targetEmail"`
-	Threshold          int    `json:"threshold"`
-	TelegramConfigured bool   `json:"telegramConfigured"`
-	DiscordConfigured  bool   `json:"discordConfigured"`
-	SmtpConfigured     bool   `json:"smtpConfigured"`
-	TelegramEnabled    bool   `json:"telegramEnabled"`
-	DiscordEnabled     bool   `json:"discordEnabled"`
-	SmtpEnabled        bool   `json:"smtpEnabled"`
+	TelegramChat       string   `json:"telegramChat"`
+	SmtpEmail          string   `json:"smtpEmail"`
+	TargetEmail        string   `json:"targetEmail"`
+	Threshold          int      `json:"threshold"`
+	MonitorPaths       []string `json:"monitorPaths"`
+	TelegramConfigured bool     `json:"telegramConfigured"`
+	DiscordConfigured  bool     `json:"discordConfigured"`
+	SmtpConfigured     bool     `json:"smtpConfigured"`
+	TelegramEnabled    bool     `json:"telegramEnabled"`
+	DiscordEnabled     bool     `json:"discordEnabled"`
+	SmtpEnabled        bool     `json:"smtpEnabled"`
 }
 
 func alertChannelEnabled(value *bool, configured bool) bool {
@@ -788,6 +847,46 @@ func alertChannelEnabled(value *bool, configured bool) bool {
 		return configured
 	}
 	return *value && configured
+}
+
+func effectiveMonitorPaths(settings AlertSettings) []string {
+	if settings.MonitorPaths != nil {
+		return append([]string{}, settings.MonitorPaths...)
+	}
+	return configuredLocalBackupRoots()
+}
+
+var alertMonitorPathRe = regexp.MustCompile(`^/[A-Za-z0-9_./-]+$`)
+
+func validateAlertMonitorPaths(paths []string) error {
+	return validateAlertMonitorPathsWithin(paths, configuredLocalBackupRoots())
+}
+
+func validateAlertMonitorPathsWithin(paths, allowed []string) error {
+	if len(paths) == 0 || len(paths) > 8 {
+		return fmt.Errorf("chọn từ 1 đến 8 thư mục backup để giám sát")
+	}
+	seen := map[string]bool{}
+	for _, selected := range paths {
+		if len(selected) > 256 || selected == "/" || !alertMonitorPathRe.MatchString(selected) || path.Clean(selected) != selected {
+			return fmt.Errorf("đường dẫn giám sát không hợp lệ: %q", selected)
+		}
+		permitted := false
+		for _, root := range allowed {
+			if selected == root || strings.HasPrefix(selected, strings.TrimRight(root, "/")+"/") {
+				permitted = true
+				break
+			}
+		}
+		if !permitted {
+			return fmt.Errorf("thư mục giám sát phải nằm trong nơi lưu backup đã cấu hình: %q", selected)
+		}
+		if seen[selected] {
+			return fmt.Errorf("thư mục giám sát bị chọn trùng: %q", selected)
+		}
+		seen[selected] = true
+	}
+	return nil
 }
 
 var (
@@ -801,6 +900,7 @@ func safeAlertSettings(settings AlertSettings) AlertSettingsResponse {
 		SmtpEmail:          settings.SmtpEmail,
 		TargetEmail:        settings.TargetEmail,
 		Threshold:          settings.Threshold,
+		MonitorPaths:       effectiveMonitorPaths(settings),
 		TelegramConfigured: settings.TelegramToken != "",
 		DiscordConfigured:  settings.DiscordWebhook != "",
 		SmtpConfigured:     settings.SmtpPassword != "",
@@ -836,6 +936,9 @@ func validateDiscordWebhook(value string) error {
 func validateAlertSettings(settings AlertSettings) error {
 	if settings.Threshold < 1 || settings.Threshold > 365 {
 		return fmt.Errorf("threshold must be between 1 and 365")
+	}
+	if err := validateAlertMonitorPaths(effectiveMonitorPaths(settings)); err != nil {
+		return err
 	}
 	if len(settings.TelegramToken) > 256 || (settings.TelegramToken != "" && !telegramTokenRe.MatchString(settings.TelegramToken)) {
 		return fmt.Errorf("invalid Telegram token")
@@ -889,6 +992,9 @@ func readAlertSettings(path string) (AlertSettings, error) {
 }
 
 func mergeAlertSecrets(current, incoming AlertSettings) AlertSettings {
+	if incoming.MonitorPaths == nil {
+		incoming.MonitorPaths = current.MonitorPaths
+	}
 	if incoming.TelegramEnabled == nil {
 		incoming.TelegramEnabled = current.TelegramEnabled
 	}
@@ -1008,6 +1114,17 @@ is_script_rotation() {
 }`
 
 func buildAlertScripts(settings AlertSettings) (string, string) {
+	return buildAlertScriptsForRoots(settings, effectiveMonitorPaths(settings))
+}
+
+func buildAlertScriptsForRoots(settings AlertSettings, roots []string) (string, string) {
+	quotedRoots := make([]string, 0, len(roots))
+	for _, root := range roots {
+		root = strings.TrimRight(root, "/")
+		if root != "" {
+			quotedRoots = append(quotedRoots, activityShellQuote(root))
+		}
+	}
 	variables := fmt.Sprintf(`decode_value() { printf '%%s' "$1" | base64 -d; }
 DISCORD_WEBHOOK=$(decode_value '%s')
 TELEGRAM_TOKEN=$(decode_value '%s')
@@ -1061,6 +1178,15 @@ exit 0`, variables, settings.Threshold, settings.Threshold)
 set -u
 %s
 %s
+WATCH_ROOT_CANDIDATES=(%s)
+WATCH_ROOTS=()
+for ROOT in "${WATCH_ROOT_CANDIDATES[@]}"; do
+    [[ -d "$ROOT" && ! -L "$ROOT" ]] && WATCH_ROOTS+=("$ROOT")
+done
+if (( ${#WATCH_ROOTS[@]} == 0 )); then
+    echo 'No configured backup directory is available to monitor' >&2
+    exit 1
+fi
 send_delete_alert() {
     local file="$1" msg
     msg="BAO DONG KHAN CAP: File backup [$file] vua bi XOA khoi may chu! Thoi gian: $(date)"
@@ -1087,14 +1213,23 @@ check_panel_zip_replacement() {
 
 exec 9>/run/backup-monitor-inotify.lock
 flock -n 9 || exit 0
-inotifywait -m -r -e delete --format '%%w%%f' /www/backup/ 2>/dev/null | while IFS= read -r FILE
+inotifywait -m -r -e delete --format '%%w%%f' "${WATCH_ROOTS[@]}" 2>/dev/null | while IFS= read -r FILE
 do
     if [[ ! "$FILE" =~ \.(zip|tar\.gz|gz|sql)$ ]]; then
         continue
     fi
 
+    RELATIVE_FILE=''
+    for ROOT in "${WATCH_ROOTS[@]}"; do
+        if [[ "$FILE" == "$ROOT"/* ]]; then
+            RELATIVE_FILE="${FILE#"$ROOT"/}"
+            break
+        fi
+    done
+    [[ -n "$RELATIVE_FILE" ]] || continue
+
     # aaPanel removes SQL work files after packing its dated ZIP.
-    if [[ "$FILE" =~ ^/www/backup/panel/[0-9]{4}-[0-9]{2}-[0-9]{2}/data/ ]]; then
+    if [[ "$RELATIVE_FILE" =~ ^panel/[0-9]{4}-[0-9]{2}-[0-9]{2}/data/ ]]; then
         continue
     fi
 
@@ -1103,21 +1238,29 @@ do
         continue
     fi
 
-    if [[ "$FILE" == "/www/backup/panel/$(date +%%F).zip" ]]; then
+    if [[ "$RELATIVE_FILE" == "panel/$(date +%%F).zip" ]]; then
         check_panel_zip_replacement "$FILE" "$(date +%%s)" </dev/null >/dev/null 2>&1 &
         continue
     fi
 
     send_delete_alert "$FILE"
- done`, variables, rotationDecisionShell, localRetentionCopies)
+ done`, variables, rotationDecisionShell, strings.Join(quotedRoots, " "), localRetentionCopies)
 
-	return configuredBackupCommand(integrityScript), configuredBackupCommand(realtimeScript)
+	return configuredBackupCommand(integrityScript), realtimeScript
 }
 
-func buildAlertInstallCommand(integrityScript, realtimeScript string) string {
+func buildAlertInstallCommand(integrityScript, realtimeScript string, monitorPaths []string) string {
+	quotedPaths := make([]string, 0, len(monitorPaths))
+	for _, selected := range monitorPaths {
+		quotedPaths = append(quotedPaths, activityShellQuote(selected))
+	}
 	return fmt.Sprintf(`set -eu
 umask 077
 command -v inotifywait >/dev/null 2>&1 || { dnf install epel-release -y >/dev/null 2>&1 && dnf install inotify-tools -y >/dev/null 2>&1; }
+MONITOR_PATHS=(%s)
+for ROOT in "${MONITOR_PATHS[@]}"; do
+  [ -d "$ROOT" ] && [ ! -L "$ROOT" ] && [ "$(realpath -e -- "$ROOT")" = "$ROOT" ] || { printf 'Invalid or missing monitor directory: %%s\n' "$ROOT" >&2; exit 1; }
+done
 SCRIPTS_DIR=/root/scripts
 [ ! -L "$SCRIPTS_DIR" ] || { printf 'Scripts directory must not be a symlink\n' >&2; exit 1; }
 install -d -m 700 "$SCRIPTS_DIR"
@@ -1128,6 +1271,7 @@ trap 'rm -f -- "$INTEGRITY_TMP" "$REALTIME_TMP"' EXIT
 printf '%%s' '%s' | base64 -d > "$INTEGRITY_TMP"
 printf '%%s' '%s' | base64 -d > "$REALTIME_TMP"
 chmod 600 "$INTEGRITY_TMP" "$REALTIME_TMP"
+bash -n "$INTEGRITY_TMP" "$REALTIME_TMP"
 mv -f -- "$INTEGRITY_TMP" "$SCRIPTS_DIR/check_integrity.sh"
 mv -f -- "$REALTIME_TMP" "$SCRIPTS_DIR/realtime_monitor.sh"
 exec 8>/root/.backup-monitor-crontab.lock
@@ -1141,7 +1285,7 @@ fi
 printf '%%s\n' "$UPDATED_CRON" '@reboot nohup /bin/bash /root/scripts/realtime_monitor.sh >/dev/null 2>&1 &' | crontab -
 flock -u 8
 exec 8>&-
-OLD_MONITORS=$(pgrep -f '^(/bin/)?bash /root/(scripts/)?realtime_monitor[.]sh$' || true)
+OLD_MONITORS=$(pgrep -f '%s' || true)
 for PID in $OLD_MONITORS; do
   pkill -TERM -P "$PID" 2>/dev/null || true
   kill -TERM "$PID" 2>/dev/null || true
@@ -1155,7 +1299,7 @@ for attempt in 1 2 3 4 5; do
 done
 printf 'Previous backup monitor still holds the lock\n' >&2
 exit 1
-`, encodeForShell(integrityScript), encodeForShell(realtimeScript))
+`, strings.Join(quotedPaths, " "), encodeForShell(integrityScript), encodeForShell(realtimeScript), "^(/bin/)?bash ("+regexp.QuoteMeta(configuredScript("realtime_monitor.sh"))+"|/root/(scripts/)?realtime_monitor[.]sh)$")
 }
 
 var runJobSSHCommand = executeSSHCommand
@@ -1238,9 +1382,27 @@ func setupRouter(cfg AppConfig) *gin.Engine {
 	auth := r.Group("/api")
 	auth.Use(authMiddleware(cfg.JWTSecret, cfg.Account))
 	auth.Use(func(c *gin.Context) {
-		if c.Request.Method == http.MethodPost && c.Request.URL.Path == "/api/backup-system/apply" {
-			c.Next()
+		if c.Request.Method == http.MethodGet && c.Request.URL.Path == "/api/backup-system" {
+			c.Next() // The handler accepts remote configuration under its write lock.
 			return
+		}
+		if c.Request.Method == http.MethodPost {
+			switch c.Request.URL.Path {
+			case "/api/backup-system/apply", "/api/backup-system/scripts/save", "/api/backup-system/drive/connect":
+				// These handlers take the write lock themselves. Holding the read
+				// lock here would deadlock configuration writes.
+				c.Next()
+				return
+			}
+		}
+		if c.Request.Method == http.MethodGet && storageReadRoute(c.Request.URL.Path) {
+			backupSystemMutation.Lock()
+			err := refreshBackupSystemIfDue(func() ([]byte, error) { return backupSystemOperation("get", nil) }, time.Now())
+			backupSystemMutation.Unlock()
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusBadGateway, gin.H{"error": "Chưa xác nhận được nơi lưu hiện tại từ máy chủ; hãy thử lại"})
+				return
+			}
 		}
 		backupSystemMutation.RLock()
 		defer backupSystemMutation.RUnlock()
@@ -1270,58 +1432,16 @@ func setupRouter(cfg AppConfig) *gin.Engine {
 		})
 
 		auth.GET("/server-status", func(c *gin.Context) {
-			cmds := `
-DISK=$(df -h / | awk 'NR==2 {printf "{\"total\":\"%s\", \"used\":\"%s\", \"free\":\"%s\", \"usage\":\"%s\"}", $2, $3, $4, $5}')
-RAM=$(free -m | awk 'NR==2{printf "{\"total\":\"%sMB\", \"used\":\"%sMB\", \"free\":\"%sMB\", \"usage\":\"%.1f%%\"}", $2, $3, $4, $3*100/$2}')
-CPU=$(vmstat 1 2 | tail -1 | awk '{printf "%.1f%%", 100 - $15}')
-UPTIME=$(uptime -p | sed 's/up //')
-SERVER_TIME=$(date -Iseconds)
-WEBSITES=$(find /www/wwwroot -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -v "/default$" | wc -l)
-DATABASES=$(find /www/server/data -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -vE "/(mysql|performance_schema|sys|phpmyadmin)$" | wc -l)
-CRON_SCHEDULES=$(crontab -l 2>/dev/null | awk '
-  NF >= 7 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $6 == "/bin/bash" {
-    if ($7 == "/root/scripts/backup-site.sh" || $7 == "/root/scripts/backup-database.sh" || $7 == "/root/scripts/backup-panel.sh" || ($7 == "/root/scripts/backup-monitor-run.sh" && ($8 == "backup-site" || $8 == "backup-database" || $8 == "backup-panel"))) type = "local"
-    else if ($7 == "/root/scripts/auto_backup.sh") type = "drive"
-    else if ($7 == "/root/scripts/cleanup-panel-backups.sh" || $7 == "/root/scripts/check_integrity.sh") type = "other"
-    else next
-    printf "%s %02d:%02d\n", type, $2, $1
-  }
-')
-CRONJOBS=$(printf '%s\n' "$CRON_SCHEDULES" | sed '/^$/d' | wc -l)
-CRON_TIMES=$(printf '%s\n' "$CRON_SCHEDULES" | awk 'NF == 2 {print $2}' | sort | paste -sd, - | sed 's/,/, /g')
-DRIVE_CRONJOBS=$(printf '%s\n' "$CRON_SCHEDULES" | awk '$1 == "drive" {print 1}' | wc -l)
-DRIVE_CRON_TIMES=$(printf '%s\n' "$CRON_SCHEDULES" | awk '$1 == "drive" {print $2}' | sort | paste -sd, - | sed 's/,/, /g')
-LOCAL_CRONJOBS=$(printf '%s\n' "$CRON_SCHEDULES" | awk '$1 == "local" {print 1}' | wc -l)
-LOCAL_CRON_TIMES=$(printf '%s\n' "$CRON_SCHEDULES" | awk '$1 == "local" {print $2}' | sort | paste -sd, - | sed 's/,/, /g')
-
-LOCAL_BACKUP_DIR="/www/backup"
-if [ -d "$LOCAL_BACKUP_DIR" ]; then
-  # Only count backup artifacts belonging to websites, databases, or aaPanel.
-  # Ignore temporary files and unrelated content kept in /www/backup.
-  LOCAL_FILES=$(` + localBackupFindCommand + ` -printf '%p\n' 2>/dev/null || true)
-  LOCAL_COUNT=$(printf '%s\n' "$LOCAL_FILES" | sed '/^$/d' | wc -l)
-  LOCAL_SIZE=$(printf '%s\n' "$LOCAL_FILES" | sed '/^$/d' | xargs -r du -ch 2>/dev/null | tail -1 | awk '{print $1}')
-  LOCAL_SIZE=${LOCAL_SIZE:-0}
-  LOCAL_LATEST=$(printf '%s\n' "$LOCAL_FILES" | sed '/^$/d' | xargs -r -n1 stat -c '%Y %n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
-  LOCAL_LATEST_DATE=$(stat -c '%y' "$LOCAL_LATEST" 2>/dev/null | cut -d' ' -f1)
-  LOCAL_LATEST_NAME=$(basename "$LOCAL_LATEST" 2>/dev/null)
-else
-  LOCAL_SIZE="0"
-  LOCAL_COUNT=0
-  LOCAL_LATEST_DATE=""
-  LOCAL_LATEST_NAME=""
-fi
-
-LOCAL_BACKUP="{\"size\":\"$LOCAL_SIZE\", \"count\":$LOCAL_COUNT, \"latest_date\":\"$LOCAL_LATEST_DATE\", \"latest_name\":\"$LOCAL_LATEST_NAME\"}"
-
-echo "{\"server_time\":\"$SERVER_TIME\", \"disk\": $DISK, \"ram\": $RAM, \"cpu\": \"$CPU\", \"uptime\": \"$UPTIME\", \"websites\": $WEBSITES, \"databases\": $DATABASES, \"drive_crons\": $DRIVE_CRONJOBS, \"drive_cron_times\": \"$DRIVE_CRON_TIMES\", \"local_crons\": $LOCAL_CRONJOBS, \"local_cron_times\": \"$LOCAL_CRON_TIMES\", \"crons\": $CRONJOBS, \"cron_times\": \"$CRON_TIMES\", \"local_backup\": $LOCAL_BACKUP}"
-`
+			cmds := serverStatusReadCommand()
 			output, err := cachedGet("server-status", 15*time.Second, func() ([]byte, error) {
-				out, e := executeSSHCommand(cmds)
-				return []byte(out), e
+				out, e := executeSSHCommandRaw(cmds)
+				if e != nil {
+					return nil, e
+				}
+				return parseServerStatus(out)
 			})
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể kết nối SSH lấy thông số", "detail": err.Error()})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thông số máy chủ", "detail": err.Error()})
 				return
 			}
 
@@ -1428,17 +1548,7 @@ if [ -n "$DRIVE_ERROR" ]; then
   HISTORY="[]"
 fi
 
-ACTIVITY="["
-FIRST=1
-if [ -f /var/log/aapanel_backup.log ]; then
-  while IFS='|' read -r ad at adur ast; do
-    [ -z "$ad" ] && continue
-    if [ "$FIRST" -ne 1 ]; then ACTIVITY="$ACTIVITY,"; fi
-    FIRST=0
-    ACTIVITY="$ACTIVITY{\"name\":\"Lưu trữ bản backup lên Google Drive\",\"date\":\"$ad\",\"time\":\"$at\",\"duration\":\"$adur\",\"status\":\"$ast\"}"
-  done < /var/log/aapanel_backup.log
-fi
-ACTIVITY="$ACTIVITY]"
+ACTIVITY=$(__DRIVE_ACTIVITY_COMMAND__)
 
 LOCAL_LOGS=$(awk '
     /start backup\[/ {
@@ -1469,10 +1579,10 @@ LOCAL_LOGS=$(awk '
         printf "{\"name\":\"%s\",\"date\":\"%s\",\"time\":\"%s\",\"duration\":\"%s\",\"status\":\"%s\"},", name, date, time, duration, status
     }
     ' /www/server/cron/*.log 2>/dev/null | sed 's/,$//')
-CUSTOM_LOCAL_LOGS=$(` + customLocalActivityCommand() + `)
-RUN_LOGS=$(` + backupRunActivityCommand() + `)
-PANEL_LOGS=$(` + panelActivityCommand() + `)
-PANEL_ARCHIVES=$(` + panelArchiveActivityCommand() + `)
+CUSTOM_LOCAL_LOGS=$(__CUSTOM_LOCAL_ACTIVITY_COMMAND__)
+RUN_LOGS=$(__BACKUP_RUN_ACTIVITY_COMMAND__)
+PANEL_LOGS=$(__PANEL_ACTIVITY_COMMAND__)
+PANEL_ARCHIVES=$(__PANEL_ARCHIVE_ACTIVITY_COMMAND__)
 LOCAL_ACTIVITY="["
 SEP=""
 for ENTRIES in "$LOCAL_LOGS" "$CUSTOM_LOCAL_LOGS" "$RUN_LOGS" "$PANEL_LOGS" "$PANEL_ARCHIVES"; do
@@ -1483,7 +1593,7 @@ LOCAL_ACTIVITY="$LOCAL_ACTIVITY]"
 echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\": $TOTAL_FOLDERS, \"history\": $HISTORY, \"activity\": $ACTIVITY, \"localActivity\": $LOCAL_ACTIVITY, \"driveError\": \"$DRIVE_ERROR\", \"todayBreakdown\": {\"site\": ${TODAY_SITE:-0}, \"database\": ${TODAY_DB:-0}, \"panel\": ${TODAY_PANEL:-0}}, \"todayBreakdownBytes\": {\"site\": ${TODAY_SITE_BYTES:-0}, \"database\": ${TODAY_DB_BYTES:-0}, \"panel\": ${TODAY_PANEL_BYTES:-0}}}"
 `
 			output, err := cachedGetWithPolicy("backup-status", 120*time.Second, func() ([]byte, error) {
-				out, e := executeSSHCommand(cmds)
+				out, e := executeSSHCommandRaw(resolvedBackupStatusCommand(cmds))
 				if e != nil {
 					return nil, e
 				}
@@ -1580,14 +1690,14 @@ echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\"
 					c.JSON(http.StatusConflict, gin.H{"error": "Script cronjob không còn khả dụng"})
 					return
 				}
-				if req.JobID == "cleanup-panel" {
+				if strings.Split(req.JobID, "~")[0] == "cleanup-panel" {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Dọn dẹp aaPanel chưa hoàn tất; hãy kiểm tra log cronjob"})
 					return
 				}
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể khởi chạy cronjob"})
 				return
 			}
-			if req.JobID == "cleanup-panel" {
+			if strings.Split(req.JobID, "~")[0] == "cleanup-panel" {
 				deleted, ok := parsePanelCleanupResult(output)
 				if !ok {
 					releaseReservation()
@@ -1655,6 +1765,9 @@ done
 				cmd = "tail -n 50 /var/log/secure"
 			default:
 				cmd = "tail -n 50 /var/log/messages"
+			}
+			if logType == "backup" {
+				cmd = strings.Replace(cmd, "tail -n 15 /root/backup-site.log /root/backup-database.log /root/auto_backup.log /root/cleanup-panel-backups.log /root/check_integrity.log", "tail -n 15 "+managedLogArguments(), 1)
 			}
 
 			key := "logs-" + logType
@@ -1760,7 +1873,7 @@ done
 				}
 				return
 			}
-			if !strings.HasPrefix(strings.TrimSpace(output), "UPDATED|/root/backup-monitor/cron-recovery/schedule-"+task.ID+".") {
+			if !strings.HasPrefix(strings.TrimSpace(output), "UPDATED|"+remoteInstallation().ConfigDir+"/cron-recovery/schedule-"+task.ID+".") {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xác nhận được lịch chạy đã lưu"})
 				return
 			}
@@ -1807,7 +1920,7 @@ done
 				return
 			}
 			backupPath, ok := strings.CutPrefix(strings.TrimSpace(output), "DELETED|")
-			if !ok || !strings.HasPrefix(backupPath, "/root/backup-monitor/cron-recovery/delete-"+task.ID+".") || !strings.HasSuffix(backupPath, "/crontab.txt") {
+			if !ok || !strings.HasPrefix(backupPath, remoteInstallation().ConfigDir+"/cron-recovery/delete-"+task.ID+".") || !strings.HasSuffix(backupPath, "/crontab.txt") {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xác nhận được kết quả xóa; hãy làm mới danh sách trước khi thử lại"})
 				return
 			}
@@ -1856,7 +1969,7 @@ done
 				operation = "enable"
 			}
 			backupPath, ok := strings.CutPrefix(strings.TrimSpace(output), "UPDATED|")
-			if !ok || !strings.HasPrefix(backupPath, "/root/backup-monitor/cron-recovery/"+operation+"-"+task.ID+".") || !strings.HasSuffix(backupPath, "/crontab.txt") {
+			if !ok || !strings.HasPrefix(backupPath, remoteInstallation().ConfigDir+"/cron-recovery/"+operation+"-"+task.ID+".") || !strings.HasSuffix(backupPath, "/crontab.txt") {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xác nhận được trạng thái đã lưu; hãy làm mới danh sách"})
 				return
 			}
@@ -1940,9 +2053,11 @@ fi
 
 		// API 10: Liệt kê các file backup cục bộ
 		auth.GET("/local-snapshots", func(c *gin.Context) {
-			cmds := localBackupFindCommand + ` -printf '%TY-%Tm-%Td %TH:%TM:%TS|%s|%p\n' 2>/dev/null`
+			cmds := configuredLocalInventoryCommand()
 			output, err := cachedGet("local-snapshots", 30*time.Second, func() ([]byte, error) {
-				out, e := executeSSHCommand(cmds)
+				// All roots are already resolved; do not rewrite private paths using
+				// shared defaults a second time.
+				out, e := executeSSHCommandRaw(cmds)
 				return []byte(out), e
 			})
 			if err != nil {
@@ -1962,6 +2077,20 @@ fi
 			cmd, err := snapshotDownloadCommand(rel)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Đường dẫn không hợp lệ"})
+				return
+			}
+			if runtimeConfig.HostAgent != nil {
+				c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filepath.Base(rel)))
+				c.Header("Content-Type", "application/octet-stream")
+				rc := http.NewResponseController(c.Writer)
+				fw := &flushWriter{w: c.Writer, f: func() { _ = rc.Flush() }}
+				if err := runtimeConfig.HostAgent.Stream(c.Request.Context(), cmd, fw); err != nil {
+					if !c.Writer.Written() {
+						c.JSON(http.StatusBadGateway, gin.H{"error": "Không tải được bản sao lưu"})
+					} else {
+						c.Abort()
+					}
+				}
 				return
 			}
 
@@ -2022,7 +2151,7 @@ fi
 
 			integrityScript, realtimeScript := buildAlertScripts(settings)
 
-			if _, err := executeSSHCommand(buildAlertInstallCommand(integrityScript, realtimeScript)); err != nil {
+			if _, err := executeSSHCommand(buildAlertInstallCommand(integrityScript, realtimeScript, effectiveMonitorPaths(settings))); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
@@ -2076,39 +2205,17 @@ fi
 				}
 			}
 			if req.Target == "drive" {
-				if len(req.Entries) == 0 {
-					_, err := executeSSHCommand("> /var/log/aapanel_backup.log")
-					if err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa nhật ký", "detail": err.Error()})
-						return
-					}
-					invalidate("backup-status")
-					c.JSON(http.StatusOK, gin.H{"message": "Đã xóa toàn bộ nhật ký Google Drive"})
-					return
-				}
-				conditions := make([]string, 0, len(req.Entries))
-				for _, entry := range req.Entries {
-					parts := strings.SplitN(entry, "|", 2)
-					conditions = append(conditions, `$1=="`+parts[0]+`" && $2=="`+parts[1]+`"`)
-				}
-				filter := "awk -F'|' '!(" + strings.Join(conditions, " || ") + ")' /var/log/aapanel_backup.log > /tmp/backup-monitor-drive-log && mv /tmp/backup-monitor-drive-log /var/log/aapanel_backup.log"
-				_, err := executeSSHCommand(filter)
+				out, err := executeSSHCommandRaw(driveActivityClearCommand(req.Entries))
 				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa log", "detail": err.Error()})
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa nhật ký Drive; nếu cron đang chạy, hãy chờ tác vụ kết thúc", "detail": err.Error()})
 					return
 				}
-				cacheMu.Lock()
-				if entry, ok := cache["backup-status"]; ok {
-					if stale := markDriveStatusStale(entry.value); len(stale) > 0 {
-						entry.value = stale
-						entry.expiresAt = time.Time{}
-						cache["backup-status"] = entry
-					} else {
-						delete(cache, "backup-status")
-					}
+				invalidate("backup-status")
+				if len(req.Entries) > 0 && strings.Contains(out, "LOG_FILES_CHANGED=0\n") {
+					c.JSON(http.StatusConflict, gin.H{"error": "Không tìm thấy nhật ký đã chọn. Hãy tải lại danh sách và thử lại."})
+					return
 				}
-				cacheMu.Unlock()
-				c.JSON(http.StatusOK, gin.H{"message": "Đã xóa nhật ký trên Google Drive"})
+				c.JSON(http.StatusOK, gin.H{"message": "Đã xóa nhật ký upload Google Drive trên máy chủ; các tệp backup được giữ nguyên"})
 				return
 			}
 			out, err := executeSSHCommandRaw(serverActivityClearCommand(req.Entries))
@@ -2129,6 +2236,28 @@ fi
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "check-host" {
+		cfg, err := loadConfigFromEnv()
+		if err != nil {
+			log.Fatal(err)
+		}
+		if cfg.HostAgent == nil {
+			log.Fatal("check-host requires local-agent mode")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := cfg.HostAgent.Execute(ctx, "'/usr/local/libexec/backup-monitor/backup-manager' version", nil); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Local host agent connected")
+		return
+	}
+	if len(os.Args) == 2 && (os.Args[1] == "account-status" || os.Args[1] == "setup-admin") {
+		if err := adminInstallCommand(os.Args[1]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) != 1 {
 		log.Fatal("API accepts no arguments; retired collector commands are not supported")
 	}
@@ -2145,10 +2274,10 @@ func main() {
 	initializeBackupSystem()
 	apiCtx, cancelAPI := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancelAPI()
-	if err := initializeOperations(apiCtx); err != nil {
-		log.Fatalf("Operations JSON state: %v", err)
+	if err := initializeRestoreState(); err != nil {
+		log.Fatalf("Restore JSON state: %v", err)
 	}
-	defer func() { cancelAPI(); activeOperations.wg.Wait(); activeOperations.lock.Close() }()
+	defer activeRestores.lock.Close()
 	router := setupRouter(cfg)
 	log.Printf("Backend listening on %s", cfg.APIBindAddr)
 	if err := serveAPI(apiCtx, cfg.APIBindAddr, router); err != nil {

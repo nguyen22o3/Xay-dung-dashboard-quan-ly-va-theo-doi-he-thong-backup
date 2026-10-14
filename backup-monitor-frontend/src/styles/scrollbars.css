@@ -1,0 +1,70 @@
+/* Shared native scrollbars for the page, widgets, tables and shell portals. */
+.app-shell {
+  --ui-scrollbar-size: 10px;
+  --ui-scrollbar-thumb: #637e70;
+  color-scheme: dark;
+}
+
+.app-shell[data-theme="light"] {
+  --ui-scrollbar-thumb: #7b9286;
+  color-scheme: light;
+}
+
+/* Keep the OS high-contrast scrollbar when forced colors are enabled. */
+@media (forced-colors: none) {
+  /* Non-auto standard properties override WebKit pseudo-element styling in
+     Chromium, so use only one styling path in each browser. */
+  @supports selector(::-webkit-scrollbar) {
+    :where(.app-shell, .app-shell *) {
+      scrollbar-width: auto;
+      scrollbar-color: auto;
+    }
+
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar {
+      width: var(--ui-scrollbar-size);
+      height: var(--ui-scrollbar-size);
+      background: transparent;
+    }
+
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar-track {
+      background: transparent;
+      border-radius: 999px;
+    }
+
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar-thumb {
+      min-height: 32px;
+      min-width: 32px;
+      border: 2px solid transparent;
+      border-radius: 999px;
+      background: var(--ui-scrollbar-thumb);
+      background-clip: padding-box;
+    }
+
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar-thumb:hover,
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar-thumb:active {
+      background-color: var(--app-accent);
+    }
+
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar-button {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+  }
+
+  @supports not selector(::-webkit-scrollbar) {
+    :where(.app-shell, .app-shell *) {
+      scrollbar-width: thin;
+      scrollbar-color: var(--ui-scrollbar-thumb) transparent;
+    }
+  }
+
+  @media (pointer: coarse) {
+    .app-shell { --ui-scrollbar-size: 14px; }
+    :where(.app-shell, .app-shell *) { scrollbar-width: auto; }
+  }
+}

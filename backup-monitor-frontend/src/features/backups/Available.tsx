@@ -76,8 +76,8 @@ export default function Available({ isDark, lang }: { isDark: boolean; lang: Lan
         <Info size={16} />
         <span>
           {isVi
-            ? 'Có thể tải file hoặc khôi phục vào thư mục riêng trên máy chủ để kiểm tra; không ghi đè dữ liệu đang chạy.'
-            : 'Download files or restore into a private server directory for inspection; live data is not overwritten.'}
+            ? 'Tải xuống: lưu file về máy đang mở trình duyệt. Tải xuống máy chủ AlmaLinux: tải và giải nén vào thư mục riêng để kiểm tra; không ghi đè dữ liệu đang chạy.'
+            : 'Download: save the file to the browser device. Download to AlmaLinux server: download and extract into a separate directory for inspection; live data is not overwritten.'}
         </span>
       </div>
 
@@ -115,12 +115,12 @@ export default function Available({ isDark, lang }: { isDark: boolean; lang: Lan
                         type="button"
                         onClick={() => handleDownload(snapshot)}
                         disabled={downloading !== null}
-                        title={isVi ? 'Tải file' : 'Download file'}
+                        title={isVi ? 'Tải file về máy đang mở trình duyệt' : 'Download the file to this browser device'}
                       >
                         <CloudDownload size={15} />
                         {isDownloading ? (isVi ? 'Đang tải...' : 'Downloading...') : (isVi ? 'Tải xuống' : 'Download')}
                       </Button>
-                      {['site', 'database', 'panel'].includes(snapshot.category) && <button type="button" className="legacy-secondary-button" disabled={downloading !== null} onClick={() => { if (!restoreFile || window.confirm(isVi ? 'Đổi bản sao lưu đang xem? Thao tác khôi phục đã bắt đầu trên máy chủ vẫn tiếp tục.' : 'Change the selected backup? A server restore already started will keep running.')) setRestoreFile(snapshot) }}>{isVi ? 'Khôi phục riêng' : 'Stage restore'}</button>}</div>
+                      {['site', 'database', 'panel'].includes(snapshot.category) && <button type="button" className="legacy-secondary-button" disabled={downloading !== null} title={isVi ? 'Tải và giải nén vào thư mục riêng trên AlmaLinux, không ghi đè dữ liệu đang chạy' : 'Download and extract into a separate AlmaLinux directory without overwriting live data'} onClick={() => { if (!restoreFile || window.confirm(isVi ? 'Đổi bản sao lưu đang xem? Thao tác đã bắt đầu trên máy chủ vẫn tiếp tục.' : 'Change the selected backup? An operation already started on the server will keep running.')) setRestoreFile(snapshot) }}>{isVi ? 'Tải xuống máy chủ AlmaLinux' : 'Download to AlmaLinux server'}</button>}</div>
                     </td>
                   </tr>
                 )

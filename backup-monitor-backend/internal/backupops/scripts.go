@@ -66,6 +66,8 @@ type ScriptDocument struct {
 }
 
 func (c *Controller) scriptDocument(id string) (ScriptDocument, error) {
+	selector := id
+	id, _, _ = strings.Cut(id, "~")
 	name, ok := TaskScripts[id]
 	if !ok {
 		return ScriptDocument{}, errors.New("Chỉ sửa script của 6 loại tác vụ được quản lý")
@@ -74,10 +76,14 @@ func (c *Controller) scriptDocument(id string) (ScriptDocument, error) {
 	if err != nil {
 		return ScriptDocument{}, err
 	}
+	cfg, id, err = taskSettings(cfg, selector)
+	if err != nil {
+		return ScriptDocument{}, err
+	}
 	if err = c.LocalPath(cfg.ScriptsDir, "scripts"); err != nil {
 		return ScriptDocument{}, err
 	}
-	path := filepath.Join(cfg.ScriptsDir, name)
+	path := scriptPath(cfg, name)
 	f, err := openRegular(path)
 	if err != nil {
 		return ScriptDocument{}, errors.New("Script chưa tồn tại hoặc không phải tệp thường")
@@ -91,7 +97,7 @@ func (c *Controller) scriptDocument(id string) (ScriptDocument, error) {
 	if err != nil || len(data) > MaxScriptBytes || !utf8.Valid(data) || strings.ContainsRune(string(data), 0) {
 		return ScriptDocument{}, errors.New("Không đọc được script UTF-8 hợp lệ")
 	}
-	return ScriptDocument{ID: id, Path: path, Content: string(data), Hash: hashBytes(data), Version: version}, nil
+	return ScriptDocument{ID: selector, Path: path, Content: string(data), Hash: hashBytes(data), Version: version}, nil
 }
 func (c *Controller) ReadScript(r Request) (ScriptDocument, error) {
 	if r.Script == nil {
@@ -191,7 +197,7 @@ func GenerateTaskScript(id string, cfg Settings) ([]byte, error) {
 	// Add the default log paths used by templates, which predate configurable logsDir.
 	pairs := settingsPairs(defaults, cfg)
 	for _, name := range LogNames {
-		pairs = append(pairs, [2]string{filepath.Join("/root/logs", name), filepath.Join(cfg.LogsDir, name)})
+		pairs = append(pairs, [2]string{filepath.Join("/root/logs", name), logPath(cfg, name)})
 	}
 	text = Rewrite(text, pairs)
 	if id == "backup-site" || id == "backup-database" || id == "backup-panel" {
@@ -200,7 +206,7 @@ func GenerateTaskScript(id string, cfg Settings) ([]byte, error) {
 			return nil, err
 		}
 	}
-	return []byte(text), nil
+	return []byte(runtimeTemplate(text)), nil
 }
 
 // Scheduled backup scripts use the same lifecycle markers as manual runs.
@@ -209,11 +215,15 @@ func ScheduledRunner(cfg Settings) string {
 	b.WriteString("#!/bin/bash\n# backup-monitor scheduled tracking v1\n" + TaskControlMarker + "\nset -u\numask 077\nif [ \"$(ps -o pgid= -p $$ | tr -d ' ')\" != \"$$\" ]; then exec setsid /bin/bash \"$0\" \"$@\"; fi\nTASK_ID=${1:-}\ncase \"$TASK_ID\" in\n")
 	for _, id := range []string{"backup-site", "backup-database", "backup-panel", "drive-sync", "cleanup-panel", "integrity-check"} {
 		name, _ := taskLogName(id)
-		fmt.Fprintf(&b, "  %s) SCRIPT=%q; LOG=%q ;;\n", id, filepath.ToSlash(filepath.Join(cfg.ScriptsDir, TaskScripts[id])), filepath.ToSlash(filepath.Join(cfg.LogsDir, name)))
+		fmt.Fprintf(&b, "  %s) SCRIPT=%q; LOG=%q ;;\n", id, filepath.ToSlash(scriptPath(cfg, TaskScripts[id])), filepath.ToSlash(logPath(cfg, name)))
 	}
 	b.WriteString("  *) exit 2 ;;\nesac\nshift\nexport BACKUP_MONITOR_ORIGIN=cron\nexport BACKUP_PANEL_CAPTURED_LOG=1\n")
-	fmt.Fprintf(&b, "RUN_HISTORY=%q\n", filepath.ToSlash(filepath.Join(cfg.LogsDir, "backup-monitor-runs.log")))
-	fmt.Fprintf(&b, "RUN_STATE=%q/.backup-monitor-$TASK_ID.run.json\n", filepath.ToSlash(cfg.LogsDir))
+	fmt.Fprintf(&b, "RUN_HISTORY=%q\n", filepath.ToSlash(logPath(cfg, "backup-monitor-runs.log")))
+	stateSuffix := ""
+	if cfg.fileKey != "" {
+		stateSuffix = "-" + cfg.fileKey
+	}
+	fmt.Fprintf(&b, "RUN_STATE=%q/.backup-monitor-$TASK_ID.run%s.json\n", filepath.ToSlash(cfg.LogsDir), stateSuffix)
 	b.WriteString(`[[ -f "$SCRIPT" && ! -L "$SCRIPT" ]] || exit 1
 [[ ! -L "$LOG" && ( ! -e "$LOG" || -f "$LOG" ) ]] || exit 1
 [[ ! -L "$RUN_HISTORY" && ( ! -e "$RUN_HISTORY" || -f "$RUN_HISTORY" ) ]] || exit 1
@@ -253,5 +263,5 @@ result=$?
 trap - TERM HUP INT
 exit "$result"
 `)
-	return b.String()
+	return runtimeTemplate(b.String())
 }

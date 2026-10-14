@@ -3,8 +3,8 @@ package backupops
 import (
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 type TaskRequest struct {
@@ -34,6 +34,10 @@ func (c *Controller) TaskOperation(r Request) (TaskStatus, error) {
 	if r.Task == nil {
 		return result, errors.New("Thiếu tác vụ")
 	}
+	selector := r.Task.ID
+	task := *r.Task
+	task.ID = strings.Split(selector, "~")[0]
+	r.Task = &task
 	if _, ok := TaskScripts[r.Task.ID]; !ok {
 		return result, errors.New("Tác vụ không hợp lệ")
 	}
@@ -41,7 +45,11 @@ func (c *Controller) TaskOperation(r Request) (TaskStatus, error) {
 	if err != nil {
 		return result, err
 	}
-	path := filepath.Join(cfg.LogsDir, ".backup-monitor-"+r.Task.ID+".run.json")
+	cfg, _, err = taskSettings(cfg, selector)
+	if err != nil {
+		return result, err
+	}
+	path := taskStatePath(cfg, r.Task.ID)
 	if !exists(path) {
 		return result, nil
 	}
@@ -50,7 +58,7 @@ func (c *Controller) TaskOperation(r Request) (TaskStatus, error) {
 		return result, errors.New("Không xác minh được trạng thái tiến trình")
 	}
 	var state TaskState
-	if json.Unmarshal(raw, &state) != nil || state.JobID != r.Task.ID || !managedRunID.MatchString(state.RunID) || state.Script != filepath.Join(cfg.ScriptsDir, TaskScripts[r.Task.ID]) || state.PID <= 1 {
+	if json.Unmarshal(raw, &state) != nil || state.JobID != r.Task.ID || !managedRunID.MatchString(state.RunID) || state.Script != scriptPath(cfg, TaskScripts[r.Task.ID]) || state.PID <= 1 {
 		return result, errors.New("Trạng thái tiến trình không hợp lệ")
 	}
 	info, err := nearest(path)
@@ -59,7 +67,7 @@ func (c *Controller) TaskOperation(r Request) (TaskStatus, error) {
 	}
 	result.Managed = true
 	result.RunID = state.RunID
-	result.Running, err = validateTaskProcess(state, filepath.Join(cfg.ScriptsDir, "backup-monitor-run.sh"))
+	result.Running, err = validateTaskProcess(state, scriptPath(cfg, "backup-monitor-run.sh"))
 	if err != nil {
 		return result, err
 	}
@@ -70,7 +78,7 @@ func (c *Controller) TaskOperation(r Request) (TaskStatus, error) {
 		if !result.Running || r.Task.RunID != state.RunID {
 			return result, errors.New("Lần chạy đã thay đổi hoặc đã kết thúc; hãy làm mới")
 		}
-		if err = cancelTaskProcess(state, filepath.Join(cfg.ScriptsDir, "backup-monitor-run.sh")); err != nil {
+		if err = cancelTaskProcess(state, scriptPath(cfg, "backup-monitor-run.sh")); err != nil {
 			return result, err
 		}
 		result.CancelRequested = true

@@ -2,7 +2,7 @@ name: backup-monitor-release
 
 services:
   backend:
-    image: nguyen22o3/backup-monitor-backend:1.0.1
+    image: nguyen22o3/backup-monitor:backend-1.1.6
     restart: unless-stopped
     env_file:
       - .env
@@ -10,10 +10,9 @@ services:
       API_BIND_ADDR: ":8080"
       CORS_ALLOWED_ORIGINS: "http://localhost:8090,http://127.0.0.1:8090"
       ADMIN_ACCOUNT_FILE: /data/admin_account.json
-      OPERATIONS_STATE_FILE: /data/operations_state.json
+      RESTORE_STATE_FILE: /data/restore_state.json
       SSH_KNOWN_HOSTS: /run/config/known_hosts
       SSH_INSECURE_IGNORE_HOST_KEY: "false"
-      MONITOR_TIMEZONE: Asia/Ho_Chi_Minh
     volumes:
       - app-data:/data
       - type: bind
@@ -43,7 +42,7 @@ services:
         max-file: "3"
 
   frontend:
-    image: nguyen22o3/backup-monitor-frontend:1.0.0
+    image: nguyen22o3/backup-monitor:frontend-1.1.6
     restart: unless-stopped
     depends_on:
       backend:

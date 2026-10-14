@@ -6,8 +6,9 @@ type Breakpoint = keyof typeof pageGridColumns
 export type PageGridLayouts = Record<Breakpoint, Layout>
 export type GridPage = 'server' | 'drive'
 
-const serverIds = ['overview-status', 'cpu', 'ram', 'disk', 'growth-trend', 'backup-chart', 'websites', 'local-snapshots', 'cron-jobs', 'success-failure', 'duration-chart']
-const driveIds = ['daily', 'last-backup', 'growth', 'history', 'success', 'cloud']
+// Reading order also applies when cards stack on smaller screens.
+const serverIds = ['overview-status', 'cron-jobs', 'cpu', 'ram', 'disk', 'success-failure', 'backup-chart', 'growth-trend', 'duration-chart', 'local-snapshots', 'websites']
+const driveIds = ['cloud', 'last-backup', 'daily', 'history', 'growth', 'success']
 
 function defaultLayouts(page: GridPage): PageGridLayouts {
   const layoutFor = (breakpoint: Breakpoint): Layout => {
@@ -34,19 +35,13 @@ function defaultLayouts(page: GridPage): PageGridLayouts {
       }
     } else if (page === 'server') {
       row(['overview-status'], [cols], 4)
-      row(['cpu', 'ram', 'disk'], [cols / 4, cols / 4, cols / 2], 6)
-      row(['growth-trend', 'backup-chart'], [cols / 2, cols / 2], 8)
-      if (breakpoint === 'lg') row(['websites', 'local-snapshots', 'cron-jobs'], [8, 8, 8], 8)
-      else {
-        row(['websites', 'local-snapshots'], [cols / 2, cols / 2], 8)
-        row(['cron-jobs'], [cols], 8)
-      }
-      row(['success-failure', 'duration-chart'], [cols / 2, cols / 2], 8)
+      row(['cron-jobs', 'cpu', 'ram', 'disk'], [cols / 4, cols / 4, cols / 4, cols / 4], 4)
+      row(['success-failure', 'backup-chart', 'growth-trend'], [cols / 4, cols / 4, cols / 2], 7)
+      row(['duration-chart', 'local-snapshots', 'websites'], breakpoint === 'lg' ? [12, 7, 5] : [10, 6, 4], 6)
     } else {
-      row(['daily', 'last-backup'], [cols / 2, cols / 2], 7)
-      row(['growth'], [cols], 10)
-      row(['history', 'success'], [cols / 2, cols / 2], 10)
-      row(['cloud'], [cols], 7)
+      row(['cloud', 'last-backup', 'daily'], breakpoint === 'lg' ? [8, 8, 8] : [7, 6, 7], 4)
+      row(['history', 'growth'], [cols / 2, cols / 2], 5)
+      row(['success'], [cols], 5)
     }
     return layout
   }

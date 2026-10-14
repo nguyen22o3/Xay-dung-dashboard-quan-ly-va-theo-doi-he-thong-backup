@@ -1,0 +1,50 @@
+name: backup-monitor-local
+
+services:
+  backend:
+    image: nguyen22o3/backup-monitor:backend-__RELEASE__
+    restart: unless-stopped
+    environment:
+      HOST_CONNECTION_MODE: local-agent
+      GIN_MODE: release
+      HOST_AGENT_SOCKET: /run/host-agent/agent.sock
+      HOST_AGENT_TOKEN_FILE: /run/host-agent-secrets/agent-token
+      JWT_SECRET_FILE: /data/jwt-secret
+      API_BIND_ADDR: ":8080"
+      CORS_ALLOWED_ORIGINS: "http://__DASHBOARD_HOST__:8090,http://localhost:8090,http://127.0.0.1:8090"
+      ADMIN_ACCOUNT_FILE: /data/admin_account.json
+      RESTORE_STATE_FILE: /data/restore_state.json
+    volumes:
+      - app-data:/data
+      - /var/lib/backup-monitor-agent/run:/run/host-agent:ro,z
+      - /var/lib/backup-monitor-agent/secrets:/run/host-agent-secrets:ro,z
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 180s
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/api/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 4
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  frontend:
+    image: nguyen22o3/backup-monitor:frontend-__RELEASE__
+    restart: unless-stopped
+    depends_on:
+      backend: {condition: service_healthy}
+    # Bind to the selected private LAN address, not every interface. This
+    # profile is not Internet-facing; use an HTTPS reverse proxy for production.
+    ports: ["__DASHBOARD_HOST__:8090:80"]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+volumes:
+  app-data:

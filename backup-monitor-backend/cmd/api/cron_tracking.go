@@ -66,7 +66,7 @@ func trackedRunnerForTask(task managedCronTask) string {
 	if task.ID == "backup-site" || task.ID == "backup-database" {
 		history = backupRunHistoryPath()
 	}
-	prefix := fmt.Sprintf("SCRIPT=%q\nTASK_ID=%q\nRUN_HISTORY=%q\nRUN_STATE=%q\n", task.Script, task.ID, history, configuredLog(".backup-monitor-"+task.ID+".run.json"))
+	prefix := fmt.Sprintf("SCRIPT=%q\nTASK_ID=%q\nRUN_HISTORY=%q\nRUN_STATE=%q\n", task.Script, task.ID, history, task.runStatePath())
 	if task.ID == "backup-site" || task.ID == "backup-database" || task.ID == "backup-panel" {
 		prefix += "export BACKUP_MONITOR_ORIGIN=manual\n"
 	}
@@ -190,7 +190,7 @@ func managedTaskForCronFields(fields []string) (managedCronTask, bool, bool) {
 		if fields[6] == task.Script {
 			return task, false, true
 		}
-		if len(fields) >= 8 && fields[6] == scheduledBackupRunnerPath() && fields[7] == task.ID {
+		if len(fields) >= 8 && fields[6] == task.wrapper() && fields[7] == task.ID {
 			return task, true, true
 		}
 	}
@@ -210,7 +210,7 @@ const backupRunActivityAwk = `
 
 func backupRunActivityCommand() string {
 	return fmt.Sprintf(`{
-  tail -n 1000 /root/backup-site.log /root/backup-database.log 2>/dev/null | awk -F'|' 'NF == 6 && $1 == "MONITOR_RUN"'
+  tail -q -n 1000 %s 2>/dev/null | awk -F'|' 'NF == 6 && $1 == "MONITOR_RUN"'
   if [ -f %q ] && [ ! -L %q ]; then tail -n 10000 %q; fi
-} | awk -F'|' '%s' | sed 's/,$//'`, backupRunHistoryPath(), backupRunHistoryPath(), backupRunHistoryPath(), backupRunActivityAwk)
+} | awk -F'|' '%s' | sed 's/,$//'`, managedLogArguments("backup-site", "backup-database"), backupRunHistoryPath(), backupRunHistoryPath(), backupRunHistoryPath(), backupRunActivityAwk)
 }

@@ -6,12 +6,18 @@ import { previewRestore, startRestore, restoreStatus, type RestorePlan } from '.
 import type { Lang } from '../../shared/language'
 import type { SnapshotFile } from '../../shared/types'
 import { formatBytes } from '../../shared/utils'
+import { Folder } from 'lucide-react'
+import { FolderPicker } from '../cron/BackupSystemSettings'
+import type { FolderRequest } from '../../api/backupSystem'
 
 export default function RestorePanel({ file, lang, close }: { file: SnapshotFile; lang: Lang; close: () => void }) {
   const vi = lang === 'vi'
   const [plan, setPlan] = useState<RestorePlan | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [parent, setParent] = useState('/root')
+  const [name, setName] = useState(() => `${file.name.replace(/\.(tar\.gz|sql\.gz|zip)$/, '').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 110)}-restored`)
+  const [picker, setPicker] = useState<FolderRequest | null>(null)
   const guard = useRef(false)
   const generation = useRef(0)
   const token = plan?.token, status = plan?.status
@@ -35,19 +41,29 @@ export default function RestorePanel({ file, lang, close }: { file: SnapshotFile
     finally { guard.current = false; setBusy(false) }
   }
   const active = !!plan && ['queued', 'running'].includes(plan.status)
-  return <section className="ops-panel" aria-label={vi ? 'Khôi phục bản sao lưu' : 'Restore backup'}>
-    <div className="ops-heading"><h3>{vi ? 'Khôi phục vào thư mục riêng' : 'Restore into a separate directory'}</h3><Button type="button" disabled={busy} onClick={close}>{vi ? 'Ẩn' : 'Hide'}</Button></div>
+  const validName = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(name) && name.length <= 128
+  const validParent = /^\/[A-Za-z0-9_./-]+$/.test(parent) && parent.length <= 1024 && parent !== '/' && !parent.endsWith('/') && !parent.split('/').slice(1).some(part => !part || part === '.' || part === '..')
+  return <section className="restore-panel" aria-label={vi ? 'Tải xuống máy chủ AlmaLinux' : 'Download to AlmaLinux server'}>
+    <div className="restore-heading"><h3>{vi ? 'Tải xuống máy chủ AlmaLinux' : 'Download to AlmaLinux server'}</h3><Button type="button" disabled={busy} onClick={close}>{vi ? 'Ẩn' : 'Hide'}</Button></div>
     <p><code>{relative}</code></p>
-    <p className="ops-note">{vi ? 'Không ghi đè website/aaPanel và không nhập SQL vào database đang chạy. Tệp ZIP/TAR được giải nén an toàn; database.sql chỉ được chuẩn bị để kiểm tra. Thư mục khôi phục được giữ lại, không tự xóa.' : 'Does not overwrite live websites/aaPanel or import SQL into a running database. ZIP/TAR archives are safely extracted; database.sql is prepared for inspection only. Staging directories are preserved.'}</p>
     {error && <p className="cron-log-error" role="alert">{error}</p>}
-    {!plan && <Button type="button" disabled={busy} onClick={() => void action(() => previewRestore(relative))}>{busy ? (vi ? 'Đang kiểm tra…' : 'Checking…') : (vi ? 'Kiểm tra bản sao lưu' : 'Check backup')}</Button>}
+    {!plan && <>
+      <div className="restore-destination-fields">
+        <label><span>{vi ? 'Thư mục cha trên AlmaLinux' : 'Parent folder on AlmaLinux'}</span><div className="backup-system-path"><input value={parent} onChange={event => setParent(event.target.value)} disabled={busy} placeholder="/root" /><Button type="button" disabled={busy} onClick={() => setPicker({ location: 'local', purpose: 'backup', path: validParent ? parent : '/root' })} aria-label={vi ? 'Chọn nơi lưu trên AlmaLinux' : 'Choose an AlmaLinux destination'}><Folder size={18} /></Button></div></label>
+        <label><span>{vi ? 'Tên thư mục mới chứa dữ liệu giải nén' : 'New folder name for extracted data'}</span><input value={name} onChange={event => setName(event.target.value)} disabled={busy} maxLength={128} placeholder="backup-restored" /></label>
+      </div>
+      {validParent && validName && <p>{vi ? 'Nơi lưu dữ liệu giải nén: ' : 'Extracted data destination: '}<code>{parent}/{name}</code></p>}
+      <Button type="button" disabled={busy || !validParent || !validName} onClick={() => void action(() => previewRestore(relative, parent, name))}>{busy ? (vi ? 'Đang kiểm tra…' : 'Checking…') : (vi ? 'Kiểm tra bản sao lưu và nơi lưu' : 'Check backup and destination')}</Button>
+    </>}
+    {picker && <FolderPicker request={picker} vi={vi} close={() => setPicker(null)} choose={value => { setParent(value); setPicker(null) }} />}
     {plan && <>
       <p>{vi ? 'Trạng thái: ' : 'Status: '}<OperationStatus state={plan.status} lang={lang} /> · {formatBytes(plan.size)}</p>
       {active && plan.progress && <ProgressView progress={plan.progress} lang={lang} />}
       <p>{vi ? 'Thư mục trên máy chủ: ' : 'Server directory: '}<code>{plan.directory}</code></p>
       <p>{vi ? 'Mã yêu cầu: ' : 'Request ID: '}<code>{plan.token}</code></p>
       {plan.error && <p role="alert" className="cron-log-error">{plan.error}</p>}
-      {plan.status === 'preview' && <Button variant="primary" type="button" disabled={busy} onClick={() => { if (window.confirm(vi ? `Tải và khôi phục ${relative} vào ${plan.directory}? Có thể tốn dung lượng và thời gian. Không ghi đè dữ liệu đang chạy.` : 'Download and extract this backup into its private staging directory? Live data will not be overwritten.')) void action(() => startRestore(plan.token)) }}>{vi ? 'Xác nhận khôi phục' : 'Confirm restore'}</Button>}
+      {plan.status === 'preview' && <Button type="button" disabled={busy} onClick={() => { generation.current++; setPlan(null); setError('') }}>{vi ? 'Đổi nơi lưu hoặc tên' : 'Change destination or name'}</Button>}
+      {plan.status === 'preview' && <Button variant="primary" type="button" disabled={busy} onClick={() => { if (window.confirm(vi ? `Tải và giải nén ${relative} vào ${plan.directory} trên AlmaLinux? Có thể tốn dung lượng và thời gian. Không ghi đè dữ liệu đang chạy.` : 'Download and extract this backup into its separate AlmaLinux directory? Live data will not be overwritten.')) void action(() => startRestore(plan.token)) }}>{vi ? 'Xác nhận tải xuống máy chủ' : 'Confirm server download'}</Button>}
       {active && <p role="status">{vi ? 'Đang xử lý trên máy chủ. Ẩn mục này không hủy thao tác; lưu mã yêu cầu để kiểm tra lại.' : 'Processing on the server. Hiding this panel does not cancel the operation; keep the request ID for later checks.'}</p>}
       {plan.status === 'ready' && <p role="status">{vi ? `Đã chuẩn bị ${plan.files} tệp (${formatBytes(plan.expandedBytes)}). Kiểm tra nội dung trong thư mục riêng trước khi áp dụng thủ công.` : `${plan.files} files prepared (${formatBytes(plan.expandedBytes)}). Inspect the staging directory before applying manually.`}</p>}
       <Button type="button" disabled={busy} onClick={() => void action(() => restoreStatus(plan.token))}>{vi ? 'Kiểm tra trạng thái' : 'Check status'}</Button>

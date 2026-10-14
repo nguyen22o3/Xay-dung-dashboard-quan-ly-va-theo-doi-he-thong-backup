@@ -5,129 +5,23 @@ import (
 	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
 )
 
-func requireOperations(c *gin.Context) *operationStore {
-	if activeOperations == nil {
-		c.JSON(503, gin.H{"error": "Không đọc được trạng thái vận hành JSON"})
+func requireRestoreState(c *gin.Context) *restoreStore {
+	if activeRestores == nil {
+		c.JSON(503, gin.H{"error": "Không đọc được trạng thái khôi phục JSON"})
 	}
-	return activeOperations
-}
-func requireOperationsWorker(c *gin.Context) *operationStore {
-	p := requireOperations(c)
-	if p != nil && !p.worker {
-		c.JSON(409, gin.H{"error": "Backend này chưa bật worker cảnh báo; bật OPERATIONS_WORKER_ENABLED trên một backend duy nhất"})
-		return nil
-	}
-	return p
+	return activeRestores
 }
 func registerOperationRoutes(auth *gin.RouterGroup) {
-	auth.GET("/operations/status", func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store")
-		p := requireOperations(c)
-		if p == nil {
-			return
-		}
-		s := p.snapshot()
-		c.JSON(200, gin.H{"enabled": true, "storage": "json", "workerEnabled": p.worker, "options": s.Options, "collectedAt": s.CollectedAt, "collectionStale": s.CollectionFailed || s.CollectedAt == nil || s.CollectedAt.Before(s.EnabledAt) || time.Since(*s.CollectedAt) > 3*time.Minute})
-	})
-	auth.PUT("/operations/options", func(c *gin.Context) {
-		p := requireOperations(c)
-		if p == nil {
-			return
-		}
-		var opts monitorOptions
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
-		if c.ShouldBindJSON(&opts) != nil || opts.validate() != nil {
-			c.JSON(400, gin.H{"error": "Cấu hình cảnh báo không hợp lệ"})
-			return
-		}
-		if p.saveOptions(c.Request.Context(), opts) != nil {
-			c.JSON(503, gin.H{"error": "Không lưu được cấu hình JSON"})
-			return
-		}
-		c.JSON(200, opts)
-	})
-	auth.POST("/notifications/test", func(c *gin.Context) {
-		db := requireOperationsWorker(c)
-		if db == nil {
-			return
-		}
-		var req struct {
-			Channel string `json:"channel"`
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
-		if c.ShouldBindJSON(&req) != nil {
-			c.JSON(400, gin.H{"error": "Dữ liệu không hợp lệ"})
-			return
-		}
-		settings, err := readAlertSettings("alert_settings.json")
-		if err != nil {
-			c.JSON(503, gin.H{"error": "Không đọc được cấu hình kênh"})
-			return
-		}
-		enabled := false
-		for _, channel := range alertChannels(settings) {
-			if channel == req.Channel {
-				enabled = true
-			}
-		}
-		if !enabled {
-			c.JSON(409, gin.H{"error": "Lưu cấu hình và bật kênh trước khi gửi thử"})
-			return
-		}
-		// One persisted test per channel per minute, limiting duplicate clicks.
-		key := "test:" + req.Channel + ":" + time.Now().UTC().Format("200601021504")
-		if db.enqueue(c.Request.Context(), key, "Thông báo thử từ Backup Monitor. Kết nối kênh cảnh báo hoạt động.", []string{req.Channel}) != nil {
-			c.JSON(503, gin.H{"error": "Không tạo được yêu cầu gửi thử"})
-			return
-		}
-		c.JSON(202, gin.H{"status": "queued"})
-	})
-
-	auth.POST("/notifications/:id/retry", func(c *gin.Context) {
-		p := requireOperationsWorker(c)
-		if p == nil {
-			return
-		}
-		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-		if err != nil || id < 1 {
-			c.JSON(400, gin.H{"error": "ID không hợp lệ"})
-			return
-		}
-		if p.retryDelivery(c.Request.Context(), id) != nil {
-			c.JSON(409, gin.H{"error": "Chỉ gửi lại thông báo đã thất bại hoàn toàn; kiểm tra quyền ghi file JSON"})
-			return
-		}
-		c.JSON(202, gin.H{"status": "queued"})
-	})
-	auth.GET("/operations/alerts", func(c *gin.Context) {
-		p := requireOperations(c)
-		if p == nil {
-			return
-		}
-		s := p.snapshot()
-		entries := []alertEvent{}
-		prefix := operationSource() + ":"
-		for i := len(s.Alerts) - 1; i >= 0 && len(entries) < 100; i-- {
-			if strings.HasPrefix(s.Alerts[i].Key, prefix) {
-				a := s.Alerts[i]
-				a.Key = ""
-				entries = append(entries, a)
-			}
-		}
-		c.JSON(200, gin.H{"entries": entries})
-	})
 	auth.GET("/cron-jobs/:id/log-page", func(c *gin.Context) {
 		task, ok := managedCronTaskByID(c.Param("id"))
 		if !ok {
 			c.JSON(404, gin.H{"error": "Tác vụ không hợp lệ"})
 			return
 		}
-		raw, err := backupSystemOperation("log-read", map[string]interface{}{"log": backupops.LogRequest{ID: task.ID, Cursor: c.Query("cursor")}})
+		raw, err := backupSystemOperation("log-read", map[string]interface{}{"log": backupops.LogRequest{ID: task.selector(), Cursor: c.Query("cursor")}})
 		if err != nil {
 			c.JSON(409, gin.H{"error": "Không đọc được trang log; hãy làm mới hoặc kiểm tra helper v12"})
 			return
@@ -140,7 +34,7 @@ func registerOperationRoutes(auth *gin.RouterGroup) {
 			c.JSON(404, gin.H{"error": "Tác vụ không hợp lệ"})
 			return
 		}
-		raw, err := backupSystemOperation("task-status", map[string]interface{}{"task": backupops.TaskRequest{ID: task.ID}})
+		raw, err := backupSystemOperation("task-status", map[string]interface{}{"task": backupops.TaskRequest{ID: task.selector()}})
 		if err != nil {
 			c.JSON(409, gin.H{"error": "Không xác minh được tiến trình; cần helper v12 và wrapper có ghi nhận PID"})
 			return
@@ -162,7 +56,7 @@ func registerOperationRoutes(auth *gin.RouterGroup) {
 			c.JSON(400, gin.H{"error": "Cần xác nhận đúng lần chạy trước khi hủy"})
 			return
 		}
-		raw, err := backupSystemOperation("task-cancel", map[string]interface{}{"task": backupops.TaskRequest{ID: task.ID, RunID: req.RunID}})
+		raw, err := backupSystemOperation("task-cancel", map[string]interface{}{"task": backupops.TaskRequest{ID: task.selector(), RunID: req.RunID}})
 		if err != nil {
 			c.JSON(409, gin.H{"error": "Không hủy được hoặc lần chạy đã thay đổi; hãy làm mới"})
 			return
@@ -186,24 +80,39 @@ func regexpRunID(id string) bool {
 }
 func registerRestoreRoutes(auth *gin.RouterGroup) {
 	auth.POST("/restore/preview", func(c *gin.Context) {
-		db := requireOperations(c)
+		db := requireRestoreState(c)
 		if db == nil {
 			return
 		}
 		var req struct {
-			Path string `json:"path"`
+			Path   string `json:"path"`
+			Parent string `json:"parent"`
+			Name   string `json:"name"`
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
 		if c.ShouldBindJSON(&req) != nil || !validSnapshotPath(req.Path) {
 			c.JSON(400, gin.H{"error": "Tệp backup không hợp lệ"})
 			return
 		}
-		raw, err := backupSystemOperation("restore-preview", map[string]interface{}{"restore": backupops.RestoreRequest{Path: req.Path}})
+		var destination string
+		if req.Parent != "" || req.Name != "" {
+			var err error
+			destination, err = backupops.RestoreDestination(req.Parent, req.Name)
+			if err != nil {
+				c.JSON(400, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		raw, err := backupSystemOperation("restore-preview", map[string]interface{}{"restore": backupops.RestoreRequest{Path: req.Path, Parent: req.Parent, Name: req.Name}})
 		if err != nil {
-			c.JSON(409, gin.H{"error": "Không kiểm tra được backup; cần helper v12 và tệp trong cấu trúc ngày"})
+			c.JSON(409, gin.H{"error": "Không kiểm tra được bản sao lưu/nơi lưu (cần helper v24 trên AlmaLinux): " + err.Error()})
 			return
 		}
 		var plan backupops.RestorePlan
+		if json.Unmarshal(raw, &plan) == nil && destination != "" && (plan.Directory != destination || plan.Parent != req.Parent || plan.Name != req.Name) {
+			c.JSON(409, gin.H{"error": "Helper chưa hỗ trợ nơi lưu/tên đã chọn; cập nhật helper v24 trên AlmaLinux. Chưa bắt đầu tải."})
+			return
+		}
 		if json.Unmarshal(raw, &plan) != nil || plan.Status != "preview" || plan.Path != req.Path || db.saveRestore(c.Request.Context(), plan) != nil {
 			c.JSON(503, gin.H{"error": "Không lưu được kế hoạch khôi phục; chưa bắt đầu tải hoặc giải nén"})
 			return
@@ -211,7 +120,7 @@ func registerRestoreRoutes(auth *gin.RouterGroup) {
 		c.Data(200, "application/json", raw)
 	})
 	auth.POST("/restore/start", func(c *gin.Context) {
-		db := requireOperations(c)
+		db := requireRestoreState(c)
 		if db == nil {
 			return
 		}
@@ -230,7 +139,7 @@ func registerRestoreRoutes(auth *gin.RouterGroup) {
 		}
 		raw, err := backupSystemOperation("restore-start", map[string]interface{}{"restore": backupops.RestoreRequest{Token: req.Token}})
 		if err != nil {
-			c.JSON(409, gin.H{"error": "Không bắt đầu được khôi phục hoặc bản sao lưu đã thay đổi"})
+			c.JSON(409, gin.H{"error": "Không bắt đầu được tải/giải nén; hãy kiểm tra lại: " + err.Error()})
 			return
 		}
 		var plan backupops.RestorePlan
@@ -244,7 +153,7 @@ func registerRestoreRoutes(auth *gin.RouterGroup) {
 		c.Data(202, "application/json", raw)
 	})
 	auth.GET("/restore/:token", func(c *gin.Context) {
-		db := requireOperations(c)
+		db := requireRestoreState(c)
 		if db == nil {
 			return
 		}

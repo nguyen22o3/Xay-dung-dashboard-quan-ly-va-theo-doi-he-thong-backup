@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import type { Layout } from 'react-grid-layout'
 import { readPageGridLayouts, type GridPage } from './pageGrid'
 
-// Reset to the requested original defaults once. Subsequent edits still persist;
+// Apply the screenshot-based defaults once. Subsequent edits still persist;
 // the previous storage entries are retained rather than deleting browser data.
-const storageKeys = { server: 'serverGridV20', drive: 'driveGridV5' }
+const storageKeys = { server: 'serverGridV21', drive: 'driveGridV6' }
 
 export function usePageGrid(page: GridPage) {
   const key = storageKeys[page]

@@ -8,8 +8,8 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/backup-monitor
-EnvironmentFile=/root/backup-monitor/backend.env
+WorkingDirectory=/opt/backup-monitor/config
+EnvironmentFile=/opt/backup-monitor/config/backend.env
 ExecStart=/usr/local/libexec/backup-monitor/backup-monitor-backend
 Restart=on-failure
 RestartSec=10
@@ -20,7 +20,8 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 # Account, channel settings and operations JSON remain outside the executable.
-ReadWritePaths=/root/backup-monitor
+# For a custom install folder update these three paths together before enabling.
+ReadWritePaths=/opt/backup-monitor/config
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]

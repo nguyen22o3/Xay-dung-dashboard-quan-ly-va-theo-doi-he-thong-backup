@@ -84,6 +84,13 @@ func (c *Controller) RestoreCheckStatus() ([]RestoreCheck, error) {
 // Only the fixed service CLI calls this method. There is no user-controlled SQL
 // endpoint and no production socket/port/environment is passed to containers.
 func (c *Controller) RestoreCheckRun(ctx context.Context) (runErr error) {
+	if len(c.Locks) > 0 {
+		lock, err := acquire(c.Locks[0], true, true)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+	}
 	cfg, _, err := c.Active()
 	if err != nil {
 		return err
@@ -131,7 +138,7 @@ func (c *Controller) RestoreCheckRun(ctx context.Context) (runErr error) {
 			runErr = e
 		}
 	}()
-	imagesRaw, err := readRegular("/root/backup-monitor/restore-check-images.json")
+	imagesRaw, err := readRegular(filepath.Join(filepath.Dir(c.ConfigPath), "restore-check-images.json"))
 	if err != nil {
 		return errors.New("restore images are not configured")
 	}

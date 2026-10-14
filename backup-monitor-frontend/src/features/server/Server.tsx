@@ -406,7 +406,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                     <tbody>
                       {localSnapshots.data.filter(s => last14Days.includes(s.date.split(' ')[0])).map((snap, i) => (
                         <tr key={i} style={{ borderBottom: `1px solid ${theme.gridLine}` }}>
-                          <td style={{ padding: '8px 8px 8px 0', color: theme.titleColor }} title={snap.name}>
+                          <td style={{ padding: '8px 8px 8px 0', color: theme.titleColor }} title={snap.localPath ?? snap.name}>
                             <span className="backup-file-name">{snap.name}</span>
                           </td>
                           <td style={{ padding: '8px 0', textAlign: 'center', color: theme.titleColor, whiteSpace: 'nowrap' }}>{formatBytes(snap.size)}</td>
@@ -500,7 +500,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                   <div style={{ textAlign: 'center', color: theme.textSecondary, padding: '20px', fontSize: '12px' }}>
                     {trackingEnabled
                       ? (lang === 'vi' ? 'Chưa có lần sao lưu hoàn tất được ghi nhận. Kết quả sẽ xuất hiện sau lần chạy tiếp theo.' : 'No completed backup runs recorded yet. Results appear after the next run.')
-                      : (lang === 'vi' ? 'Chưa có kết quả lần chạy. Vào Cronjob → Bật ghi nhận cron tự động để theo dõi các lần sao lưu tiếp theo.' : 'No run results yet. Go to Cron Jobs → Enable scheduled backup tracking to track future backups.')}
+                      : (lang === 'vi' ? 'Chưa có kết quả lần chạy được ghi nhận.' : 'No recorded backup run results yet.')}
                     <p>{lang === 'vi' ? 'Log cũ chỉ ghi tệp thành công, không đủ để thống kê kết quả từng lần chạy.' : 'Old logs only record completed files, not the result of each run.'}</p>
                   </div>
                 )}

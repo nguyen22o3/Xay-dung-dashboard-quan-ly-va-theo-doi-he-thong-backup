@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -21,7 +22,7 @@ import (
 )
 
 const BinaryPath = "/usr/local/libexec/backup-monitor/backup-manager"
-const Version = "backup-manager-go-v14"
+const Version = "backup-manager-go-v26"
 const VersionMetadataDir = "/root/backup-monitor/metadata/versions"
 const RetentionDays = 14
 const LayoutMarker = "# backup-monitor daily layout v1"
@@ -31,15 +32,17 @@ var ScriptNames = []string{"backup-site.sh", "backup-database.sh", "backup-panel
 var LogNames = []string{"backup-site.log", "backup-database.log", "backup-panel.log", "auto_backup.log", "cleanup-panel-backups.log", "check_integrity.log", "backup-monitor-runs.log"}
 
 type Settings struct {
-	BackupRoot      string     `json:"backupRoot"`
-	ScriptsDir      string     `json:"scriptsDir"`
-	LogsDir         string     `json:"logsDir"`
-	DriveRemote     string     `json:"driveRemote"`
-	DriveFolder     string     `json:"driveFolder"`
-	DriveHistoryLog string     `json:"driveHistoryLog"`
-	SiteSource      SourceSpec `json:"siteSource,omitzero"`
-	DatabaseSource  SourceSpec `json:"databaseSource,omitzero"`
-	PanelSource     SourceSpec `json:"panelSource,omitzero"`
+	fileKey         string                  // Effective runtime namespace; never serialized in configuration.
+	CronLocations   map[string]CronLocation `json:"cronLocations,omitempty"`
+	BackupRoot      string                  `json:"backupRoot"`
+	ScriptsDir      string                  `json:"scriptsDir"`
+	LogsDir         string                  `json:"logsDir"`
+	DriveRemote     string                  `json:"driveRemote"`
+	DriveFolder     string                  `json:"driveFolder"`
+	DriveHistoryLog string                  `json:"driveHistoryLog"`
+	SiteSource      SourceSpec              `json:"siteSource,omitzero"`
+	DatabaseSource  SourceSpec              `json:"databaseSource,omitzero"`
+	PanelSource     SourceSpec              `json:"panelSource,omitzero"`
 }
 
 func DefaultSettings() Settings {
@@ -47,36 +50,50 @@ func DefaultSettings() Settings {
 }
 
 type Request struct {
-	Operation       string          `json:"operation"`
-	Config          *Settings       `json:"config,omitempty"`
-	ExpectedVersion string          `json:"expectedVersion,omitempty"`
-	PreviewToken    string          `json:"previewToken,omitempty"`
-	Schedule        *ScheduleChange `json:"schedule,omitempty"`
-	Script          *ScriptRequest  `json:"script,omitempty"`
-	Log             *LogRequest     `json:"log,omitempty"`
-	Task            *TaskRequest    `json:"task,omitempty"`
-	Restore         *RestoreRequest `json:"restore,omitempty"`
-	Purpose         string          `json:"purpose,omitempty"`
-	Location        string          `json:"location,omitempty"`
-	Path            string          `json:"path,omitempty"`
-	Remote          string          `json:"remote,omitempty"`
+	// Internal planning hint; never accepted from JSON or used to skip cron dependencies.
+	creatingTask    string
+	Operation       string           `json:"operation"`
+	Config          *Settings        `json:"config,omitempty"`
+	ExpectedVersion string           `json:"expectedVersion,omitempty"`
+	PreviewToken    string           `json:"previewToken,omitempty"`
+	Schedule        *ScheduleChange  `json:"schedule,omitempty"`
+	Script          *ScriptRequest   `json:"script,omitempty"`
+	Log             *LogRequest      `json:"log,omitempty"`
+	Task            *TaskRequest     `json:"task,omitempty"`
+	Restore         *RestoreRequest  `json:"restore,omitempty"`
+	Purpose         string           `json:"purpose,omitempty"`
+	Location        string           `json:"location,omitempty"`
+	Path            string           `json:"path,omitempty"`
+	Remote          string           `json:"remote,omitempty"`
+	Drive           *DriveConnection `json:"drive,omitempty"`
 }
 type State struct {
-	SupportsMultipleSchedules bool                  `json:"supportsMultipleSchedules"`
-	Config                    Settings              `json:"config"`
-	Version                   string                `json:"version"`
-	Remotes                   []string              `json:"remotes"`
-	LocalRetentionDays        int                   `json:"localRetentionDays"`
-	DriveRetentionDays        int                   `json:"driveRetentionDays"`
-	AllowedRoots              map[string][]string   `json:"allowedRoots"`
-	Ready                     bool                  `json:"ready"`
-	Applied                   bool                  `json:"applied"`
-	RecoveryDir               string                `json:"recoveryDir,omitempty"`
-	Warnings                  []string              `json:"warnings"`
-	Sources                   map[string]SourceSpec `json:"sources"`
+	Installation                   InstallationPaths     `json:"installation"`
+	SupportsManagedScriptSelection bool                  `json:"supportsManagedScriptSelection"`
+	SupportsFlatCronFiles          bool                  `json:"supportsFlatCronFiles"`
+	SupportsCronBackupMigration    bool                  `json:"supportsCronBackupMigration"`
+	SupportsCronIsolation          bool                  `json:"supportsCronIsolation"`
+	SupportsCronDirectories        bool                  `json:"supportsCronDirectories"`
+	SupportsMultipleSchedules      bool                  `json:"supportsMultipleSchedules"`
+	Config                         Settings              `json:"config"`
+	Version                        string                `json:"version"`
+	Remotes                        []string              `json:"remotes"`
+	LocalRetentionDays             int                   `json:"localRetentionDays"`
+	DriveRetentionDays             int                   `json:"driveRetentionDays"`
+	AllowedRoots                   map[string][]string   `json:"allowedRoots"`
+	Ready                          bool                  `json:"ready"`
+	Applied                        bool                  `json:"applied"`
+	RecoveryDir                    string                `json:"recoveryDir,omitempty"`
+	Warnings                       []string              `json:"warnings"`
+	Sources                        map[string]SourceSpec `json:"sources"`
 }
 type Runner func(args []string, input []byte) ([]byte, error)
 type Controller struct {
+	Installation      InstallationPaths
+	InstallationError error
+	LocatorPath       string
+	// Only allowlisted CLI runtime operations may set this selector.
+	CronSelector                                   string
 	ConfigPath, RcloneConfig, RecoveryRoot, Binary string
 	RotationMarkers                                string
 	VersionMetadataDir                             string
@@ -90,12 +107,18 @@ type Controller struct {
 }
 
 func NewController() *Controller {
-	locks := []string{"/root/.backup-monitor-system-config.lock", "/root/.backup-monitor-crontab.lock", "/run/backup-monitor-layout.lock", "/run/backup-monitor-versions.lock", "/run/backup-monitor-site.lock", "/run/backup-monitor-database.lock", "/run/backup-monitor-drive.lock", "/run/backup-monitor-panel-retention.lock"}
+	installation, installationErr := loadInstallation(InstallationFile)
+	locks := []string{installation.LockPrefix + "system-config.lock", installation.LockPrefix + "crontab.lock", "/run/backup-monitor-layout.lock", "/run/backup-monitor-versions.lock", "/run/backup-monitor-site.lock", "/run/backup-monitor-database.lock", "/run/backup-monitor-drive.lock", "/run/backup-monitor-panel-retention.lock"}
 	for _, name := range []string{"backup-site", "backup-database", "backup-panel", "drive-sync", "cleanup-panel", "integrity-check"} {
-		locks = append(locks, "/root/.backup-monitor-job-"+name+".lock")
+		locks = append(locks, installation.LockPrefix+"job-"+name+".lock")
 	}
-	return &Controller{ConfigPath: "/root/backup-monitor/system-config.json", RcloneConfig: "/root/.config/rclone/rclone.conf", RecoveryRoot: "/root/backup-layout-migrations", Binary: BinaryPath,
-		RotationMarkers: "/run/backup-monitor-rotations", VersionMetadataDir: VersionMetadataDir, Defaults: DefaultSettings(), Roots: map[string][]string{"backup": {"/"}, "scripts": {"/"}, "logs": {"/"}, "source-site": {"/"}, "source-database": {"/"}, "source-panel": {"/"}},
+	defaults := DefaultSettings()
+	if installation.DataDir != "" {
+		defaults.ScriptsDir, defaults.LogsDir = path.Join(installation.DataDir, "scripts"), path.Join(installation.DataDir, "logs")
+		defaults.DriveHistoryLog = path.Join(defaults.LogsDir, "aapanel_backup.log")
+	}
+	return &Controller{Installation: installation, InstallationError: installationErr, LocatorPath: InstallationFile, ConfigPath: path.Join(installation.ConfigDir, "system-config.json"), RcloneConfig: installation.RcloneConfig, RecoveryRoot: installation.RecoveryRoot, Binary: BinaryPath,
+		RotationMarkers: "/run/backup-monitor-rotations", VersionMetadataDir: installation.MetadataDir, Defaults: defaults, Roots: map[string][]string{"backup": {"/"}, "scripts": {"/"}, "logs": {"/"}, "source-site": {"/"}, "source-database": {"/"}, "source-panel": {"/"}},
 		Locks: locks, Run: runCommand, Write: AtomicWrite, RestartMonitor: restartMonitor}
 }
 func runCommand(args []string, input []byte) ([]byte, error) {
@@ -328,6 +351,9 @@ func DrivePath(value string) error {
 }
 func (c *Controller) Remotes() ([]string, error) {
 	data, err := readRegular(c.RcloneConfig)
+	if os.IsNotExist(err) {
+		return []string{}, nil
+	}
 	if err != nil {
 		return nil, errors.New("Không đọc được cấu hình kết nối rclone")
 	}
@@ -360,6 +386,9 @@ func (c *Controller) Remotes() ([]string, error) {
 	return result, nil
 }
 func (c *Controller) Validate(s Settings) error {
+	if err := c.validateCronLocations(s); err != nil {
+		return err
+	}
 	if c.VersionMetadataDir != "" && (within(c.VersionMetadataDir, s.BackupRoot) || within(s.BackupRoot, c.VersionMetadataDir)) {
 		return errors.New("Kho metadata quản lý phải tách khỏi thư mục backup")
 	}
@@ -387,10 +416,7 @@ func (c *Controller) Validate(s Settings) error {
 	if s.DriveFolder == "" {
 		return errors.New("Không dùng toàn bộ Drive làm thư mục backup")
 	}
-	if within(s.ScriptsDir, s.BackupRoot) || within(s.LogsDir, s.BackupRoot) {
-		return errors.New("Thư mục script/log phải tách khỏi thư mục backup")
-	}
-	if s.DriveHistoryLog != "/var/log/aapanel_backup.log" && s.DriveHistoryLog != filepath.Join(s.LogsDir, "aapanel_backup.log") {
+	if s.DriveHistoryLog != "/var/log/aapanel_backup.log" && s.DriveHistoryLog != logPath(s, "aapanel_backup.log") {
 		return errors.New("Đường dẫn nhật ký Drive không hợp lệ")
 	}
 	for _, id := range []string{"backup-site", "backup-database", "backup-panel"} {
@@ -407,11 +433,24 @@ func (c *Controller) Validate(s Settings) error {
 	return nil
 }
 func (c *Controller) Active() (Settings, string, error) {
+	if c.InstallationError != nil {
+		return Settings{}, "", c.InstallationError
+	}
+	if c.LocatorPath == InstallationFile {
+		current, err := loadInstallation(InstallationFile)
+		if err != nil {
+			return Settings{}, "", err
+		}
+		if current != c.Installation {
+			return Settings{}, "", errors.New("Vị trí cài đặt vừa thay đổi; hãy chạy lại thao tác")
+		}
+	}
 	if err := SafeParents(c.ConfigPath); err != nil {
 		return Settings{}, "", err
 	}
 	if !exists(c.ConfigPath) {
-		return c.Defaults, hashBytes([]byte("backup-system-default-v1")), nil
+		cfg, err := c.scopeSettings(c.Defaults)
+		return cfg, hashBytes([]byte("backup-system-default-v1")), err
 	}
 	data, err := readRegular(c.ConfigPath)
 	if err != nil {
@@ -426,7 +465,8 @@ func (c *Controller) Active() (Settings, string, error) {
 	if err = c.Validate(cfg); err != nil {
 		return cfg, "", err
 	}
-	return cfg, hashBytes(data), nil
+	cfg, err = c.scopeSettings(cfg)
+	return cfg, hashBytes(data), err
 }
 func (c *Controller) Get() (State, error) {
 	cfg, version, err := c.Active()
@@ -439,7 +479,7 @@ func (c *Controller) Get() (State, error) {
 	}
 	info, err := os.Stat(c.Binary)
 	ready := err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0100 != 0 && SafeParents(c.Binary) == nil
-	return State{SupportsMultipleSchedules: true, Config: cfg, Version: version, Remotes: remotes, LocalRetentionDays: RetentionDays, DriveRetentionDays: RetentionDays, AllowedRoots: c.Roots, Ready: ready, Warnings: []string{}, Sources: sourceSelections(cfg)}, nil
+	return State{Installation: c.InstallationPaths(), SupportsManagedScriptSelection: true, SupportsFlatCronFiles: true, SupportsCronBackupMigration: true, SupportsCronIsolation: true, SupportsCronDirectories: true, SupportsMultipleSchedules: true, Config: cfg, Version: version, Remotes: remotes, LocalRetentionDays: RetentionDays, DriveRetentionDays: RetentionDays, AllowedRoots: c.Roots, Ready: ready, Warnings: []string{}, Sources: sourceSelections(cfg)}, nil
 }
 
 type Folder struct {
@@ -576,6 +616,9 @@ func (c *Controller) Create(r Request) error {
 	return nil
 }
 func (c *Controller) Dispatch(r Request) (interface{}, error) {
+	if c.CronSelector != "" && r.Operation != "get" {
+		return nil, errors.New("Cron thực thi chỉ được đọc cấu hình riêng")
+	}
 	switch r.Operation {
 	case "restore-preview":
 		return c.RestorePreview(r)
@@ -592,8 +635,14 @@ func (c *Controller) Dispatch(r Request) (interface{}, error) {
 		return c.TaskOperation(r)
 	case "get":
 		return c.Get()
+	case "drive-status":
+		return c.DriveStatus()
+	case "drive-connect":
+		return c.ConnectDrive(r.Drive)
 	case "script-read":
 		return c.ReadScript(r)
+	case "script-options":
+		return c.ManagedScriptOptions(r)
 	case "script-save":
 		return c.SaveScript(r)
 	case "list":

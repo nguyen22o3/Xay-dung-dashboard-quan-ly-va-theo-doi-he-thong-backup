@@ -7,11 +7,13 @@ import (
 	"log"
 	"net/http"
 	"path"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"backup-monitor-backend/internal/backupops"
 
@@ -21,13 +23,33 @@ import (
 type BackupSystemSettings = backupops.Settings
 
 type backupSystemResponse struct {
-	Config  BackupSystemSettings `json:"config"`
-	Version string               `json:"version"`
+	Config       BackupSystemSettings         `json:"config"`
+	Version      string                       `json:"version"`
+	Installation *backupops.InstallationPaths `json:"installation,omitempty"`
 }
 
 var activeBackupSystem atomic.Value
+var activeInstallation atomic.Value
 var backupSystemLoaded atomic.Bool
 var backupSystemMutation sync.RWMutex
+
+// Accessed under backupSystemMutation by HTTP handlers.
+var lastBackupSystemRead time.Time
+
+func storageReadRoute(route string) bool {
+	return route == "/api/server-status" || route == "/api/backup-status" || route == "/api/local-snapshots" || route == "/api/recovery-snapshots" || route == "/api/cron-jobs" || strings.HasPrefix(route, "/api/cron-jobs/")
+}
+
+func refreshBackupSystemIfDue(read func() ([]byte, error), now time.Time) error {
+	if backupSystemLoaded.Load() && !lastBackupSystemRead.IsZero() && now.Sub(lastBackupSystemRead) < 30*time.Second {
+		return nil
+	}
+	data, err := read()
+	if err != nil {
+		return err
+	}
+	return acceptBackupSystemConfig(data)
+}
 
 func defaultBackupSystem() BackupSystemSettings {
 	return backupops.DefaultSettings()
@@ -43,25 +65,58 @@ func backupSystemSettings() BackupSystemSettings {
 func configuredScript(name string) string { return path.Join(backupSystemSettings().ScriptsDir, name) }
 func configuredLog(name string) string    { return path.Join(backupSystemSettings().LogsDir, name) }
 
+func remoteInstallation() backupops.InstallationPaths {
+	if current, ok := activeInstallation.Load().(backupops.InstallationPaths); ok {
+		return current
+	}
+	return backupops.LegacyInstallation()
+}
+
+func configuredRuntimeCommand(command string) string {
+	return backupops.Rewrite(command, backupops.InstallationPairs(backupops.LegacyInstallation(), remoteInstallation()))
+}
+
+// These paths belong to the Linux host, even when the API runs on Windows.
+// CronSettings is also used by native helper filesystem operations/tests, so
+// retain its validation/options but explicitly join remote paths with POSIX path.
+func remoteCronSettings(cfg BackupSystemSettings, id, key string) (BackupSystemSettings, error) {
+	local, err := backupops.CronSettings(cfg, id, key)
+	if err != nil || key == "" {
+		return local, err
+	}
+	loc := cfg.CronLocations[key]
+	if loc.FileLayout == "files" {
+		local.ScriptsDir, local.LogsDir = loc.ScriptsDir, loc.LogsDir
+	} else {
+		local.ScriptsDir = path.Join(loc.ScriptsDir, "cron-"+key)
+		local.LogsDir = path.Join(loc.LogsDir, "cron-"+key)
+	}
+	if loc.Options != nil {
+		local.DriveHistoryLog = path.Join(local.LogsDir, backupops.CronFileName(local, "aapanel_backup.log"))
+	}
+	return local, nil
+}
+
 func snapshotDownloadCommand(relative string) (string, error) {
 	if !validSnapshotPath(relative) {
 		return "", fmt.Errorf("Đường dẫn không hợp lệ")
 	}
 	cfg := backupSystemSettings()
 	remotePath := cfg.DriveRemote + ":" + cfg.DriveFolder + "/" + relative
-	return "/usr/bin/rclone cat " + activityShellQuote(remotePath) + " --config /root/.config/rclone/rclone.conf", nil
+	return "/usr/bin/rclone cat " + activityShellQuote(remotePath) + " --config " + activityShellQuote(remoteInstallation().RcloneConfig), nil
 }
 
 // Paths are restricted to shell-safe characters by the remote validator. One
 // pass avoids re-replacing a destination nested under a legacy directory.
 func configuredBackupCommand(command string) string {
 	cfg, defaults := backupSystemSettings(), defaultBackupSystem()
-	if cfg == defaults && !strings.Contains(command, "/tmp/rclone_about") {
+	if reflect.DeepEqual(cfg, defaults) && remoteInstallation().DataDir == "" && !strings.Contains(command, "/tmp/rclone_about") {
 		return command
 	}
 	pairs := [][2]string{{defaults.ScriptsDir, cfg.ScriptsDir}, {defaults.BackupRoot, cfg.BackupRoot},
 		{defaults.DriveRemote + ":" + defaults.DriveFolder, cfg.DriveRemote + ":" + cfg.DriveFolder},
 		{defaults.DriveRemote + ":", cfg.DriveRemote + ":"}, {defaults.DriveHistoryLog, cfg.DriveHistoryLog}}
+	pairs = append(pairs, backupops.InstallationPairs(backupops.LegacyInstallation(), remoteInstallation())...)
 	if strings.Contains(command, "/tmp/rclone_about") {
 		// Account quota is shared by folders on one remote, never by different remotes.
 		// A new cache namespace also prevents reusing the old default-account cache.
@@ -88,6 +143,17 @@ func configuredBackupCommand(command string) string {
 	for _, value := range mapping {
 		mapping[value] = value
 	}
+	for key, loc := range cfg.CronLocations {
+		local, err := remoteCronSettings(cfg, loc.ID, key)
+		if err != nil {
+			continue
+		}
+		for _, value := range []string{local.ScriptsDir, local.LogsDir} {
+			mapping[value] = value
+			escaped := strings.ReplaceAll(value, "/", `\/`)
+			mapping[escaped] = escaped
+		}
+	}
 	keys := make([]string, 0, len(mapping))
 	for key := range mapping {
 		keys = append(keys, key)
@@ -111,14 +177,13 @@ func backupSystemOperation(operation string, fields map[string]interface{}) ([]b
 	if err != nil {
 		return nil, err
 	}
-	command := fmt.Sprintf("printf '%%s' '%s' | base64 -d | '%s' config", encodeForShell(string(payload)), backupops.BinaryPath)
-	var out string
-	if operation == "script-read" || operation == "script-save" {
-		// Script text can contain credentials: use SSH stdin, never argv.
-		out, err = executeSSHCommandInputRaw("'"+backupops.BinaryPath+"' config", payload)
-	} else {
-		out, err = executeSSHCommandRaw(command)
+	// Configuration may contain OAuth tokens or script credentials. Never put
+	// payloads in process argv, including on the local-agent transport.
+	timeout := 60 * time.Second
+	if operation == "preview" || operation == "apply" {
+		timeout = 10 * time.Minute
 	}
+	out, err := executeSSHCommandInputRawTimeout("'"+backupops.BinaryPath+"' config", payload, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("Không thể hoàn tất thao tác cấu hình trên máy chủ; hãy kiểm tra đường dẫn hoặc thử lại")
 	}
@@ -140,8 +205,28 @@ func acceptBackupSystemConfig(data []byte) error {
 	if response.Config.BackupRoot == "" || response.Config.ScriptsDir == "" || response.Version == "" {
 		return fmt.Errorf("cấu hình máy chủ không hợp lệ")
 	}
+	installation := backupops.LegacyInstallation()
+	if response.Installation != nil && response.Installation.DataDir != "" {
+		if backupops.ValidateInstallationDirectory(response.Installation.DataDir) != nil {
+			return fmt.Errorf("vị trí cài đặt máy chủ không hợp lệ")
+		}
+		installation = backupops.InstallationAt(response.Installation.DataDir)
+		if !reflect.DeepEqual(installation, *response.Installation) {
+			return fmt.Errorf("đường dẫn cài đặt máy chủ không nhất quán")
+		}
+	}
+	previous := backupSystemSettings()
+	changed := !backupSystemLoaded.Load() || !reflect.DeepEqual(previous, response.Config) || !reflect.DeepEqual(remoteInstallation(), installation)
+	activeInstallation.Store(installation)
 	activeBackupSystem.Store(response.Config)
 	backupSystemLoaded.Store(true)
+	lastBackupSystemRead = time.Now()
+	if changed {
+		invalidate("config", "cron-jobs", "server-status", "backup-status", "local-snapshots", "recovery-snapshots")
+		if previous.DriveRemote != response.Config.DriveRemote || previous.DriveFolder != response.Config.DriveFolder {
+			clearDriveStatusSnapshot()
+		}
+	}
 	return nil
 }
 
@@ -160,15 +245,27 @@ func initializeBackupSystem() {
 }
 
 func registerBackupSystemRoutes(auth *gin.RouterGroup) {
+	auth.GET("/backup-system/drive/status", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		data, err := backupSystemOperation("drive-status", nil)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		c.Data(http.StatusOK, "application/json", data)
+	})
 	auth.GET("/backup-system", func(c *gin.Context) {
+		backupSystemMutation.Lock()
+		defer backupSystemMutation.Unlock()
 		data, err := backupSystemOperation("get", nil)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 			return
 		}
 		c.Header("Cache-Control", "no-store")
-		if !backupSystemLoaded.Load() {
-			_ = acceptBackupSystemConfig(data)
+		if err := acceptBackupSystemConfig(data); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "Cấu hình máy chủ không hợp lệ"})
+			return
 		}
 		c.Data(http.StatusOK, "application/json", data)
 	})
@@ -176,11 +273,13 @@ func registerBackupSystemRoutes(auth *gin.RouterGroup) {
 		{"/backup-system/directories/list", "list"}, {"/backup-system/directories/create", "create"},
 		{"/backup-system/preview", "preview"}, {"/backup-system/apply", "apply"},
 		{"/backup-system/scripts/read", "script-read"}, {"/backup-system/scripts/save", "script-save"},
+		{"/backup-system/scripts/options", "script-options"},
+		{"/backup-system/drive/connect", "drive-connect"},
 	} {
 		operation := route.Operation
 		auth.POST(route.URL, func(c *gin.Context) {
 			c.Header("Cache-Control", "no-store")
-			limit := int64(32768)
+			limit := int64(131072)
 			if operation == "script-save" {
 				limit = 1024 * 1024
 			}
@@ -190,7 +289,7 @@ func registerBackupSystemRoutes(auth *gin.RouterGroup) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu cấu hình không hợp lệ"})
 				return
 			}
-			if operation == "apply" || operation == "script-save" {
+			if operation == "apply" || operation == "script-save" || operation == "drive-connect" {
 				backupSystemMutation.Lock()
 				defer backupSystemMutation.Unlock()
 			}
@@ -213,6 +312,10 @@ func registerBackupSystemRoutes(auth *gin.RouterGroup) {
 			}
 			if operation == "script-save" {
 				invalidate("cron-jobs")
+			}
+			if operation == "drive-connect" {
+				invalidate("backup-status", "config", "recovery-snapshots")
+				clearDriveStatusSnapshot()
 			}
 			c.Data(http.StatusOK, "application/json", data)
 		})

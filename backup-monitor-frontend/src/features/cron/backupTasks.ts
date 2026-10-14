@@ -2,6 +2,8 @@ import type { CronJob } from '../../shared/types'
 import type { CronScheduleChange, ScheduleCycle } from '../../api/backupSystem'
 import type { BackupSource, BackupSystemConfig, BackupSystemState } from '../../api/backupSystem'
 
+export function cronJobSelector(job: Pick<CronJob, 'id' | 'instanceKey'>): string { return job.instanceKey ? `${job.id}~${job.instanceKey}` : job.id }
+
 export const sourceConfigKeys: Record<string, 'siteSource' | 'databaseSource' | 'panelSource'> = { 'backup-site': 'siteSource', 'backup-database': 'databaseSource', 'backup-panel': 'panelSource' }
 export function backupSourceForTask(config: BackupSystemConfig, state: BackupSystemState, id: string): BackupSource | null {
   const key = sourceConfigKeys[id]
@@ -22,6 +24,19 @@ export const backupTaskScripts: Record<string, string> = {
   'cleanup-panel': 'cleanup-panel-backups.sh', 'drive-sync': 'auto_backup.sh', 'integrity-check': 'check_integrity.sh',
 }
 
+// The folder picker edits the chosen parent, not selected.script (which can
+// still contain a previous/global path until the next cron poll finishes).
+export function cronExecutionScript(job: CronJob, scriptsDir: string, flatFiles = false): string {
+  const parent = scriptsDir.replace(/\/+$/, '')
+  if (!parent) return job.script
+  const file = backupTaskScripts[job.id] ?? job.script.split('/').at(-1) ?? ''
+  if (!job.instanceKey) return `${parent}/${file}`
+  if (!flatFiles) return `${parent}/cron-${job.instanceKey}/${file}`
+  const extension = file.lastIndexOf('.')
+  const name = extension > 0 ? `${file.slice(0, extension)}-${job.instanceKey}${file.slice(extension)}` : `${file}-${job.instanceKey}`
+  return `${parent}/${name}`
+}
+
 function cronClock(schedule: string): { hour: string; minute: string } {
   const [minute, hour] = schedule.trim().split(/\s+/)
   return {
@@ -37,7 +52,7 @@ function withCronClock(schedule: string, hour: string, minute: string): string |
   return `${Number(minute)} ${Number(hour)} ${fields.slice(2).join(' ')}`
 }
 
-export type CronScheduleDraft = { id: string; expectedSchedule: string; expectedEnabled?: boolean; hour: string; minute: string; revision: number; cycle: ScheduleCycle['type'] | 'current'; every: string; weekday: string; day: string; create?: boolean }
+export type CronScheduleDraft = { instanceKey?: string; id: string; expectedSchedule: string; expectedEnabled?: boolean; hour: string; minute: string; revision: number; cycle: ScheduleCycle['type'] | 'current'; every: string; weekday: string; day: string; create?: boolean }
 
 export const cycleLabels = {
   current: { vi: 'Giữ chu kỳ hiện tại', en: 'Keep current recurrence' },
@@ -99,21 +114,21 @@ export function proposedCronSchedule(draft: CronScheduleDraft): string | null {
 export function makeCronScheduleDraft(job: CronJob, revision = 0): CronScheduleDraft {
   const clock = cronClock(job.schedule)
   const cycle = cronCycleDraft(job.isNew ? '0 0 * * *' : job.schedule)
-  return { id: job.id, expectedSchedule: job.schedule, expectedEnabled: job.enabled,
+  return { id: job.id, instanceKey: job.instanceKey, expectedSchedule: job.schedule, expectedEnabled: job.enabled,
     hour: clock.hour || (job.isNew || ['hourly', 'hours', 'minutes'].includes(cycle.cycle) ? '00' : ''),
     minute: clock.minute || (job.isNew || cycle.cycle === 'minutes' ? '00' : ''), ...cycle, revision, ...(job.isNew ? { create: true } : {}) }
 }
 
 export function cronScheduleIsStale(draft: CronScheduleDraft, job: CronJob): boolean {
-  return draft.id !== job.id || draft.expectedSchedule !== job.schedule || draft.expectedEnabled !== job.enabled || !!draft.create !== !!job.isNew
+  return draft.id !== job.id || draft.instanceKey !== job.instanceKey || draft.expectedSchedule !== job.schedule || draft.expectedEnabled !== job.enabled || !!draft.create !== !!job.isNew
 }
 
-export function buildCronScheduleChange(draft: CronScheduleDraft): CronScheduleChange | null {
+export function buildCronScheduleChange(draft: CronScheduleDraft, force = false): CronScheduleChange | null {
   const proposed = proposedCronSchedule(draft)
-  if (!proposed || proposed === draft.expectedSchedule || typeof draft.expectedEnabled !== 'boolean') return null
+  if (!proposed || (!force && proposed === draft.expectedSchedule) || typeof draft.expectedEnabled !== 'boolean') return null
   const cycle = scheduleCycle(draft)
   const hour = ['hourly', 'hours', 'minutes'].includes(draft.cycle) ? '00' : draft.hour.padStart(2, '0')
   const minute = draft.cycle === 'minutes' ? '00' : draft.minute.padStart(2, '0')
-  return { id: draft.id, clock: `${hour}:${minute}`, expectedSchedule: draft.expectedSchedule, expectedEnabled: draft.expectedEnabled,
+  return { id: draft.id, instanceKey: draft.instanceKey, clock: `${hour}:${minute}`, expectedSchedule: draft.expectedSchedule, expectedEnabled: draft.expectedEnabled,
     ...(cycle && (draft.create || proposed !== withCronClock(draft.expectedSchedule, draft.hour, draft.minute)) ? { cycle } : {}), ...(draft.create ? { create: true } : {}) }
 }

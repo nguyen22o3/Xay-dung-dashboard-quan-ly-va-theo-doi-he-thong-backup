@@ -3,16 +3,19 @@ import type { CronScheduleDraft } from './backupTasks'
 import type { Lang } from '../../shared/language'
 import type { CronJob } from '../../shared/types'
 import { formatCronSchedule } from '../../shared/utils'
+import type { ManagedScriptOption } from '../../api/backupSystem'
+import { Folder } from 'lucide-react'
 
 type Props = {
   lang: Lang; jobs: CronJob[]; selected?: CronJob; draft: CronScheduleDraft | null
-  disabled: boolean; loading: boolean; error: string | null; scriptsDir: string
+  disabled: boolean; loading: boolean; error: string | null; scriptPath: string
   idPrefix?: string; selectionLocked?: boolean
+  scriptChoices?: { options: ManagedScriptOption[]; value: string; loading: boolean; error: string; onOpen: () => void }
   onSelect: (id: string) => void; onDraftChange: (change: Partial<CronScheduleDraft>) => void; onReset: () => void
 }
 
 // Controlled fields only: schedule and storage share the parent's preview/apply.
-export default function BackupTaskForm({ lang, jobs, selected, draft, disabled, loading, error, scriptsDir, idPrefix = '', selectionLocked = false, onSelect, onDraftChange, onReset }: Props) {
+export default function BackupTaskForm({ lang, jobs, selected, draft, disabled, loading, error, scriptPath, scriptChoices, idPrefix = '', selectionLocked = false, onSelect, onDraftChange, onReset }: Props) {
   const vi = lang === 'vi'
   if (!selected || !draft) return loading ? <p className="backup-system-note">{vi ? 'Đang tải tác vụ...' : 'Loading tasks...'}</p> : null
   const stale = cronScheduleIsStale(draft, selected)
@@ -20,12 +23,14 @@ export default function BackupTaskForm({ lang, jobs, selected, draft, disabled, 
   const proposed = proposedCronSchedule(draft)
   const showHour = !['hourly', 'hours', 'minutes'].includes(draft.cycle)
   const weekLabels = vi ? ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'] : ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-  const script = scriptsDir.replace(/\/$/, '') + '/' + selected.script.split('/').at(-1)
   const choices = selectionLocked ? [selected] : jobs
   return <div className="backup-task-embedded">
     <div className="backup-system-fields">
       <div className="apex-settings-field"><label htmlFor={`${idPrefix}backup-task-type`}>{vi ? 'Loại tác vụ (Task type)' : 'Task type'}</label><select id={`${idPrefix}backup-task-type`} value={selected.id} disabled={disabled || selectionLocked} onChange={event => onSelect(event.target.value)}>{choices.map(job => <option key={job.id} value={job.id}>{backupTaskLabels[job.id]?.[lang] ?? job.name}</option>)}</select></div>
-      <div className="apex-settings-field"><label htmlFor={`${idPrefix}backup-task-script`}>{vi ? 'Script thực hiện' : 'Execution script'}</label><input id={`${idPrefix}backup-task-script`} readOnly value={script} spellCheck={false} /></div>
+      <div className="apex-settings-field"><label htmlFor={`${idPrefix}backup-task-script`}>{vi ? 'Script thực hiện' : 'Execution script'}</label>{scriptChoices ? <>
+        <div className="backup-system-path"><input id={`${idPrefix}backup-task-script`} readOnly value={scriptChoices.value === '__stale__' ? (vi ? 'Script đã thay đổi — chọn lại' : 'Script changed — select again') : scriptChoices.options.find(option => option.selector === scriptChoices.value)?.path ?? scriptPath} spellCheck={false} /><button className="backup-system-secondary" type="button" disabled={disabled} onClick={scriptChoices.onOpen} aria-haspopup="dialog" aria-label={vi ? 'Chọn script trên AlmaLinux' : 'Choose an AlmaLinux script'} title={vi ? 'Chọn script' : 'Choose script'}><Folder size={16} aria-hidden="true" /></button></div>
+        {scriptChoices.error && <p className="backup-system-error" role="alert" style={{ gridColumn: '1 / -1', margin: 0 }}>{scriptChoices.error}</p>}
+      </> : <input id={`${idPrefix}backup-task-script`} readOnly value={scriptPath} spellCheck={false} />}</div>
       <div className="apex-settings-field"><label htmlFor={`${idPrefix}backup-task-cycle`}>{vi ? 'Chu kỳ thực hiện' : 'Execute cycle'}</label>
         <div className="backup-task-cycle">
           <select id={`${idPrefix}backup-task-cycle`} disabled={locked} value={draft.cycle} onChange={event => onDraftChange({ cycle: event.target.value as CronScheduleDraft['cycle'] })}>{Object.entries(cycleLabels).filter(([key]) => key !== 'current' || draft.cycle === 'current').map(([key, label]) => <option key={key} value={key}>{label[lang]}</option>)}</select>

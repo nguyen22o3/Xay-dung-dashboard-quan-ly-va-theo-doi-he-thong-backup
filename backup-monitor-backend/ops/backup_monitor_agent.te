@@ -1,0 +1,23 @@
+policy_module(backup_monitor_agent, 1.0.0)
+
+# The host administrator service is trusted, like the former root SSH login.
+# Only its named domain is reachable from a container; no generic permission
+# to connect to all unconfined host services is granted.
+type backup_monitor_agent_t;
+type backup_monitor_agent_exec_t;
+init_daemon_domain(backup_monitor_agent_t, backup_monitor_agent_exec_t)
+unconfined_domain(backup_monitor_agent_t)
+mls_trusted_object(backup_monitor_agent_t)
+
+gen_require(`
+    type container_t;
+    type container_file_t;
+    type init_t;
+    class unix_stream_socket connectto;
+    class process2 nnp_transition;
+')
+
+allow container_t backup_monitor_agent_t:unix_stream_socket connectto;
+allow init_t backup_monitor_agent_t:process2 nnp_transition;
+# Keep new socket in the shared container-readable directory at s0.
+type_transition backup_monitor_agent_t container_file_t:sock_file container_file_t;

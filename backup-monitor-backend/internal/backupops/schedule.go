@@ -3,19 +3,22 @@ package backupops
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
 type ScheduleChange struct {
-	ID               string         `json:"id"`
-	Clock            string         `json:"clock"`
-	ExpectedSchedule string         `json:"expectedSchedule"`
-	ExpectedEnabled  *bool          `json:"expectedEnabled"`
-	Cycle            *ScheduleCycle `json:"cycle,omitempty"`
-	Create           bool           `json:"create,omitempty"`
+	SourceScript     *ManagedScriptSelection `json:"sourceScript,omitempty"`
+	MoveBackups      bool                    `json:"moveBackups,omitempty"`
+	InstanceKey      string                  `json:"instanceKey,omitempty"`
+	Directories      *CronDirectories        `json:"directories,omitempty"`
+	ID               string                  `json:"id"`
+	Clock            string                  `json:"clock"`
+	ExpectedSchedule string                  `json:"expectedSchedule"`
+	ExpectedEnabled  *bool                   `json:"expectedEnabled"`
+	Cycle            *ScheduleCycle          `json:"cycle,omitempty"`
+	Create           bool                    `json:"create,omitempty"`
 }
 
 type ScheduleCycle struct {
@@ -81,6 +84,13 @@ var scheduleTokens = regexp.MustCompile(`[^ \t]+`)
 // Update only a known direct/wrapped task and preserve its arguments, recurrence
 // and pause marker. This runs inside the storage transaction, never on its own.
 func proposeSchedulePlanned(cron []byte, scriptsDir string, change *ScheduleChange, planned map[string]bool, logsDirs ...string) ([]byte, *SchedulePreview, error) {
+	cfg := Settings{ScriptsDir: scriptsDir}
+	if len(logsDirs) == 1 {
+		cfg.LogsDir = logsDirs[0]
+	}
+	return proposeScheduleSettings(cron, cfg, change, planned)
+}
+func proposeScheduleSettings(cron []byte, cfg Settings, change *ScheduleChange, planned map[string]bool) ([]byte, *SchedulePreview, error) {
 	if change == nil {
 		return cron, nil, nil
 	}
@@ -101,8 +111,8 @@ func proposeSchedulePlanned(cron []byte, scriptsDir string, change *ScheduleChan
 	}
 	hour, _ := strconv.Atoi(change.Clock[:2])
 	minute, _ := strconv.Atoi(change.Clock[3:])
-	script := filepath.Join(scriptsDir, file)
-	wrapper := filepath.Join(scriptsDir, "backup-monitor-run.sh")
+	script := scriptPath(cfg, file)
+	wrapper := scriptPath(cfg, "backup-monitor-run.sh")
 	lines := strings.Split(string(cron), "\n")
 	matches := 0
 	otherSchedules := map[string]bool{}
@@ -153,7 +163,7 @@ func proposeSchedulePlanned(cron []byte, scriptsDir string, change *ScheduleChan
 		if otherSchedules[cycle] {
 			return nil, nil, errors.New("Loại tác vụ này đã có đúng lịch đã chọn (kể cả lịch tạm dừng); hãy chọn giờ hoặc chu kỳ khác")
 		}
-		if len(logsDirs) != 1 || SafeParents(script) != nil {
+		if cfg.LogsDir == "" || SafeParents(script) != nil {
 			return nil, nil, errors.New("Không xác nhận được script hoặc thư mục log")
 		}
 		info, err := os.Stat(script)
@@ -175,7 +185,7 @@ func proposeSchedulePlanned(cron []byte, scriptsDir string, change *ScheduleChan
 		if change.ID == "cleanup-panel" {
 			command += " --delete"
 		}
-		command += " >> " + filepath.Join(logsDirs[0], logNames[change.ID]) + " 2>&1"
+		command += " >> " + logPath(cfg, logNames[change.ID]) + " 2>&1"
 		return []byte(strings.TrimRight(string(cron), "\n") + "\n" + cycle + " " + command + "\n"), &SchedulePreview{change.ID, "", cycle, true, true}, nil
 	}
 	if matches == 0 {

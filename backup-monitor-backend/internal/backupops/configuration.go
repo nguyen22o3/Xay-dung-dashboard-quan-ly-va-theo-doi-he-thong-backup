@@ -7,25 +7,30 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 )
 
 type Preview struct {
-	Token           string           `json:"token"`
-	Changed         bool             `json:"changed"`
-	FilesToMove     int              `json:"filesToMove"`
-	BytesToMove     int64            `json:"bytesToMove"`
-	DaysToMove      int              `json:"daysToMove"`
-	ScriptsToUpdate int              `json:"scriptsToUpdate"`
-	ScriptsToCreate []string         `json:"scriptsToCreate"`
-	LogsToMove      int              `json:"logsToMove"`
-	DriveChanged    bool             `json:"driveChanged"`
-	Config          Settings         `json:"config"`
-	Version         string           `json:"version"`
-	Schedule        *SchedulePreview `json:"schedule,omitempty"`
-	Sources         []SourcePreview  `json:"sources,omitempty"`
+	SourceScript    *ManagedScriptOption `json:"sourceScript,omitempty"`
+	CronFiles       *CronFilePreview     `json:"cronFiles,omitempty"`
+	BackupMigration bool                 `json:"backupMigration"`
+	CronDirectories *CronDirectories     `json:"cronDirectories,omitempty"`
+	Token           string               `json:"token"`
+	Changed         bool                 `json:"changed"`
+	FilesToMove     int                  `json:"filesToMove"`
+	BytesToMove     int64                `json:"bytesToMove"`
+	DaysToMove      int                  `json:"daysToMove"`
+	ScriptsToUpdate int                  `json:"scriptsToUpdate"`
+	ScriptsToCreate []string             `json:"scriptsToCreate"`
+	LogsToMove      int                  `json:"logsToMove"`
+	DriveChanged    bool                 `json:"driveChanged"`
+	Config          Settings             `json:"config"`
+	Version         string               `json:"version"`
+	Schedule        *SchedulePreview     `json:"schedule,omitempty"`
+	Sources         []SourcePreview      `json:"sources,omitempty"`
 }
 type scriptChange struct {
 	Source, Target    string
@@ -42,6 +47,8 @@ type dayChange struct {
 	Files          []fileCheck
 }
 type Proposal struct {
+	Archives      []archiveTransfer
+	Ledgers       []ledgerTransfer
 	Summary       Preview
 	Old, New      Settings
 	Scripts       []scriptChange
@@ -52,14 +59,27 @@ type Proposal struct {
 
 func settingsPairs(old, new Settings) [][2]string {
 	pairs := [][2]string{{old.ScriptsDir, new.ScriptsDir}, {old.BackupRoot, new.BackupRoot}, {old.DriveRemote + ":" + old.DriveFolder, new.DriveRemote + ":" + new.DriveFolder}, {old.DriveHistoryLog, new.DriveHistoryLog}}
+	for _, name := range ScriptNames {
+		pairs = append(pairs, [2]string{scriptPath(old, name), scriptPath(new, name)})
+	}
 	for _, name := range LogNames {
-		pairs = append(pairs, [2]string{filepath.Join(old.LogsDir, name), filepath.Join(new.LogsDir, name)})
+		pairs = append(pairs, [2]string{logPath(old, name), logPath(new, name)})
 	}
 	result := [][2]string{}
+	changed := false
 	for _, p := range pairs {
 		if p[0] != p[1] {
-			result = append(result, p)
+			changed = true
 		}
+	}
+	if !changed {
+		return result
+	}
+	// Longest-match identity mappings protect unchanged script/log paths inside
+	// the old backup root when only the archive destination changes.
+	result = append(result, pairs...)
+	if old.LogsDir == new.LogsDir {
+		result = append(result, [2]string{old.LogsDir, new.LogsDir})
 	}
 	return result
 }
@@ -85,6 +105,9 @@ func Rewrite(text string, pairs [][2]string) string {
 	return regexp.MustCompile(strings.Join(keys, "|")).ReplaceAllStringFunc(text, func(value string) string { return mapping[value] })
 }
 func (c *Controller) Proposal(r Request) (*Proposal, error) {
+	if r.Schedule != nil && (r.Schedule.Directories != nil || r.Schedule.InstanceKey != "") {
+		return c.cronProposal(r)
+	}
 	old, version, err := c.Active()
 	if err != nil {
 		return nil, err
@@ -96,6 +119,16 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 		return nil, errors.New("Thiếu cấu hình mới")
 	}
 	new := *r.Config
+	if !sameCronLocations(old.CronLocations, new.CronLocations) {
+		return nil, errors.New("Đường dẫn cron chỉ được đổi qua tác vụ đang chọn")
+	}
+	if r.Schedule != nil {
+		before, after := old, new
+		before.CronLocations, after.CronLocations = nil, nil
+		if !reflect.DeepEqual(before, after) {
+			return nil, errors.New("Không sửa cấu hình chung từ cron; cập nhật dashboard và gửi cấu hình riêng của tác vụ")
+		}
+	}
 	new.DriveHistoryLog = old.DriveHistoryLog
 	if new.LogsDir != old.LogsDir {
 		new.DriveHistoryLog = filepath.Join(new.LogsDir, "aapanel_backup.log")
@@ -115,6 +148,7 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 	}
 	p := &Proposal{Old: old, New: new, Scripts: []scriptChange{}, Logs: []logChange{}, Days: []dayChange{}}
 	planned := map[string]bool{}
+	missing := map[string]bool{}
 	creating := r.Schedule != nil && r.Schedule.Create
 	if creating {
 		if _, ok := TaskScripts[r.Schedule.ID]; !ok {
@@ -123,7 +157,16 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 	}
 	for _, name := range ScriptNames {
 		source, target := filepath.Join(old.ScriptsDir, name), filepath.Join(new.ScriptsDir, name)
-		if !exists(source) && creating {
+		// Only genuinely absent files may be optional. Do not turn unreadable
+		// paths, directories or dangling symlinks into missing-script exceptions.
+		if err := SafeParents(source); err != nil {
+			return nil, err
+		}
+		_, statErr := os.Lstat(source)
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return nil, errors.New("Không kiểm tra được script được quản lý: " + name)
+		}
+		if os.IsNotExist(statErr) && creating {
 			isTask := name == TaskScripts[r.Schedule.ID]
 			isRunner := name == "backup-monitor-run.sh"
 			if isTask || isRunner {
@@ -148,19 +191,19 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 				planned[source] = true
 				continue
 			}
-			// A new installation can start with only the selected task. Missing
-			// scripts referenced by an existing cron are rejected below.
+		}
+		if os.IsNotExist(statErr) {
 			for _, change := range sources {
-				if name == change.ID+".sh" {
+				if name == TaskScripts[change.ID] && r.creatingTask != change.ID {
 					return nil, errors.New("Thiếu script để cập nhật nguồn: " + name)
 				}
 			}
-			continue
-		}
-		if !exists(source) && (name == "backup-monitor-run.sh" || name == "backup-panel.sh") {
-			if name == "backup-panel.sh" && configuredSource(old, "backup-panel") != configuredSource(new, "backup-panel") {
-				return nil, errors.New("Thiếu script backup-panel.sh; chưa lưu nguồn aaPanel")
+			if r.Schedule != nil && name == TaskScripts[r.Schedule.ID] {
+				return nil, errors.New("Thiếu script của tác vụ đang sửa: " + name)
 			}
+			// Partial installations remain editable. Cron dependencies, including
+			// the task dispatched by a wrapper, are checked below in every mode.
+			missing[name] = true
 			continue
 		}
 		original, err := readRegular(source)
@@ -188,6 +231,9 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 		}
 		p.Scripts = append(p.Scripts, scriptChange{source, target, original, updated})
 	}
+	if err = c.updatePrivateScripts(p); err != nil {
+		return nil, err
+	}
 	logs := [][2]string{{old.DriveHistoryLog, new.DriveHistoryLog}}
 	for _, name := range LogNames {
 		logs = append(logs, [2]string{filepath.Join(old.LogsDir, name), filepath.Join(new.LogsDir, name)})
@@ -209,6 +255,11 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 		p.Logs = append(p.Logs, logChange{pair[0], pair[1], sum})
 	}
 	if old.BackupRoot != new.BackupRoot {
+		for _, loc := range old.CronLocations {
+			if loc.Options != nil && loc.Options.BackupRoot == old.BackupRoot {
+				return nil, errors.New("Nơi lưu chung đang được cron riêng sử dụng; đổi nơi lưu qua từng cron, không chuyển cả kho chung")
+			}
+		}
 		if within(new.BackupRoot, old.BackupRoot) || within(old.BackupRoot, new.BackupRoot) {
 			return nil, errors.New("Thư mục backup mới không được lồng trong hoặc chứa thư mục cũ")
 		}
@@ -279,23 +330,29 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 			p.Days = append(p.Days, day)
 		}
 	}
-	p.Cron, err = c.Run([]string{"crontab", "-l"}, nil)
+	p.Cron, err = c.readStorageCron()
 	if err != nil {
 		return nil, err
 	}
-	if creating {
-		for _, name := range ScriptNames {
-			path := filepath.Join(old.ScriptsDir, name)
-			if exists(path) || planned[path] {
-				continue
+	if err := validateMissingCronScripts(p.Cron, old.ScriptsDir, missing); err != nil {
+		return nil, err
+	}
+	for key, loc := range old.CronLocations {
+		local, _ := CronSettings(old, loc.ID, key)
+		missing := map[string]bool{}
+		for _, name := range []string{TaskScripts[loc.ID], "backup-monitor-run.sh"} {
+			script := scriptPath(local, name)
+			if err := SafeParents(script); err != nil {
+				return nil, err
 			}
-			for _, line := range strings.Split(string(p.Cron), "\n") {
-				for _, field := range strings.Fields(line) {
-					if field == path {
-						return nil, errors.New("Cron hiện có trỏ tới script bị thiếu: " + name)
-					}
-				}
+			_, err := os.Lstat(script)
+			if err != nil && !os.IsNotExist(err) {
+				return nil, err
 			}
+			missing[name] = os.IsNotExist(err)
+		}
+		if err := validateMissingCronSettings(p.Cron, local, missing); err != nil {
+			return nil, err
 		}
 	}
 	scheduledCron, schedulePreview, err := proposeSchedulePlanned(p.Cron, old.ScriptsDir, r.Schedule, planned, old.LogsDir)
@@ -351,6 +408,44 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 	}
 	return p, nil
 }
+
+// Paused jobs still depend on their scripts, but ordinary cron comments do not.
+// Wrapped cron lines name the runner rather than the dispatched task's file;
+// checking only literal script paths would miss a deleted backup task.
+func validateMissingCronScripts(cron []byte, scriptsDir string, missing map[string]bool) error {
+	return validateMissingCronSettings(cron, Settings{ScriptsDir: scriptsDir}, missing)
+}
+func validateMissingCronSettings(cron []byte, cfg Settings, missing map[string]bool) error {
+	paths := map[string]string{}
+	for _, name := range ScriptNames {
+		paths[scriptPath(cfg, name)] = name
+	}
+	wrapper := scriptPath(cfg, "backup-monitor-run.sh")
+	for _, line := range strings.Split(string(cron), "\n") {
+		body := strings.TrimSpace(line)
+		if strings.HasPrefix(body, pausedSchedulePrefix) {
+			body = strings.TrimPrefix(body, pausedSchedulePrefix)
+		} else if strings.HasPrefix(body, "#") {
+			continue
+		}
+		fields := strings.Fields(body)
+		for i, field := range fields {
+			if strings.HasPrefix(field, "#") {
+				break
+			}
+			if name := paths[field]; missing[name] {
+				return errors.New("Cron hiện có trỏ tới script bị thiếu: " + name)
+			}
+			if field == wrapper && i+1 < len(fields) {
+				if name := TaskScripts[fields[i+1]]; missing[name] {
+					return errors.New("Cron hiện có trỏ tới script bị thiếu: " + name)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func verifyDay(day dayChange) error {
 	for _, file := range day.Files {
 		path := filepath.Join(day.Target, file.Relative)
@@ -407,7 +502,7 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 	}
 	defer os.RemoveAll(temporary)
 	for _, script := range p.Scripts {
-		target := filepath.Join(temporary, filepath.Base(script.Source))
+		target := filepath.Join(temporary, hashBytes([]byte(script.Source))[:16]+"-"+filepath.Base(script.Source))
 		if err = AtomicWrite(target, script.Updated, 0600); err != nil {
 			return state, err
 		}
@@ -415,13 +510,32 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 			return state, errors.New("Script cập nhật không hợp lệ: " + filepath.Base(script.Source))
 		}
 	}
-	if p.Summary.DriveChanged {
+	if p.Summary.DriveChanged && r.Schedule == nil {
 		if err = c.Create(Request{Location: "drive", Remote: p.New.DriveRemote, Path: p.New.DriveFolder}); err != nil {
 			return state, err
 		}
 	}
 	for _, path := range []string{p.New.BackupRoot, p.New.ScriptsDir, p.New.LogsDir, c.RecoveryRoot} {
 		if err = mkdirPrivate(path); err != nil {
+			return state, err
+		}
+	}
+	for _, script := range p.Scripts {
+		if err = mkdirPrivate(filepath.Dir(script.Target)); err != nil {
+			return state, err
+		}
+	}
+	for _, log := range p.Logs {
+		if err = mkdirPrivate(filepath.Dir(log.Target)); err != nil {
+			return state, err
+		}
+	}
+	for key, loc := range p.New.CronLocations {
+		cfg, _ := CronSettings(p.New, loc.ID, key)
+		if err = mkdirPrivate(cfg.BackupRoot); err != nil {
+			return state, err
+		}
+		if err = mkdirPrivate(cfg.LogsDir); err != nil {
 			return state, err
 		}
 	}
@@ -440,20 +554,24 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 		if script.Original == nil {
 			continue
 		}
-		if err = c.Write(filepath.Join(recovery, filepath.Base(script.Source)), script.Original, 0600); err != nil {
+		if err = c.Write(filepath.Join(recovery, hashBytes([]byte(script.Source))[:16]+"-"+filepath.Base(script.Source)), script.Original, 0600); err != nil {
 			return state, err
 		}
 	}
 	manifest, _ := json.MarshalIndent(struct {
-		Days []dayChange
-		Logs []logChange
-	}{p.Days, p.Logs}, "", "  ")
+		Days     []dayChange
+		Logs     []logChange
+		Archives []archiveTransfer
+		Ledgers  []ledgerTransfer
+	}{p.Days, p.Logs, p.Archives, p.Ledgers}, "", "  ")
 	if err = c.Write(filepath.Join(recovery, "moves.json"), manifest, 0600); err != nil {
 		return state, err
 	}
 	movedDays := []dayChange{}
 	movedLogs := []logChange{}
 	installed := []scriptChange{}
+	stagedArchives := []archiveTransfer{}
+	installedLedgers := []ledgerTransfer{}
 	cronAttempted := false
 	committed := false
 	defer func() {
@@ -461,6 +579,32 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 			return
 		}
 		rollbackErrors := []string{}
+		for i := len(installedLedgers) - 1; i >= 0; i-- {
+			ledger := installedLedgers[i]
+			if sum, err := Digest(ledger.Target); err != nil || sum != hashBytes(ledger.Updated) {
+				rollbackErrors = append(rollbackErrors, "metadata đã thay đổi")
+				continue
+			}
+			var err error
+			if ledger.Original == nil {
+				err = os.Remove(ledger.Target)
+			} else {
+				err = c.Write(ledger.Target, ledger.Original, 0600)
+			}
+			if err != nil {
+				rollbackErrors = append(rollbackErrors, "metadata")
+			}
+		}
+		for i := len(stagedArchives) - 1; i >= 0; i-- {
+			move := stagedArchives[i]
+			if verifyTransferFile(move.Source, move) != nil || verifyTransferFile(move.Target, move) != nil {
+				rollbackErrors = append(rollbackErrors, "backup đã thay đổi; giữ cả hai bản")
+				continue
+			}
+			if err := os.Remove(move.Target); err != nil {
+				rollbackErrors = append(rollbackErrors, "backup đích")
+			}
+		}
 		if cronAttempted {
 			if _, err := c.Run([]string{"crontab", "-"}, p.Cron); err != nil {
 				rollbackErrors = append(rollbackErrors, "crontab")
@@ -479,7 +623,11 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 			} else if script.Source == script.Target {
 				err = c.Write(script.Source, script.Original, 0700)
 			} else {
-				err = os.Remove(script.Target)
+				if sum, readErr := Digest(script.Target); readErr != nil || sum != hashBytes(script.Updated) {
+					err = errors.New("Script đích đã thay đổi; không xóa")
+				} else {
+					err = os.Remove(script.Target)
+				}
 			}
 			if err != nil {
 				rollbackErrors = append(rollbackErrors, filepath.Base(script.Source))
@@ -504,6 +652,28 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 			resultErr = fmt.Errorf("Không hoàn tất khôi phục (%s); bản dự phòng: %s", strings.Join(rollbackErrors, ", "), recovery)
 		}
 	}()
+	for _, move := range p.Archives {
+		if err = stageBackupTransfer(move); err != nil {
+			return state, err
+		}
+		stagedArchives = append(stagedArchives, move)
+	}
+	for _, ledger := range p.Ledgers {
+		if err = SafeParents(ledger.Target); err != nil {
+			return state, err
+		}
+		if ledger.Original == nil {
+			if exists(ledger.Target) {
+				return state, errors.New("Metadata đích đã xuất hiện sau xem trước")
+			}
+		} else if sum, readErr := Digest(ledger.Target); readErr != nil || sum != hashBytes(ledger.Original) {
+			return state, errors.New("Metadata đích đã thay đổi sau xem trước")
+		}
+		if err = c.Write(ledger.Target, ledger.Updated, 0600); err != nil {
+			return state, err
+		}
+		installedLedgers = append(installedLedgers, ledger)
+	}
 	for _, day := range p.Days {
 		if err = SafeParents(day.Target); err != nil {
 			return state, err
@@ -550,32 +720,63 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 		if readErr != nil || hashBytes(current) != hashBytes(script.Original) {
 			return state, errors.New("Script đã thay đổi sau xem trước; chưa ghi đè")
 		}
-		if err = c.Write(script.Target, script.Updated, 0700); err != nil {
+		if script.Source != script.Target {
+			err = writeScriptExclusive(script.Target, script.Updated)
+		} else {
+			err = c.Write(script.Target, script.Updated, 0700)
+		}
+		if err != nil {
 			return state, err
 		}
 		installed = append(installed, script)
+	}
+	// Never point crontab at a clone that did not survive installation.
+	for _, script := range p.Scripts {
+		if sum, readErr := Digest(script.Target); readErr != nil || sum != hashBytes(script.Updated) {
+			return state, errors.New("Script đích thiếu hoặc thay đổi; chưa cập nhật cron: " + filepath.Base(script.Target))
+		}
 	}
 	cronAttempted = true
 	if _, err = c.Run([]string{"crontab", "-"}, p.NewCron); err != nil {
 		return state, err
 	}
 	raw, _ := json.MarshalIndent(p.New, "", "  ")
+	for _, move := range stagedArchives {
+		if err = verifyTransferFile(move.Source, move); err != nil {
+			return state, err
+		}
+		if err = verifyTransferFile(move.Target, move); err != nil {
+			return state, err
+		}
+	}
 	if err = c.Write(c.ConfigPath, raw, 0600); err != nil {
 		return state, err
 	}
 	committed = true
+	transferWarnings := []string{}
+	for _, move := range stagedArchives {
+		if verifyTransferFile(move.Source, move) != nil || verifyTransferFile(move.Target, move) != nil {
+			transferWarnings = append(transferWarnings, "Nơi lưu mới đã áp dụng; bản gốc thay đổi nên được giữ lại: "+move.Source)
+			continue
+		}
+		if err := os.Remove(move.Source); err != nil {
+			transferWarnings = append(transferWarnings, "Backup đã có ở nơi mới; chưa xóa được bản gốc: "+move.Source)
+		}
+	}
 	state, err = c.Get()
 	if err != nil {
 		return state, errors.New("Cấu hình đã áp dụng nhưng chưa xác nhận được trạng thái; hãy tải lại")
 	}
 	state.Applied = true
 	state.RecoveryDir = recovery
+	state.Warnings = append(state.Warnings, transferWarnings...)
+	state.Warnings = append(state.Warnings, cleanupFlattenedCron(p, r.Schedule)...)
 	// Unlock before restarting an existing monitor. Never start a monitor that
 	// was stopped before this operation; never return failure after commit just
 	// because restarting the monitor failed.
 	releaseAll(locks)
 	locks = nil
-	if c.RestartMonitor != nil {
+	if c.RestartMonitor != nil && r.Schedule == nil {
 		warnings, err := c.RestartMonitor(p.Old, p.New)
 		state.Warnings = warnings
 		if err != nil {

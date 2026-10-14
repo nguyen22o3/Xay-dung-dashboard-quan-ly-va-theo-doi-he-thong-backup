@@ -381,6 +381,103 @@ func (l *Layout) Prune(category string, delete bool, out io.Writer) error {
 	if len(files) == 0 {
 		fmt.Fprintf(out, "Already cleaned: no expired %s archives.\n", category)
 	}
+	if delete {
+		return l.removeEmptyOldDays(out)
+	}
+	return nil
+}
+
+// removeEmptyOldDays removes only empty, dated directories outside the latest
+// 14 calendar dates. Known category trees are visited bottom-up; unknown
+// entries and nonempty directories are left untouched.
+func (l *Layout) removeEmptyOldDays(out io.Writer) error {
+	if err := SafeParents(l.Root); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(l.Root)
+	if err != nil {
+		return err
+	}
+	cutoff := l.now().AddDate(0, 0, 1-RetentionDays).Format("2006-01-02")
+	for _, entry := range entries {
+		day := entry.Name()
+		if !ValidDay(day) || day >= cutoff || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		dayDir := filepath.Join(l.Root, day)
+		if err := SafeParents(dayDir); err != nil {
+			return err
+		}
+		for _, category := range Categories {
+			base := filepath.Join(dayDir, category)
+			info, err := os.Lstat(base)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				continue
+			}
+			dirs := []string{}
+			err = filepath.WalkDir(base, func(path string, item fs.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if item.IsDir() {
+					dirs = append(dirs, path)
+				}
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+			for i := len(dirs) - 1; i >= 0; i-- {
+				if err := removeEmptyDirectory(dirs[i], out); err != nil {
+					return err
+				}
+			}
+		}
+		if err := removeEmptyDirectory(dayDir, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeEmptyDirectory(path string, out io.Writer) error {
+	if err := SafeParents(path); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	entries, err := os.ReadDir(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil || len(entries) != 0 {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		// A concurrent writer may have populated the directory after ReadDir.
+		if current, readErr := os.ReadDir(path); readErr == nil && len(current) != 0 {
+			return nil
+		}
+		return err
+	}
+	fmt.Fprintln(out, "Removed empty directory: "+path)
 	return nil
 }
 func (c *Controller) Layout() (*Layout, error) {
@@ -392,7 +489,22 @@ func (c *Controller) Layout() (*Layout, error) {
 	if markers == "" {
 		markers = "/run/backup-monitor-rotations"
 	}
-	return &Layout{Root: cfg.BackupRoot, LegacyRoot: "/www/backup", Markers: markers, Journal: c.RecoveryRoot, MetadataDir: c.VersionMetadataDir}, nil
+	legacy, metadata := "/www/backup", c.VersionMetadataDir
+	// Keep the existing ledger for the shared root; partition additional roots
+	// by path (not cron ID), so a backup and its Drive cron share origin metadata.
+	base := *c
+	base.CronSelector = ""
+	global, _, err := base.Active()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.BackupRoot != global.BackupRoot {
+		legacy = "" // Private helpers must never organize the shared legacy tree.
+		if metadata != "" {
+			metadata = filepath.Join(metadata, "roots", hashBytes([]byte(cfg.BackupRoot))[:32])
+		}
+	}
+	return &Layout{Root: cfg.BackupRoot, LegacyRoot: legacy, Markers: markers, Journal: c.RecoveryRoot, MetadataDir: metadata}, nil
 }
 
 // LayoutLock lets a shell script hold its existing shared layout lock while

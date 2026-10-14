@@ -92,7 +92,7 @@
   color: var(--control-hover-color);
 }
 .ui-button[data-size="small"], .cron-actions > button,
-.ops-panel table .ui-button, .available-page table .legacy-secondary-button {
+.available-page table .legacy-secondary-button {
   --control-height: var(--ui-control-small);
   padding: 6px 10px;
   font-size: 12px;
@@ -138,7 +138,7 @@
   color: var(--app-accent);
 }
 .cron-log-controls button:disabled { opacity: .5; cursor: not-allowed; }
-.ui-table-actions, .ops-actions {
+.ui-table-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -148,8 +148,6 @@
 .ui-data-table-wrap { max-width: 100%; overflow-x: auto; border-radius: var(--ui-panel-radius); }
 .available-page .ui-data-table-wrap table { min-width: 720px; }
 .ui-data-table-wrap > table { min-width: 650px; }
-.ops-scroll > table { min-width: 560px; }
-.ops-panel td .ops-actions { margin: 0; }
 .activity-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
 .ui-page-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
 
@@ -174,7 +172,6 @@
 .app-shell :is(.backup-system-path input, .backup-system-fields select, 
     .backup-task-toolbar > select, .apex-settings-field input,
     .apex-settings-number, .backup-filters select, .backup-filters input,
-    .ops-panel input:not([type="checkbox"]), .ops-panel select,
     .ops-log-tools input[type="search"], .ops-log-tools select) {
   min-width: 0;
   max-width: 100%;
@@ -194,21 +191,21 @@
 .app-shell input[type="checkbox"] { accent-color: var(--app-accent); }
 .app-shell :is(.backup-task-search, .app-search) { min-height: var(--ui-control-height); border-radius: var(--ui-control-radius); }
 .app-shell .backup-task-search input { height: 38px; }
-.app-shell :is(.backup-system-path input, .apex-settings-field input, .ops-panel input, .ops-panel select):focus-visible { border-color: var(--app-accent); }
+.app-shell :is(.backup-system-path input, .apex-settings-field input):focus-visible { border-color: var(--app-accent); }
 .apex-settings-tabs button { min-height: var(--ui-control-height); border-radius: var(--ui-control-radius); font-size: 13px; }
 .apex-settings-tabs button.is-active { color: var(--app-accent); background: var(--app-soft-accent); }
 
 .app-shell :is(.dashboard-overview, .legacy-page, .cron-page, .apex-settings-page) { max-width: 1560px; }
 .app-shell :is(.cron-page-heading h1, .apex-settings-heading h1, .overview-heading h1) { font-size: clamp(26px, 2.4vw, 31px); }
-.app-shell :is(.ops-panel, .cron-panel, .backup-system-panel, .apex-settings-panel) { border-radius: var(--ui-panel-radius); }
+.app-shell :is(.restore-panel, .cron-panel, .backup-system-panel, .apex-settings-panel) { border-radius: var(--ui-panel-radius); }
 .app-shell :is(.backup-folder-dialog, .cron-log-dialog, .cron-import-dialog, .backup-task-edit-dialog) { border-radius: var(--ui-panel-radius); }
-.app-shell :is(.ops-heading h3, .cron-panel-heading h2, .backup-storage-heading h2, .apex-settings-panel-heading h2) {
+.app-shell :is(.restore-heading h3, .cron-panel-heading h2, .backup-storage-heading h2, .apex-settings-panel-heading h2) {
   font-size: 17px;
   font-weight: 700;
   line-height: 1.4;
 }
-.app-shell :is(.cron-table, .ops-panel table, .available-page table, .activity-detail-table) { font-size: 13px; }
-.app-shell :is(.cron-table, .ops-panel table, .available-page table, .activity-detail-table) th {
+.app-shell :is(.cron-table, .available-page table, .activity-detail-table) { font-size: 13px; }
+.app-shell :is(.cron-table, .available-page table, .activity-detail-table) th {
   padding: 14px 12px;
   font-size: 12px;
   font-weight: 650;
@@ -217,17 +214,8 @@
   color: var(--app-muted);
   background: var(--app-bg);
 }
-.app-shell :is(.ops-panel table, .activity-detail-table) td { padding: 12px; vertical-align: middle; }
-.ops-panel { line-height: 1.6; }
-.ops-scroll { border: 1px solid var(--app-border); border-radius: 10px; }
-.ops-scroll > p { padding: 0 12px; }
-.ops-test-label { font-weight: 600; }
-.ops-delivery-list { display: grid; gap: 10px; }
-.ops-delivery-item { padding: 10px 12px; border: 1px solid var(--app-border); border-radius: 8px; }
-.ops-delivery-item .cron-log-error { margin: 6px 0 0; }
-.ops-options { gap: 16px; background: var(--app-bg); }
-.ops-options legend { padding: 0 6px; font-size: 13px; font-weight: 650; }
-.ops-options > .ui-button { margin-left: auto; }
+.app-shell .activity-detail-table td { padding: 12px; vertical-align: middle; }
+.restore-panel { line-height: 1.6; }
 .ops-log-tools { gap: 8px; }
 .ops-log-tools select { flex: 0 1 auto; }
 .cron-log-error, .backup-system-error { color: var(--app-danger); }
@@ -246,7 +234,7 @@
     white-space: normal;
     overflow-wrap: anywhere;
   }
-  .ops-heading { align-items: flex-start; }
+  .restore-heading { align-items: flex-start; }
   .ops-log-tools input[type="search"] { flex-basis: 100%; }
   .ops-log-tools select { flex: 1; }
   .app-shell .backup-task-search input { height: 42px; }

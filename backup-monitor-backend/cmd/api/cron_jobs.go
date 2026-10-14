@@ -1,20 +1,64 @@
 package main
 
 import (
+	"backup-monitor-backend/internal/backupops"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type managedCronTask struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Script string `json:"script"`
-	Log    string `json:"-"`
+	InstanceKey string `json:"instanceKey,omitempty"`
+	WrapperPath string `json:"-"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Script      string `json:"script"`
+	Log         string `json:"-"`
+}
+
+func (task managedCronTask) selector() string {
+	if task.InstanceKey != "" {
+		return task.ID + "~" + task.InstanceKey
+	}
+	return task.ID
+}
+func (task managedCronTask) wrapper() string {
+	if task.WrapperPath != "" {
+		return task.WrapperPath
+	}
+	return path.Join(path.Dir(task.Script), "backup-monitor-run.sh")
+}
+
+func (task managedCronTask) runStatePath() string {
+	name := ".backup-monitor-" + task.ID + ".run.json"
+	if task.InstanceKey != "" {
+		if local, err := remoteCronSettings(backupSystemSettings(), task.ID, task.InstanceKey); err == nil {
+			name = backupops.CronFileName(local, name)
+		}
+	}
+	return path.Join(path.Dir(task.Log), name)
+}
+
+func managedLogArguments(ids ...string) string {
+	allowed := map[string]bool{}
+	for _, id := range ids {
+		allowed[id] = true
+	}
+	seen := map[string]bool{}
+	paths := []string{}
+	for _, task := range managedCronTasks() {
+		if (len(ids) == 0 || allowed[task.ID]) && !seen[task.Log] {
+			paths = append(paths, activityShellQuote(task.Log))
+			seen[task.Log] = true
+		}
+	}
+	return strings.Join(paths, " ")
 }
 
 var defaultManagedCronTasks = []managedCronTask{
@@ -32,6 +76,29 @@ func managedCronTasks() []managedCronTask {
 	for i := range tasks {
 		tasks[i].Script = configuredScript(strings.TrimPrefix(tasks[i].Script, "/root/scripts/"))
 		tasks[i].Log = configuredLog(strings.TrimPrefix(tasks[i].Log, "/root/"))
+	}
+	cfg := backupSystemSettings()
+	keys := []string{}
+	for key := range cfg.CronLocations {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		loc := cfg.CronLocations[key]
+		local, err := remoteCronSettings(cfg, loc.ID, key)
+		if err != nil {
+			continue
+		}
+		for _, task := range defaultManagedCronTasks {
+			if task.ID == loc.ID {
+				task.InstanceKey = key
+				task.Script = path.Join(local.ScriptsDir, backupops.CronFileName(local, path.Base(task.Script)))
+				task.Log = path.Join(local.LogsDir, backupops.CronFileName(local, path.Base(task.Log)))
+				task.WrapperPath = path.Join(local.ScriptsDir, backupops.CronFileName(local, "backup-monitor-run.sh"))
+				tasks = append(tasks, task)
+				break
+			}
+		}
 	}
 	return tasks
 }
@@ -98,7 +165,7 @@ func commandForCronStateUpdate(task managedCronTask, expectedSchedule string, ex
 }
 
 func commandForCronMutation(task managedCronTask, expectedSchedule string, expectedEnabled bool, operation string, hour, minute int) (string, bool) {
-	allowed, ok := managedCronTaskByID(task.ID)
+	allowed, ok := managedCronTaskByID(task.selector())
 	if !ok || allowed.Script != task.Script || !validExpectedCronSchedule(expectedSchedule) || (operation != "delete" && operation != "pause" && operation != "enable" && operation != "schedule") {
 		return "", false
 	}
@@ -149,12 +216,12 @@ cp -- "$TMP_DIR/current" "$RECOVERY_DIR/crontab.txt"
 chmod 600 "$RECOVERY_DIR/crontab.txt"
 crontab "$TMP_DIR/updated"
 printf '%s|%%s/crontab.txt\n' "$RECOVERY_DIR"
-`, task.Script, task.ID, scheduledBackupRunnerPath(), expectedState, operation, hour, minute, base64.StdEncoding.EncodeToString([]byte(expectedSchedule)), task.ID, managedCronMutationAwk, result), true
+`, task.Script, task.ID, task.wrapper(), expectedState, operation, hour, minute, base64.StdEncoding.EncodeToString([]byte(expectedSchedule)), task.ID, managedCronMutationAwk, result), true
 }
 
 func managedCronTaskByID(id string) (managedCronTask, bool) {
 	for _, task := range managedCronTasks() {
-		if task.ID == id {
+		if task.selector() == id {
 			return task, true
 		}
 	}
@@ -186,7 +253,7 @@ if ! flock -n 8; then
   printf 'CRON_ALREADY_RUNNING\n' >&2
   exit 1
 fi
-if [ "$SCRIPT" = "/root/scripts/cleanup-panel-backups.sh" ]; then
+if [ "$TASK_ID" = "cleanup-panel" ]; then
   START_SECONDS=$(date +%%s)
   START_DATE=$(date +%%F)
   START_TIME=$(date +%%T)
@@ -223,7 +290,7 @@ fi
 RUNNER=$(printf '%%s' '%s' | base64 -d)
 nohup setsid /bin/bash -c "$RUNNER" >> "$LOG" 2>&1 </dev/null &
 printf 'STARTED\n'
-`, task.Script, task.Log, task.ID, scheduledBackupRunnerPath(), task.ID, base64.StdEncoding.EncodeToString([]byte(runner)))
+`, task.Script, task.Log, task.ID, task.wrapper(), task.ID, base64.StdEncoding.EncodeToString([]byte(runner)))
 }
 
 func parsePanelCleanupResult(output string) (int, bool) {
@@ -236,6 +303,7 @@ func parsePanelCleanupResult(output string) (int, bool) {
 }
 
 type managedCronJobResponse struct {
+	InstanceKey     string `json:"instanceKey,omitempty"`
 	ID              string `json:"id"`
 	Name            string `json:"name"`
 	Script          string `json:"script"`
@@ -322,19 +390,23 @@ func parseManagedCronJobs(output string) []managedCronJobResponse {
 		fields := strings.Fields(line)
 		if task, tracked, ok := managedTaskForCronFields(fields); ok {
 			jobs = append(jobs, managedCronJobResponse{
-				ID: task.ID, Name: task.Name, Script: task.Script,
+				ID: task.ID, InstanceKey: task.InstanceKey, Name: task.Name, Script: task.Script,
 				Schedule: strings.Join(fields[:5], " "), Enabled: enabled, Status: "unknown", ScheduleTracked: tracked,
 			})
 		}
 	}
 	for i := range jobs {
-		task, _ := managedCronTaskByID(jobs[i].ID)
+		selector := jobs[i].ID
+		if jobs[i].InstanceKey != "" {
+			selector += "~" + jobs[i].InstanceKey
+		}
+		task, _ := managedCronTaskByID(selector)
 		jobs[i].LogUpdatedAt = logs[task.Log]
-		jobs[i].TaskControlled = jobs[i].ScheduleTracked && controlled
+		jobs[i].TaskControlled = jobs[i].ScheduleTracked && (controlled || task.InstanceKey != "")
 		if jobs[i].LogUpdatedAt == "" {
 			jobs[i].Status = "never"
 		}
-		if run, ok := runs[task.ID]; ok {
+		if run, ok := runs[task.selector()]; ok {
 			active := run[len(run)-1] == "active"
 			if run[2] != "" && run[3] != "" {
 				jobs[i].LastRun = run[2] + " " + run[3]
@@ -363,10 +435,18 @@ func parseManagedCronJobs(output string) []managedCronJobResponse {
 }
 
 func fetchManagedCronJobs() ([]byte, error) {
+	output, err := executeSSHCommandRaw(managedCronJobsReadCommand())
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(parseManagedCronJobs(output))
+}
+
+func managedCronJobsReadCommand() string {
 	var files, pairs []string
 	for _, task := range managedCronTasks() {
 		files = append(files, fmt.Sprintf("%q", task.Log))
-		pairs = append(pairs, fmt.Sprintf("%q", task.ID+":"+task.Log))
+		pairs = append(pairs, fmt.Sprintf("%q", task.selector()+":"+task.Log+":"+task.runStatePath()))
 	}
 	command := fmt.Sprintf("if [ -f %q ] && [ ! -L %q ] && grep -qx '# backup-monitor task control v1' %q; then printf '__TASK_CONTROL_V1__\\n'; fi\n", scheduledBackupRunnerPath(), scheduledBackupRunnerPath(), scheduledBackupRunnerPath()) + `printf '__CRONTAB__\n'
 crontab -l 2>/dev/null || true
@@ -379,19 +459,23 @@ for file in ` + strings.Join(files, " ") + `; do
 done
 printf '__RUNS__\n'
 for pair in ` + strings.Join(pairs, " ") + `; do
-  id=${pair%%:*}
-  file=${pair#*:}
+  selector=${pair%%:*}
+  id=${selector%%~*}
+  rest=${pair#*:}
+  file=${rest%%:*}
+  state=${rest#*:}
   [ -f "$file" ] && [ ! -L "$file" ] || continue
   marker=$(tail -n 200 "$file" | awk -F'|' -v id="$id" '$1 == "MONITOR_RUN" && $2 == id {last=$0} END {print last}')
   active=inactive
   lock=/root/.backup-monitor-job-$id.lock
   if [ -f "$lock" ] && ! flock -n "$lock" -c true; then active=active; fi
   if [ -z "$marker" ] && [ "$active" = active ]; then marker="MONITOR_RUN|$id|||running|0"; fi
-  [ -z "$marker" ] || printf '%s|%s\n' "$marker" "$active"
+  case "$marker" in *'|running|'*) ;; *) active=inactive ;; esac
+  if [ "$selector" != "$id" ] || [ -e "$state" ]; then
+    if [ ! -f "$state" ] || [ -L "$state" ]; then active=inactive
+    else pid=$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$state"); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || active=inactive; fi
+  fi
+  [ -z "$marker" ] || printf '%s|%s\n' "$marker" "$active" | awk -F'|' -v selector="$selector" 'BEGIN {OFS="|"} {$2=selector;print}'
 done`
-	output, err := executeSSHCommand(command)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(parseManagedCronJobs(output))
+	return command
 }

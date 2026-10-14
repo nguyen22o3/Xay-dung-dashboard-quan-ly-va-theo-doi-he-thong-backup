@@ -13,6 +13,8 @@ alert_settings.json
 
 # Do not commit temporary checks or generated artifacts.
 *_test.go
+!cmd/api/alert_monitor_test.go
+!internal/backupops/layout_cleanup_test.go
 testdata/
 tests/
 coverage/

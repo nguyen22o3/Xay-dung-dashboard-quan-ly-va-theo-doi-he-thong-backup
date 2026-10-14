@@ -23,7 +23,7 @@ func (c *Controller) InstallProgress() error {
 	if err != nil {
 		return err
 	}
-	p := filepath.Join(cfg.ScriptsDir, "backup-monitor-run.sh")
+	p := scriptPath(cfg, "backup-monitor-run.sh")
 	if err = c.LocalPath(cfg.ScriptsDir, "scripts"); err != nil {
 		return err
 	}
@@ -149,7 +149,7 @@ func (c *Controller) taskProgress(cfg Settings, state TaskState) (*TaskProgress,
 	if e != nil {
 		return nil, elapsed
 	}
-	p := filepath.Join(cfg.LogsDir, name)
+	p := logPath(cfg, name)
 	if SafeParents(p) != nil {
 		return nil, elapsed
 	}

@@ -5,7 +5,7 @@ import { cronLogForDisplay, cronLogLineLevel, filterCronLog } from './cronLogDis
 import { readLogPage } from '../../api/operations'
 import type { Lang } from '../../shared/language'
 
-export default function CronLogTools({ content, jobId, lang }: { content: string; jobId: string; lang: Lang }) {
+export default function CronLogTools({ content, jobId, selector = jobId, lang }: { content: string; jobId: string; selector?: string; lang: Lang }) {
   const vi = lang === 'vi'
   const [pages, setPages] = useState<string | null>(null)
   const [cursor, setCursor] = useState<string | undefined>()
@@ -24,7 +24,7 @@ export default function CronLogTools({ content, jobId, lang }: { content: string
     if (guard.current) return
     guard.current = true; setBusy(true); setError('')
     try {
-      const page = await readLogPage(jobId, cursor)
+      const page = await readLogPage(selector, cursor)
       if (!page.exists) throw new Error(vi ? 'File log không còn tồn tại.' : 'Log file no longer exists.')
       setPages(previous => previous === null || capped ? page.content : page.content + previous)
       setCursor(page.olderCursor); setPartial('partialLine' in page && page.partialLine === true)
@@ -40,9 +40,9 @@ export default function CronLogTools({ content, jobId, lang }: { content: string
     </div>
     <div className="cron-log-body" role="status">
       {error && <p className="cron-log-error">{error}</p>}
-      {partial && <p className="ops-note">{vi ? 'Đầu trang có thể là một phần dòng; tải trang cũ hơn để xem phần trước.' : 'The first line may be partial; load the previous page for context.'}</p>}
-      {capped && <p className="ops-note">{vi ? 'Đã tải khoảng 1 MB. Trang tiếp theo thay cửa sổ hiển thị; không xóa dữ liệu lưu trữ.' : 'About 1 MB loaded. The next page replaces the display window, not stored data.'}</p>}
-      {(query || level !== 'all') && <p className="ops-note">{vi ? 'Chỉ tìm/lọc phần log đã tải; dòng ngữ cảnh có thể không nằm trong kết quả.' : 'Search/filter applies to loaded text only; context lines may be excluded.'}</p>}
+      {partial && <p className="cron-log-note">{vi ? 'Đầu trang có thể là một phần dòng; tải trang cũ hơn để xem phần trước.' : 'The first line may be partial; load the previous page for context.'}</p>}
+      {capped && <p className="cron-log-note">{vi ? 'Đã tải khoảng 1 MB. Trang tiếp theo thay cửa sổ hiển thị; không xóa dữ liệu lưu trữ.' : 'About 1 MB loaded. The next page replaces the display window, not stored data.'}</p>}
+      {(query || level !== 'all') && <p className="cron-log-note">{vi ? 'Chỉ tìm/lọc phần log đã tải; dòng ngữ cảnh có thể không nằm trong kết quả.' : 'Search/filter applies to loaded text only; context lines may be excluded.'}</p>}
       {lines.some(line => line !== '') ? <pre>{lines.map((line, index) => <span key={index} className={highlight ? `ops-log-${cronLogLineLevel(line)}` : undefined}>{line}{index < lines.length - 1 ? '\n' : ''}</span>)}</pre> : <p>{vi ? 'Không có dòng log khớp.' : 'No matching log lines.'}</p>}
     </div>
   </>

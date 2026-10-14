@@ -125,12 +125,13 @@ function assertPreview(row: CronImportRow, state: BackupSystemState, checked: Co
 }
 
 export class CronImportError extends Error {
+  cause: unknown
   completedIds: string[]
   failedId: string
   writeAttempted: boolean
   constructor(cause: unknown, completedIds: string[], failedId: string, writeAttempted: boolean) {
     super(cause instanceof Error ? cause.message : 'Không nhập được lịch Cron.')
-    this.name = 'CronImportError'; this.completedIds = [...completedIds]; this.failedId = failedId; this.writeAttempted = writeAttempted
+    this.name = 'CronImportError'; this.cause = cause; this.completedIds = [...completedIds]; this.failedId = failedId; this.writeAttempted = writeAttempted
   }
 }
 

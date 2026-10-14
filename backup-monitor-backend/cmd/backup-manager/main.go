@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"backup-monitor-backend/internal/backupops"
+	"backup-monitor-backend/internal/hostagent"
 )
 
 type categoryFlags []string
@@ -40,7 +41,66 @@ func run(args []string) error {
 		return errors.New("Usage: backup-manager config|layout|install|version")
 	}
 	controller := backupops.NewController()
+	if controller.InstallationError != nil {
+		return controller.InstallationError
+	}
+	if selector := os.Getenv("BACKUP_MONITOR_CRON"); selector != "" {
+		// Never let a script's environment scope an installer, config mutation,
+		// restore worker or agent. Runtime helpers resolve a registered cron only.
+		allowed := args[0] == "layout" || args[0] == "config" || args[0] == "audit" || args[0] == "verify-manifest"
+		if args[0] == "versions" && len(args) > 1 {
+			allowed = args[1] == "finalize" || args[1] == "commit" || args[1] == "drive"
+		}
+		if !allowed {
+			return errors.New("Cron context is not allowed for this operation")
+		}
+		controller.CronSelector = selector
+	}
 	switch args[0] {
+	case "installation":
+		if len(args) != 1 {
+			return errors.New("installation takes no arguments")
+		}
+		return json.NewEncoder(os.Stdout).Encode(controller.InstallationPaths())
+	case "storage-install":
+		flags := flag.NewFlagSet("storage-install", flag.ContinueOnError)
+		directory := flags.String("directory", "/opt/backup-monitor", "application folder")
+		apply := flags.Bool("apply", false, "copy application data and switch cron paths; retain originals")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("unexpected storage-install arguments")
+		}
+		return controller.InstallStorage(*directory, *apply, os.Stdout)
+	case "repair-cron-files":
+		var result backupops.CronRepairPreview
+		var err error
+		if len(args) == 2 && args[1] == "--preview" {
+			result, err = controller.PreviewCronRepair()
+		} else if len(args) == 3 && args[1] == "--apply" {
+			result, err = controller.ApplyCronRepair(args[2])
+		} else {
+			return errors.New("Usage: backup-manager repair-cron-files --preview | --apply <preview-token>")
+		}
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	case "agent-serve":
+		flags := flag.NewFlagSet("agent-serve", flag.ContinueOnError)
+		socket := flags.String("socket", "/var/lib/backup-monitor-agent/run/agent.sock", "private Unix socket")
+		tokenFile := flags.String("token-file", "/var/lib/backup-monitor-agent/secrets/agent-token", "root-owned credential file")
+		gid := flags.Int("gid", 10001, "API group allowed to access socket")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("unexpected agent arguments")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return hostagent.Serve(ctx, *socket, *tokenFile, *gid)
 	case "progress-install":
 		if len(args) != 1 {
 			return errors.New("progress-install takes no arguments")

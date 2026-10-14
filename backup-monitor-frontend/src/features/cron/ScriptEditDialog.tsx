@@ -21,17 +21,35 @@ export default function ScriptEditDialog({ job, lang, running, onClose, onSaved 
   const load = async () => {
     const id = ++request.current
     setLoading(true); setError(''); setDocument(null)
-    try { const result = await readTaskScript(job.id); if (id === request.current) { setDocument(result); setContent(result.content) } }
+    try { const result = await readTaskScript(job.instanceKey ? `${job.id}~${job.instanceKey}` : job.id); if (id === request.current) { setDocument(result); setContent(result.content) } }
     catch (error: unknown) { if (id === request.current) setError(apiErrorMessage(error, vi ? 'Không đọc được script.' : 'Could not read script.')) }
     finally { if (id === request.current) setLoading(false) }
   }
   useEffect(() => {
     let alive = true
-    readTaskScript(job.id).then(result => { if (alive) { setDocument(result); setContent(result.content) } })
-      .catch((error: unknown) => { if (alive) setError(apiErrorMessage(error, vi ? 'Không đọc được script.' : 'Could not read script.')) })
-      .finally(() => { if (alive) setLoading(false) })
+    const id = ++request.current
+    readTaskScript(job.instanceKey ? `${job.id}~${job.instanceKey}` : job.id).then(result => { if (alive && id === request.current) { setDocument(result); setContent(result.content) } })
+      .catch((error: unknown) => { if (alive && id === request.current) setError(apiErrorMessage(error, vi ? 'Không đọc được script.' : 'Could not read script.')) })
+      .finally(() => { if (alive && id === request.current) setLoading(false) })
     return () => { alive = false }
-  }, [job.id, vi])
+  }, [job.id, job.instanceKey, vi])
+  useEffect(() => {
+    let alive = true
+    const changed = () => {
+      if (dirty || savingRef.current) {
+        setError(vi ? 'Cấu hình lưu trữ đã thay đổi. Nội dung đang sửa được giữ nguyên; hãy tải lại trước khi lưu.' : 'Storage settings changed. Unsaved edits are preserved; reload before saving.')
+        return
+      }
+      const id = ++request.current
+      setLoading(true); setError('')
+      void readTaskScript(job.instanceKey ? `${job.id}~${job.instanceKey}` : job.id)
+        .then(result => { if (alive && id === request.current) { setDocument(result); setContent(result.content) } })
+        .catch((error: unknown) => { if (alive && id === request.current) setError(apiErrorMessage(error, vi ? 'Không đọc được script tại nơi lưu mới.' : 'Could not read the script at its new location.')) })
+        .finally(() => { if (alive && id === request.current) setLoading(false) })
+    }
+    window.addEventListener('backup-storage-changed', changed)
+    return () => { alive = false; window.removeEventListener('backup-storage-changed', changed) }
+  }, [dirty, job.id, job.instanceKey, vi])
   useEffect(() => {
     const restore = window.document.activeElement as HTMLElement | null
     const containers = [window.document.body, window.document.querySelector<HTMLElement>('.app-content')].filter((item): item is HTMLElement => !!item)

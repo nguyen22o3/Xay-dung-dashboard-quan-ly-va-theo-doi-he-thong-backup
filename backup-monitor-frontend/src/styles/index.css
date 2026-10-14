@@ -278,6 +278,12 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .backup-system-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
 .backup-system-heading h2 { font-size: 18px; margin: 0; }
 .backup-system-note { color: var(--app-muted); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.drive-connection-panel { margin-bottom: 20px; }
+.drive-connection-panel .backup-system-fields :is(input, textarea) { grid-column: 2; width: 100%; min-width: 0; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-bg); color: var(--app-text); padding: 10px 12px; font: inherit; }
+.drive-connection-panel textarea { resize: vertical; overflow-wrap: anywhere; }
+.drive-authorize-command { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; border-radius: 8px; background: var(--app-bg); font-size: 12px; }
+.drive-lan-consent { display: flex; gap: 10px; align-items: flex-start; margin-top: 16px; }
+.drive-lan-consent input { flex-shrink: 0; margin-top: 4px; }
 .backup-system-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .backup-system-fields > :first-child { grid-column: 1 / -1; max-width: 480px; }
 .backup-system-path { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -299,6 +305,27 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .backup-folder-list button { display: flex; gap: 10px; align-items: center; width: 100%; padding: 12px; text-align: left; border: 0; border-radius: 6px; color: var(--app-text); background: transparent; }
 .backup-folder-list button:hover { background: var(--app-soft-accent); }
 .backup-folder-list p { color: var(--app-muted); font-size: 13px; padding: 10px; }
+.backup-folder-dialog.managed-script-picker { display: flex; flex-direction: column; max-height: calc(100dvh - 40px); overflow: hidden; }
+.managed-script-picker-task { color: var(--app-muted); font-size: 13px; margin: 8px 0 0; }
+.managed-script-picker-path { margin-top: 18px; }
+.managed-script-picker-shortcuts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; max-height: 80px; overflow: auto; }
+.managed-script-picker-shortcuts button { font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
+.managed-script-picker-selected { color: var(--app-muted); font-size: 12px; overflow-wrap: anywhere; margin: 8px 0; }
+.managed-script-picker-default { border-top: 1px solid var(--app-border); }
+.managed-script-picker-toolbar { display: flex; gap: 10px; margin-top: 20px; }
+.managed-script-picker-search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0 12px; color: var(--app-muted); border: 1px solid var(--app-border); border-radius: 9px; background: var(--app-bg); }
+.managed-script-picker-search input { width: 100%; min-width: 0; height: 40px; border: 0; outline: 0; background: transparent; color: var(--app-text); font: inherit; font-size: 13px; }
+.managed-script-picker-search:focus-within { border-color: var(--app-accent); }
+.managed-script-picker-list { min-height: 0; max-height: min(45dvh, 360px); overflow: auto; overscroll-behavior: contain; }
+.managed-script-picker-file { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid transparent; border-radius: 9px; cursor: pointer; }
+.managed-script-picker-file + .managed-script-picker-file { margin-top: 4px; }
+.managed-script-picker-file:hover, .managed-script-picker-file.is-selected { background: var(--app-soft-accent); }
+.managed-script-picker-file.is-selected { border-color: var(--app-accent); }
+.managed-script-picker-file > svg { color: var(--app-accent); flex-shrink: 0; }
+.managed-script-picker-file input { accent-color: var(--app-accent); flex-shrink: 0; }
+.managed-script-picker-file > span { min-width: 0; display: flex; flex-direction: column; gap: 5px; overflow-wrap: anywhere; }
+.managed-script-picker-file strong { color: var(--app-text); font-size: 13px; }
+.managed-script-picker-file small { color: var(--app-muted); font: 12px/1.5 Consolas, monospace; }
 @media (max-width: 850px) { .backup-system-fields { grid-template-columns: 1fr; } }
 @media (max-width: 480px) { .backup-system-path { flex-wrap: wrap; } .backup-system-path input { flex-basis: 100%; } .backup-folder-dialog { padding: 16px; } .backup-folder-dialog h2 { font-size: 15px; } .backup-system-actions > button { width: 100%; } }
 .apex-settings-panel--appearance .apex-settings-list { margin-top: 0; }
@@ -314,6 +341,19 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .apex-settings-row-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; }
 .apex-settings-row-copy strong { color: var(--app-text); font-size: 13px; font-weight: 700; }
 .apex-settings-row-copy small { color: var(--app-muted); font-size: 12px; line-height: 1.4; }
+.apex-settings-monitor-folders { padding: 19px 0 23px; border-top: 1px solid var(--app-border); }
+.apex-settings-monitor-heading { display: flex; align-items: flex-start; gap: 14px; }
+.apex-settings-monitor-heading > svg { flex: 0 0 auto; margin-top: 1px; color: var(--app-accent); }
+.apex-settings-monitor-heading > span { display: flex; flex-direction: column; gap: 5px; }
+.apex-settings-monitor-heading strong { color: var(--app-text); font-size: 13px; }
+.apex-settings-monitor-heading small { color: var(--app-muted); font-size: 12px; line-height: 1.5; }
+.apex-settings-monitor-list { display: grid; gap: 8px; margin: 17px 0 13px 33px; }
+.apex-settings-monitor-path { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 7px 9px 7px 12px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-bg); }
+.apex-settings-monitor-path code { min-width: 0; overflow-wrap: anywhere; color: var(--app-text); font-size: 12px; }
+.apex-settings-monitor-path button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 30px; height: 30px; border: 0; border-radius: 6px; color: var(--app-muted); background: transparent; }
+.apex-settings-monitor-path button:hover:not(:disabled) { color: var(--app-danger); background: color-mix(in srgb, var(--app-danger) 10%, transparent); }
+.apex-settings-monitor-path button:disabled { opacity: .4; cursor: not-allowed; }
+.apex-settings-monitor-folders > .backup-system-secondary { margin-left: 33px; }
 .apex-settings-switch { position: relative; width: 44px; height: 24px; padding: 2px; border: 1px solid var(--app-border); border-radius: 999px; background: var(--app-bg); cursor: pointer; flex: 0 0 auto; transition: background .22s ease, border-color .22s ease, box-shadow .22s ease; }
 .apex-settings-switch-thumb { display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--app-muted); box-shadow: 0 1px 3px rgba(0,0,0,.35); transition: transform .22s cubic-bezier(.2,.8,.2,1), background .22s ease; }
 .apex-settings-switch.is-on { background: var(--app-accent); border-color: var(--app-accent); }
@@ -361,6 +401,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
   .apex-settings-row:has(.apex-settings-segmented) .apex-settings-segmented button { flex: 1; }
   .apex-settings-footer { align-items: stretch; flex-direction: column; justify-content: center; padding: 15px 0; }
   .apex-settings-save { width: 100%; }
+  .apex-settings-monitor-list, .apex-settings-monitor-folders > .backup-system-secondary { margin-left: 0; }
 }
 
 /* Unified backup management: aaPanel-style form and compact task list. */
@@ -472,6 +513,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
   .backup-management .backup-system-fields > .apex-settings-field { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .backup-management .backup-system-fields > .apex-settings-field > :is(select, .backup-system-path, small) { grid-column: 1; }
   .backup-management .backup-system-fields > .apex-settings-field > :is(input, .backup-task-cycle) { grid-column: 1; }
+  .backup-management .drive-connection-panel .backup-system-fields textarea { grid-column: 1; }
   .backup-task-editor-notes { padding-left: 0; }
   .backup-management .backup-system-actions { padding-left: 0; }
   .backup-task-toolbar { padding: 14px; }
@@ -501,7 +543,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .cron-table td:last-child { width: 1%; }
 .cron-table tbody tr:hover { background: color-mix(in srgb, var(--app-accent) 3%, var(--app-card)); }
 .cron-table td strong { display: block; font-weight: 650; }
-.cron-tracking-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 14px 24px; border-top: 1px solid var(--app-border); color: var(--app-muted); font-size: 12px; }
 .activity-summary-row { cursor: pointer; }
 .activity-detail-cell { padding: 0 16px 16px; }
 .activity-detail-panel { padding: 16px; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-bg); }
@@ -525,28 +566,21 @@ button:focus-visible, input:focus-visible { outline: 2px solid #08c889; outline-
 .cron-log-body { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 20px 22px; color: var(--app-muted); font-size: 13px; }
 .cron-log-body pre { width: 100%; margin: 0; color: var(--app-text); font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cron-log-error { color: #ef6c78; }
-.ops-panel { margin: 20px 0; padding: 20px; min-width: 0; color: var(--app-text); background: var(--app-card); border: 1px solid var(--app-border); border-radius: 12px; }
-.ops-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
-.ops-heading h3 { margin: 0; font-size: 16px; }
-.ops-panel input:not([type=checkbox]), .ops-panel select, .ops-log-tools input[type=search], .ops-log-tools select { min-width: 0; max-width: 100%; padding: 7px 10px; border: 1px solid var(--app-border); border-radius: 7px; background: var(--app-card); color: var(--app-text); font: inherit; }
-.ops-options { display: flex; flex-wrap: wrap; gap: 14px; border: 1px solid var(--app-border); border-radius: 8px; padding: 16px; }
-.ops-options label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.ops-options input[type=number] { width: 85px; }
-.ops-note, .ops-panel small { color: var(--app-muted); font-size: 12px; line-height: 1.7; }
-.ops-panel small { display: block; }
-.ops-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-.ops-panel details { margin-top: 18px; }
-.ops-panel summary { cursor: pointer; font-weight: 600; }
-.ops-scroll { max-width: 100%; overflow: auto; max-height: 430px; margin-top: 10px; }
-.ops-panel table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.ops-panel th, .ops-panel td { text-align: left; padding: 10px; border-bottom: 1px solid var(--app-border); vertical-align: top; overflow-wrap: anywhere; min-width: 95px; }
-.ops-panel code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.restore-panel { margin: 20px 0; padding: 20px; min-width: 0; color: var(--app-text); background: var(--app-card); border: 1px solid var(--app-border); border-radius: 12px; }
+.restore-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.restore-heading h3 { margin: 0; font-size: 16px; }
+.restore-note, .cron-log-note { color: var(--app-muted); font-size: 12px; line-height: 1.7; }
+.restore-panel code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.restore-destination-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 16px; margin: 16px 0; }
+.restore-destination-fields label { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.restore-destination-fields input { box-sizing: border-box; width: 100%; min-width: 0; padding: 12px; border: 1px solid var(--app-border); border-radius: 8px; color: var(--app-text); background: var(--app-card); }
+.ops-log-tools input[type=search], .ops-log-tools select { min-width: 0; max-width: 100%; padding: 7px 10px; border: 1px solid var(--app-border); border-radius: 7px; background: var(--app-card); color: var(--app-text); font: inherit; }
 .ops-log-tools { display: flex; flex-wrap: wrap; flex-shrink: 0; align-items: center; gap: 9px; border-bottom: 1px solid var(--app-border); padding: 12px 22px; color: var(--app-muted); font-size: 12px; }
 .ops-log-tools input[type=search] { flex: 1 1 160px; }
 .ops-log-tools label { display: flex; align-items: center; gap: 5px; }
 .ops-log-error { color: #e74c60; }
 .ops-log-warning { color: #b88000; }
-@media(max-width: 480px) { .ops-panel { padding: 13px; } .ops-options label { flex-wrap: wrap; } }
+@media(max-width: 480px) { .restore-panel { padding: 13px; } }
 @media (max-width: 760px) {
   .cron-page-heading { align-items: flex-start; }
   .cron-page-heading h1 { font-size: 27px; }

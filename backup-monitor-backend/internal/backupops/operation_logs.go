@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 )
@@ -51,7 +50,7 @@ func (c *Controller) LogPage(r Request) (LogPage, error) {
 	if r.Log == nil {
 		return result, errors.New("Thiếu thông tin log")
 	}
-	name, err := taskLogName(r.Log.ID)
+	name, err := taskLogName(strings.Split(r.Log.ID, "~")[0])
 	if err != nil {
 		return result, err
 	}
@@ -59,7 +58,11 @@ func (c *Controller) LogPage(r Request) (LogPage, error) {
 	if err != nil {
 		return result, err
 	}
-	path := filepath.Join(cfg.LogsDir, name)
+	cfg, _, err = taskSettings(cfg, r.Log.ID)
+	if err != nil {
+		return result, err
+	}
+	path := logPath(cfg, name)
 	if err = SafeParents(path); err != nil {
 		return result, err
 	}

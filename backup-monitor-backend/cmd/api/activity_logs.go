@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"backup-monitor-backend/internal/backupops"
@@ -92,10 +93,20 @@ func serverActivityClearCommand(entries []string) string {
 			}
 		}
 	}
+	for _, task := range managedCronTasks() {
+		if !seen[task.Log] {
+			paths = append(paths, task.Log)
+			seen[task.Log] = true
+		}
+	}
 	return activityClearCommand(entries, paths, true)
 }
 
 func activityClearCommand(entries, paths []string, includeCron bool) string {
+	return activityClearCommandWithFilter(entries, paths, includeCron, "", activityLogFilterAwk)
+}
+
+func activityClearCommandWithFilter(entries, paths []string, includeCron bool, awkOptions, filter string) string {
 	var command strings.Builder
 	command.WriteString("set -e\numask 077\nchanged=0\n")
 	command.WriteString(`filter_log() {
@@ -110,7 +121,7 @@ func activityClearCommand(entries, paths []string, includeCron bool) string {
 	if len(entries) == 0 {
 		command.WriteString("  : > \"$tmp\"\n")
 	} else {
-		fmt.Fprintf(&command, "  awk -v keys=%s %s \"$recovery\" > \"$tmp\"\n", activityShellQuote(strings.Join(entries, ";")), activityShellQuote(activityLogFilterAwk))
+		fmt.Fprintf(&command, "  awk %s-v keys=%s %s \"$recovery\" > \"$tmp\"\n", awkOptions, activityShellQuote(strings.Join(entries, ";")), activityShellQuote(filter))
 	}
 	// Keep a recoverable copy and detect writers before replacing a log. No backup
 	// archive is touched. Only changed logs receive a recovery copy.
@@ -139,9 +150,60 @@ func activityClearCommand(entries, paths []string, includeCron bool) string {
 // files, backup_restore or symlink targets.
 const localBackupFindCommand = `find /www/backup -regextype posix-extended -type f \( -regex '/www/backup/((site|database)/.*|20[0-9]{2}-[0-9]{2}-[0-9]{2}/(site|database)/.*)\.(tar\.gz|sql\.gz|sql|zip)' -o -regex '/www/backup/(panel|20[0-9]{2}-[0-9]{2}-[0-9]{2}/panel)/[^/]+\.zip' \)`
 
+func configuredLocalBackupRoots() []string {
+	cfg := backupSystemSettings()
+	roots := map[string]bool{cfg.BackupRoot: true}
+	for _, loc := range cfg.CronLocations {
+		if loc.Options != nil {
+			roots[loc.Options.BackupRoot] = true
+		}
+	}
+	result := []string{}
+	for root := range roots {
+		if root != "" {
+			result = append(result, root)
+		}
+	}
+	// Longest prefix first also handles pre-upgrade configurations defensively.
+	sort.Slice(result, func(i, j int) bool {
+		if len(result[i]) != len(result[j]) {
+			return len(result[i]) > len(result[j])
+		}
+		return result[i] < result[j]
+	})
+	return result
+}
+
+func configuredLocalInventoryCommand() string {
+	commands := []string{}
+	for _, root := range configuredLocalBackupRoots() {
+		quoted := activityShellQuote(root)
+		command := strings.ReplaceAll(localBackupFindCommand, "/www/backup", regexp.QuoteMeta(root))
+		command = strings.Replace(command, "find "+regexp.QuoteMeta(root), "find "+quoted, 1)
+		commands = append(commands, "if [ -d "+quoted+" ] && [ ! -L "+quoted+" ]; then "+command+` -printf '%TY-%Tm-%Td %TH:%TM:%TS|%s|%p\n'; fi`)
+	}
+	return strings.Join(commands, "; ")
+}
+
 // Parse CREATED records from both legacy and tagged daily-version archives.
 // File timestamps refer to the start of the backup, not the log file's mtime.
 const customLocalActivityAwk = `
+  BEGIN { storage_count = split(roots, storage, "[|]") }
+  function backup_relative(value, i, prefix) {
+    for (i = 1; i <= storage_count; i++) {
+      prefix = storage[i] "/"
+      if (index(value, prefix) == 1) return substr(value, length(prefix) + 1)
+    }
+    # Copied historical logs still name the original archive destination.
+    # Preserve their evidence without adding the old directory to live inventory.
+    if (value ~ /^\// && value ~ /\/web_[^\/]+[.]tar[.]gz$/ && value ~ /\/site\//) {
+      sub(/^.*\/site\//, "site/", value); return value
+    }
+    if (value ~ /^\// && value ~ /\/db_[^\/]+[.]sql[.]gz$/ && value ~ /\/database\//) {
+      sub(/^.*\/database\//, "database/", value); return value
+    }
+    return ""
+  }
   function json_escape(value, i, ch, escaped) {
     escaped = ""
     for (i = 1; i <= length(value); i++) {
@@ -156,13 +218,14 @@ const customLocalActivityAwk = `
   }
   $1 == "CREATED" {
     path = $2
+    relative = backup_relative(path)
     count = split(path, parts, "/")
     name = parts[count]
     label = ""
-    if (path ~ /^\/www\/backup\/(20[0-9]{2}-[0-9]{2}-[0-9]{2}\/)?site\// &&
+    if (relative ~ /^(20[0-9]{2}-[0-9]{2}-[0-9]{2}\/)?site\// &&
         match(name, /^web_([^\/[:space:]]+)_([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})(_(cron|manual)_[0-9a-f]{16})?_site\.tar\.gz$/, dt)) {
       label = "Backup Website: " dt[1]
-    } else if (path ~ /^\/www\/backup\/(20[0-9]{2}-[0-9]{2}-[0-9]{2}\/)?database\// &&
+    } else if (relative ~ /^(20[0-9]{2}-[0-9]{2}-[0-9]{2}\/)?database\// &&
         match(name, /^db_([^\/[:space:]]+)_([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{2})([0-9]{2})([0-9]{2})(_(cron|manual)_[0-9a-f]{16})?_mysql_data\.sql\.gz$/, dt)) {
       label = "Backup Database: " dt[1]
     }
@@ -174,8 +237,7 @@ const customLocalActivityAwk = `
 `
 
 func customLocalActivityCommand() string {
-	return fmt.Sprintf(`tail -n 500 %q %q 2>/dev/null | awk '%s' | sed 's/,$//'`,
-		configuredLog("backup-site.log"), configuredLog("backup-database.log"), customLocalActivityAwk)
+	return fmt.Sprintf(`tail -q -n 500 %s 2>/dev/null | awk -v roots=%s '%s' | sed 's/,$//'`, managedLogArguments("backup-site", "backup-database"), activityShellQuote(strings.Join(configuredLocalBackupRoots(), "|")), customLocalActivityAwk)
 }
 
 // Prefer the wrapper's whole-run result. Direct script runs have their own
@@ -243,8 +305,7 @@ function file(date, time, duration, id, archive, key, name) {
 `
 
 func panelActivityCommand() string {
-	path := configuredLog("backup-panel.log")
-	return fmt.Sprintf(`if [ -f %q ] && [ ! -L %q ]; then tail -n 10000 %q | awk '%s' | sed 's/,$//'; fi`, path, path, path, panelActivityAwk)
+	return fmt.Sprintf(`tail -q -n 10000 %s 2>/dev/null | awk '%s' | sed 's/,$//'`, managedLogArguments("backup-panel"), panelActivityAwk)
 }
 
 // Native date-only aaPanel ZIPs are inventory, not evidence of a successful run.
@@ -261,6 +322,25 @@ const panelArchiveActivityAwk = `
 `
 
 func panelArchiveActivityCommand() string {
-	root := backupSystemSettings().BackupRoot
-	return fmt.Sprintf(`if [ -d %q ] && [ ! -L %q ]; then find %q -maxdepth 3 -type f -name '*.zip' -printf '%%P\n' | awk '%s' | sed 's/,$//'; fi`, root, root, root, panelArchiveActivityAwk)
+	commands := []string{}
+	for _, root := range configuredLocalBackupRoots() {
+		quoted := activityShellQuote(root)
+		commands = append(commands, fmt.Sprintf(`if [ -d %s ] && [ ! -L %s ]; then find %s -maxdepth 3 -type f -name '*.zip' -printf '%%P\n'; fi`, quoted, quoted, quoted))
+	}
+	return "{ " + strings.Join(commands, "; ") + fmt.Sprintf(`; } | awk '%s' | sed 's/,$//'`, panelArchiveActivityAwk)
+}
+
+func resolvedBackupStatusCommand(template string) string {
+	// Rewrite the legacy template once, then insert already-resolved private paths.
+	command := configuredBackupCommand(template)
+	for _, pair := range [][2]string{
+		{"__DRIVE_ACTIVITY_COMMAND__", driveActivityCommand()},
+		{"__CUSTOM_LOCAL_ACTIVITY_COMMAND__", customLocalActivityCommand()},
+		{"__BACKUP_RUN_ACTIVITY_COMMAND__", backupRunActivityCommand()},
+		{"__PANEL_ACTIVITY_COMMAND__", panelActivityCommand()},
+		{"__PANEL_ARCHIVE_ACTIVITY_COMMAND__", panelArchiveActivityCommand()},
+	} {
+		command = strings.ReplaceAll(command, pair[0], pair[1])
+	}
+	return command
 }

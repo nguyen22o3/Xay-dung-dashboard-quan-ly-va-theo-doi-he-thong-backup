@@ -71,6 +71,7 @@ export interface WebsiteStatus {
 type CronJobStatus = 'running' | 'success' | 'failed' | 'never' | 'unknown'
 
 export interface CronJob {
+  instanceKey?: string
   isNew?: boolean
   id: string
   name: string
@@ -91,6 +92,7 @@ export interface CronJobLog {
 }
 
 export interface SnapshotFile {
+	localPath?: string
   path?: string
   date: string
   category: string
@@ -108,6 +110,7 @@ export interface AlertSettings {
   smtpEmail: string
   targetEmail: string
   threshold: number
+  monitorPaths: string[]
   telegramConfigured: boolean
   discordConfigured: boolean
   smtpConfigured: boolean
@@ -124,6 +127,7 @@ export interface AlertSettingsUpdate {
   smtpPassword: string
   targetEmail: string
   threshold: number
+  monitorPaths: string[]
   telegramEnabled: boolean
   discordEnabled: boolean
   smtpEnabled: boolean

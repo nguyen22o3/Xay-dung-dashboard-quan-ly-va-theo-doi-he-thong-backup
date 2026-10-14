@@ -50,8 +50,8 @@ export default function CronImportDialog({ lang, filename, plan, onClose, onBusy
       }, completed => setProgress(completed))
       onSaved(saved.length)
     } catch (cause: unknown) {
-      const message = apiErrorMessage(cause, vi ? 'Không nhập được lịch Cron.' : 'Could not import Cron schedules.')
       const partial = cause instanceof CronImportError ? cause : null
+      const message = apiErrorMessage(partial ? partial.cause : cause, vi ? 'Không nhập được lịch Cron.' : 'Could not import Cron schedules.')
       setError([
         message,
         vi ? `Đã xác minh lưu ${partial?.completedIds.length ?? 0} tác vụ. Dừng nhập; các mục còn lại chưa được áp dụng.` : `${partial?.completedIds.length ?? 0} saved tasks verified. Import stopped; remaining tasks were not applied.`,

@@ -5,6 +5,8 @@
 !cmd/
 !cmd/api/
 !cmd/api/**
+!cmd/backup-manager/
+!cmd/backup-manager/**
 !internal/
 !internal/**
 !ops/
@@ -12,10 +14,16 @@
 !ops/backup-panel.sh
 !ops/templates/
 !ops/templates/**
+!ops/install-local.sh
+!ops/compose.local.yaml
+!ops/backup-monitor-agent.service
+!ops/backup_monitor_agent.te
+!ops/rclone-COPYING.txt
 **/*_test.go
 **/.env*
 **/*.env
 **/*.log
 **/admin_account.json
 **/operations_state.json
+**/restore_state.json
 **/alert_settings.json

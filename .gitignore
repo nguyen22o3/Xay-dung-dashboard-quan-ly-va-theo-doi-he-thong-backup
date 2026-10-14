@@ -1,7 +1,9 @@
-# Docker runtime contains private credentials and writable notification settings.
+# Local Docker runtime contains credentials and persistent application data.
 /.docker/
 /.env
 /config/
+/data/
+/secrets/
 
 # Local credentials; keep configuration templates for new installations.
 .env
@@ -10,7 +12,13 @@
 !.env.example
 !*.env.example
 rclone.conf
+.my.cnf
+.my.cnf.*
+!.my.cnf.example
+.mylogin.cnf
+mysql-credentials*.cnf
 credentials.json
+oauth-token*.json
 service-account*.json
 id_rsa
 id_dsa
@@ -18,23 +26,41 @@ id_ecdsa
 id_ed25519
 *.key
 *.pem
+*.ppk
+*.p12
+*.pfx
 known_hosts
 known_hosts.old
 .ssh/
 .aws/
+.secrets/
 
 # Runtime state, never shared between installations.
 admin_account.json
 alert_settings.json
 operations_state.json
 operations_state.json.lock
+restore_state.json
+restore_state.json.lock
+.restore-state-*
 .admin-account-*
 .admin-env-*
+.jwt-secret-*
+jwt-secret
+agent-token
+.drive-connection-*
+rclone.conf.before-dashboard-connect
 .operations-state-*
 *.log
+*.log.[0-9]*
+*.log.gz
 /logs/
 /backups/
+/database-dumps/
 *.sql.gz
+*.sql.zip
+*.sql.bz2
+*.sql.xz
 
 # Dependencies, compiled output and caches (keep dependency lockfiles).
 node_modules/
@@ -43,6 +69,9 @@ dist-ssr/
 build/
 .cache/
 .vite/
+/.go-cache/
+/.backup-monitor-runtime/
+/.project-cleanup-*/
 *.exe
 *.tsbuildinfo
 coverage/
@@ -50,6 +79,16 @@ coverage.out
 coverage.html
 test-results/
 playwright-report/
+
+# Downloaded Windows tools are local utilities, not application source.
+# Keep ops/rclone-COPYING.txt: it is required by the host-tools image.
+/rclone-v*-windows-*/
+/rclone-v*-windows-*.zip
+
+# Locally exported container images and release bundles.
+/backup-monitor-*.tar
+/backup-monitor-*.tar.gz
+/backup-monitor-*.zip
 
 # Local editor settings, OS files and temporary copies.
 /.vscode/

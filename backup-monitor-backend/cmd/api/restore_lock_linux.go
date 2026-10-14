@@ -9,7 +9,7 @@ import (
 	"syscall"
 )
 
-func lockOperations(path string) (*os.File, error) {
+func lockRestoreState(path string) (*os.File, error) {
 	if err := backupops.SafeParents(path); err != nil {
 		return nil, err
 	}
@@ -21,11 +21,11 @@ func lockOperations(path string) (*os.File, error) {
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
 		f.Close()
-		return nil, errors.New("unsafe operations lock")
+		return nil, errors.New("unsafe restore lock")
 	}
 	if err = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, errors.New("operations state already in use")
+		return nil, errors.New("restore state already in use")
 	}
 	return f, nil
 }

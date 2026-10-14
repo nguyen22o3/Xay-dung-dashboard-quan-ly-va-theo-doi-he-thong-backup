@@ -23,6 +23,7 @@ export const client = axios.create({ baseURL: API_BASE, timeout: 200000 })
 type SessionData<T> = { token: string; data: T }
 let serverStatusCache: SessionData<ServerStatus> | null = null
 let backupStatusCache: SessionData<BackupStatus> | null = null
+let dashboardCacheEpoch = 0
 type HealthyBackup = SessionData<BackupStatus> & { fetchedAt: string }
 const HEALTHY_BACKUP_KEY = 'backup_status_last_healthy_v1'
 let healthyBackupCache: HealthyBackup | null = null
@@ -101,13 +102,15 @@ export async function createAdministrator(username: string, password: string): P
 }
 
 async function fetchServerStatus(): Promise<ServerStatus> {
+	const epoch = dashboardCacheEpoch
   const token = localStorage.getItem('auth_token')
   const { data } = await client.get<ServerStatus>('/api/server-status')
-  if (token && token === localStorage.getItem('auth_token')) serverStatusCache = { token, data }
+  if (epoch === dashboardCacheEpoch && token && token === localStorage.getItem('auth_token')) serverStatusCache = { token, data }
   return data
 }
 
 async function fetchBackupStatus(): Promise<BackupStatus> {
+	const epoch = dashboardCacheEpoch
   const token = localStorage.getItem('auth_token')
   const { data } = await client.get<BackupStatus>('/api/backup-status')
   const lastGood = lastHealthyBackup()
@@ -130,7 +133,7 @@ async function fetchBackupStatus(): Promise<BackupStatus> {
     : data.driveStale
       ? { ...data, driveStale: true }
       : { ...data, driveStale: false, driveDataAt: data.driveError ? undefined : (data.driveDataAt || fetchedAt) }
-  if (token && token === localStorage.getItem('auth_token')) {
+  if (epoch === dashboardCacheEpoch && token && token === localStorage.getItem('auth_token')) {
     backupStatusCache = { token, data: result }
     if (!data.driveError && !data.driveStale && data.size && Array.isArray(data.history)) {
       healthyBackupCache = { token, data: result, fetchedAt: result.driveDataAt || fetchedAt }
@@ -189,12 +192,13 @@ function cachedSnapshots(): SnapshotFile[] | null {
 }
 
 async function fetchSnapshots(): Promise<SnapshotFile[]> {
+	const epoch = dashboardCacheEpoch
   const token = localStorage.getItem('auth_token')
   if (token && snapshotInFlight?.token === token) {
     return snapshotInFlight.promise
   }
   const request = client.get<SnapshotFile[]>('/api/recovery-snapshots').then(({ data }) => {
-    if (token && token === localStorage.getItem('auth_token')) {
+    if (epoch === dashboardCacheEpoch && token && token === localStorage.getItem('auth_token')) {
       snapshotCache = { token, data }
     }
     return data
@@ -208,6 +212,7 @@ async function fetchSnapshots(): Promise<SnapshotFile[]> {
 }
 
 export function clearSnapshotsCache(): void {
+  dashboardCacheEpoch += 1
   snapshotCache = null
   snapshotInFlight = null
   serverStatusCache = null
@@ -306,20 +311,22 @@ function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, initialData: 
 
   useEffect(() => {
     let alive = true
+	let request = 0
     const load = async () => {
+	  const current = ++request
       if (alive) setLoading(true)
       try {
         const d = await fetcher()
-        if (alive) {
+        if (alive && current === request) {
           setData(d)
           setError(null)
         }
       } catch (e) {
-        if (alive) {
+        if (alive && current === request) {
           setError(apiErrorMessage(e, 'Lỗi kết nối'))
         }
       } finally {
-        if (alive) setLoading(false)
+        if (alive && current === request) setLoading(false)
       }
     }
     load()

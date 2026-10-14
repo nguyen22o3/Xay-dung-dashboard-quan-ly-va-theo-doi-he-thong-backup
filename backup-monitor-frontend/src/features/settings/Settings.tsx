@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { CheckCircle2, ChevronDown, CircleAlert, Cloud, Hash, Languages, Mail, MessageCircle, Moon, Sun } from 'lucide-react'
+import { CheckCircle2, ChevronDown, CircleAlert, Cloud, FolderOpen, Hash, Languages, Mail, MessageCircle, Moon, Plus, Sun, Trash2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { apiErrorMessage, fetchAlertSettings, saveAlertSettings } from '../../api/dashboard'
+import type { FolderRequest } from '../../api/backupSystem'
 import type { Lang } from '../../shared/language'
-import OperationsPanel from '../monitoring/OperationsPanel'
+import { FolderPicker } from '../cron/BackupSystemSettings'
 
 type Section = 'alerts' | 'monitoring' | 'appearance'
 type ChannelId = 'telegram' | 'discord' | 'email'
@@ -36,6 +37,8 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
   const [smtpPassword, setSmtpPassword] = useState('')
   const [targetEmail, setTargetEmail] = useState('')
   const [threshold, setThreshold] = useState<number | ''>(14)
+  const [monitorPaths, setMonitorPaths] = useState<string[]>([])
+  const [folderPickerRequest, setFolderPickerRequest] = useState<FolderRequest | null>(null)
   const [configured, setConfigured] = useState<Record<ChannelId, boolean>>({ telegram: false, discord: false, email: false })
   const [enabled, setEnabled] = useState<Record<ChannelId, boolean>>({ telegram: false, discord: false, email: false })
   const [loading, setLoading] = useState(true)
@@ -57,6 +60,7 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
         setSmtpEmail(settings.smtpEmail || '')
         setTargetEmail(settings.targetEmail || '')
         setThreshold(settings.threshold || 14)
+        setMonitorPaths(settings.monitorPaths ?? [])
         setConfigured({ telegram: settings.telegramConfigured, discord: settings.discordConfigured, email: settings.smtpConfigured })
         setEnabled({ telegram: settings.telegramEnabled ?? settings.telegramConfigured, discord: settings.discordEnabled ?? settings.discordConfigured, email: settings.smtpEnabled ?? settings.smtpConfigured })
       })
@@ -69,7 +73,7 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
     return () => { alive = false }
   }, [])
 
-  const save = async (nextEnabled = enabled, source: 'form' | 'toggle' = 'form', channel?: ChannelId) => {
+  const save = async (nextEnabled = enabled, source: 'form' | 'toggle' = 'form', channel?: ChannelId, purpose?: 'monitor') => {
     if (source === 'form') setSaving(true)
     else setToggling(true)
     if (source === 'form') setSavingChannel(channel || null)
@@ -77,15 +81,16 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
     setMessageType(null)
     setLastSavedChannel(null)
     try {
-      const settings = await saveAlertSettings({ telegramToken, telegramChat, discordWebhook, smtpEmail, smtpPassword, targetEmail, threshold: Number(threshold), telegramEnabled: nextEnabled.telegram, discordEnabled: nextEnabled.discord, smtpEnabled: nextEnabled.email })
+      const settings = await saveAlertSettings({ telegramToken, telegramChat, discordWebhook, smtpEmail, smtpPassword, targetEmail, threshold: Number(threshold), monitorPaths, telegramEnabled: nextEnabled.telegram, discordEnabled: nextEnabled.discord, smtpEnabled: nextEnabled.email })
       setTelegramToken('')
       setDiscordWebhook('')
       setSmtpPassword('')
       setConfigured({ telegram: settings.telegramConfigured, discord: settings.discordConfigured, email: settings.smtpConfigured })
+      setMonitorPaths(settings.monitorPaths ?? monitorPaths)
       // Keep the requested state when an older backend omits the new fields.
       setEnabled({ telegram: settings.telegramEnabled ?? nextEnabled.telegram, discord: settings.discordEnabled ?? nextEnabled.discord, email: settings.smtpEnabled ?? nextEnabled.email })
       setMessageType('success')
-      setMessage(vi ? 'Đã lưu' : 'Saved')
+      setMessage(purpose === 'monitor' ? (vi ? 'Đã lưu và cập nhật script giám sát' : 'Saved and updated the monitoring script') : (vi ? 'Đã lưu' : 'Saved'))
       setLastSavedChannel(channel || null)
     } catch (error: unknown) {
       setMessageType('error')
@@ -107,6 +112,8 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
   const toggleExpanded = (id: ChannelId) => setExpanded((current) => ({ ...current, [id]: !current[id] }))
   const selectSection = (next: Section) => {
     setSection(next)
+    setMessage('')
+    setMessageType(null)
   }
 
   return <div className="apex-settings-page animate-fade-in">
@@ -148,9 +155,14 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
           </div>}
         </div>)}
       </div>
-      {messageType === 'error' && saveFooter}
+      <div className="apex-settings-monitor-folders">
+        <div className="apex-settings-monitor-heading"><FolderOpen size={19} /><span><strong>{vi ? 'Thư mục backup cần giám sát trên máy chủ' : 'Server backup folders to monitor'}</strong><small>{vi ? 'Chỉ cảnh báo khi file backup bị xóa bất thường. Lưu thay đổi sẽ tự cập nhật và khởi động lại script giám sát.' : 'Alerts only for unexpected backup deletion. Saving automatically updates and restarts the monitoring script.'}</small></span></div>
+        <div className="apex-settings-monitor-list">{monitorPaths.map((folder) => <div className="apex-settings-monitor-path" key={folder}><code>{folder}</code><button type="button" aria-label={`${vi ? 'Bỏ theo dõi' : 'Stop monitoring'} ${folder}`} title={vi ? 'Bỏ theo dõi' : 'Stop monitoring'} disabled={loading || saving || toggling || monitorPaths.length === 1} onClick={() => setMonitorPaths((current) => current.filter((item) => item !== folder))}><Trash2 size={16} /></button></div>)}</div>
+        <button type="button" className="backup-system-secondary" disabled={loading || saving || toggling || monitorPaths.length >= 8} onClick={() => setFolderPickerRequest({ location: 'local', purpose: 'backup', path: monitorPaths[0] || '/' })}><Plus size={16} />{vi ? 'Chọn thêm thư mục' : 'Choose another folder'}</button>
+        <div className="apex-settings-channel-actions"><span /><button type="button" className="apex-settings-save" onClick={() => void save(enabled, 'form', undefined, 'monitor')} disabled={loading || saving || toggling}>{saving && !savingChannel ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu' : 'Save')}</button></div>
+      </div>
+      {message && saveFooter}
       </section>
-      <OperationsPanel lang={lang} />
     </section>}
 
     {section === 'monitoring' && <section className="apex-settings-panel" role="tabpanel" id="settings-panel-monitoring" aria-labelledby="settings-tab-monitoring">
@@ -158,8 +170,10 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
         <div className="apex-settings-row"><span className="apex-settings-row-icon"><Cloud size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Giám sát bản sao lưu Google Drive — đặt số thư mục backup tối thiểu' : 'Google Drive backup monitoring — minimum backup folder count'}</strong><small>{vi ? 'Nếu Drive có ít hơn số này, hệ thống sẽ cảnh báo.' : 'The system warns you when Drive has fewer than this number.'}</small></span><input className="apex-settings-number" type="text" inputMode="numeric" pattern="[0-9]*" value={threshold} aria-label={vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folder count'} onChange={(event) => setThreshold(event.target.value === '' ? '' : Number(event.target.value.replace(/\D/g, '')))} /></div>
       </div>
       <div className="apex-settings-channel-actions"><span /> <button type="button" className="apex-settings-save" onClick={() => void save()} disabled={loading || saving || toggling}>{saving ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu' : 'Save')}</button></div>
-      {messageType === 'error' && saveFooter}
+      {message && saveFooter}
     </section>}
+
+    {folderPickerRequest && <FolderPicker request={folderPickerRequest} vi={vi} existingOnly close={() => setFolderPickerRequest(null)} choose={(folder) => { setMonitorPaths((current) => current.includes(folder) ? current : [...current, folder]); setFolderPickerRequest(null) }} />}
 
     {section === 'appearance' && <section className="apex-settings-panel apex-settings-panel--appearance" role="tabpanel" id="settings-panel-appearance" aria-labelledby="settings-tab-appearance">
       <div className="apex-settings-list">

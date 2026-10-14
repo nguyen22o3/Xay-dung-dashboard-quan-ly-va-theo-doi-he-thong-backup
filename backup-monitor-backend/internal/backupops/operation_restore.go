@@ -20,8 +20,10 @@ import (
 )
 
 type RestoreRequest struct {
-	Path  string `json:"path"`
-	Token string `json:"token"`
+	Path   string `json:"path"`
+	Token  string `json:"token"`
+	Parent string `json:"parent,omitempty"`
+	Name   string `json:"name,omitempty"`
 }
 type RestorePlan struct {
 	Progress      *TaskProgress `json:"progress,omitempty"`
@@ -32,6 +34,8 @@ type RestorePlan struct {
 	Version       string        `json:"version"`
 	CreatedAt     time.Time     `json:"createdAt"`
 	Directory     string        `json:"directory"`
+	Parent        string        `json:"parent,omitempty"`
+	Name          string        `json:"name,omitempty"`
 	Status        string        `json:"status"`
 	Error         string        `json:"error,omitempty"`
 	Files         int           `json:"files"`
@@ -92,12 +96,26 @@ func (c *Controller) restoreMetadata(cfg Settings, relative string) (int64, stri
 }
 func (c *Controller) RestorePreview(r Request) (RestorePlan, error) {
 	var result RestorePlan
+	if len(c.Locks) > 0 {
+		lock, err := acquire(c.Locks[0], true, true)
+		if err != nil {
+			return result, err
+		}
+		defer lock.Close()
+	}
 	if r.Restore == nil {
 		return result, errors.New("Thiếu bản sao lưu")
 	}
 	cfg, version, err := c.Active()
 	if err != nil {
 		return result, err
+	}
+	var destination string
+	if r.Restore.Parent != "" || r.Restore.Name != "" {
+		destination, err = c.validateRestoreDestination(cfg, r.Restore.Parent, r.Restore.Name)
+		if err != nil {
+			return result, err
+		}
 	}
 	size, modified, err := c.restoreMetadata(cfg, r.Restore.Path)
 	if err != nil {
@@ -116,6 +134,9 @@ func (c *Controller) RestorePreview(r Request) (RestorePlan, error) {
 		return result, err
 	}
 	result = RestorePlan{Token: token, Path: r.Restore.Path, Size: size, Modified: modified, Version: version, CreatedAt: time.Now().UTC(), Directory: filepath.Join(filepath.Dir(statePath), "data"), Status: "preview"}
+	if destination != "" {
+		result.Directory, result.Parent, result.Name = destination, r.Restore.Parent, r.Restore.Name
+	}
 	raw, _ := json.Marshal(result)
 	err = writeScriptExclusive(statePath, raw)
 	return result, err
@@ -134,12 +155,27 @@ func (c *Controller) RestoreStatus(r Request) (RestorePlan, error) {
 		return result, errors.New("Không đọc được trạng thái khôi phục")
 	}
 	info, err := nearest(path)
-	if err != nil || !privateRootOwned(info) || result.Token != r.Restore.Token || result.Directory != filepath.Join(filepath.Dir(path), "data") || !validRestorePath(result.Path) {
+	expectedDir := filepath.Join(filepath.Dir(path), "data")
+	if result.Parent != "" || result.Name != "" {
+		var e error
+		expectedDir, e = RestoreDestination(result.Parent, result.Name)
+		if e != nil {
+			return result, errors.New("Thư mục đích trong trạng thái không hợp lệ")
+		}
+	}
+	if err != nil || !privateRootOwned(info) || result.Token != r.Restore.Token || result.Directory != expectedDir || !validRestorePath(result.Path) {
 		return result, errors.New("Trạng thái khôi phục không an toàn")
 	}
 	return result, nil
 }
 func (c *Controller) RestoreStart(r Request) (RestorePlan, error) {
+	if len(c.Locks) > 0 {
+		lock, err := acquire(c.Locks[0], true, true)
+		if err != nil {
+			return RestorePlan{}, err
+		}
+		defer lock.Close()
+	}
 	result, err := c.RestoreStatus(r)
 	if err != nil {
 		return result, err
@@ -160,6 +196,9 @@ func (c *Controller) RestoreStart(r Request) (RestorePlan, error) {
 	cfg, version, err := c.Active()
 	if err != nil || version != result.Version {
 		return result, errors.New("Cấu hình đã thay đổi; hãy kiểm tra lại")
+	}
+	if err = c.checkRestoreDestination(cfg, result); err != nil {
+		return result, err
 	}
 	size, modified, err := c.restoreMetadata(cfg, result.Path)
 	if err != nil || size != result.Size || modified != result.Modified {
@@ -182,6 +221,15 @@ func (c *Controller) RestoreStart(r Request) (RestorePlan, error) {
 	return result, nil
 }
 func (c *Controller) RestoreRun(token string) (runErr error) {
+	// Hold the configuration lease before reading or changing restore state.
+	// Storage installation must not copy a half-started worker into a new root.
+	if len(c.Locks) > 0 {
+		configLock, err := acquire(c.Locks[0], true, true)
+		if err != nil {
+			return err
+		}
+		defer configLock.Close()
+	}
 	req := Request{Restore: &RestoreRequest{Token: token}}
 	result, err := c.RestoreStatus(req)
 	if err != nil {
@@ -225,6 +273,9 @@ func (c *Controller) RestoreRun(token string) (runErr error) {
 	if err != nil || version != result.Version {
 		return errors.New("Cấu hình đã thay đổi")
 	}
+	if err = c.checkRestoreDestination(cfg, result); err != nil {
+		return err
+	}
 	size, modified, err := c.restoreMetadata(cfg, result.Path)
 	if err != nil || size != result.Size || modified != result.Modified {
 		return errors.New("Backup đã thay đổi")
@@ -236,6 +287,15 @@ func (c *Controller) RestoreRun(token string) (runErr error) {
 	archive := filepath.Join(filepath.Dir(statePath), "archive"+restoreExtension(result.Path))
 	if exists(archive) || exists(result.Directory) {
 		return errors.New("Thư mục khôi phục không trống")
+	}
+	// Atomic reservation: two tokens with the same name must never share an
+	// output directory. Do not use MkdirAll, which accepts an existing target.
+	if err = os.Mkdir(result.Directory, 0700); err != nil {
+		return errors.New("Không tạo được thư mục đích mới; không ghi đè")
+	}
+	outputFree, err := restoreFreeBytes(result.Directory)
+	if err != nil || outputFree <= 512*1024*1024 {
+		return errors.New("Không đủ dung lượng ở nơi lưu đã chọn")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -257,12 +317,12 @@ func (c *Controller) RestoreRun(token string) (runErr error) {
 	if err != nil || size != result.Size || modified != result.Modified {
 		return errors.New("Backup thay đổi trong khi tải")
 	}
-	free, err = restoreFreeBytes(filepath.Dir(statePath))
+	free, err = restoreFreeBytes(result.Directory)
 	if err != nil || free <= 512*1024*1024 {
 		return errors.New("Không đủ chỗ giải nén")
 	}
 	limit := min(int64(free-512*1024*1024), int64(10*1024*1024*1024))
-	if err = mkdirPrivate(result.Directory); err != nil {
+	if err = SafeParents(result.Directory); err != nil {
 		return err
 	}
 	result.Progress = &TaskProgress{Phase: "extract", ObservedAt: time.Now().UTC()}

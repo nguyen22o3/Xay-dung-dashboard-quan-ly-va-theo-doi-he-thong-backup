@@ -47,14 +47,10 @@ export function OperationStatus({ state, lang }: { state: string; lang: Lang }) 
   const labels: Record<string, [string, string, string]> = {
     success: ['Thành công', 'Success', 'success'],
     ready: ['Đã chuẩn bị', 'Ready', 'success'],
-    sent: ['Đã gửi', 'Sent', 'success'],
-    not_sent: ['Chưa gửi', 'Not sent', 'neutral'],
     failed: ['Thất bại', 'Failed', 'failed'],
     cancelled: ['Đã hủy', 'Cancelled', 'warning'],
     running: ['Đang chạy', 'Running', 'warning'],
-    sending: ['Đang gửi', 'Sending', 'warning'],
     queued: ['Đang chờ', 'Queued', 'neutral'],
-    pending: ['Chờ gửi', 'Pending', 'neutral'],
     preview: ['Xem trước', 'Preview', 'neutral'],
     unknown: ['Chưa xác nhận', 'Unconfirmed', 'neutral'],
   }
