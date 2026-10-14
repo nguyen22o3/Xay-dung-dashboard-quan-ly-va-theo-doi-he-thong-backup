@@ -61,6 +61,24 @@ rclone.conf.before-dashboard-connect
 *.sql.zip
 *.sql.bz2
 *.sql.xz
+*.sql
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+*.pid
+*.sock
 
 # Dependencies, compiled output and caches (keep dependency lockfiles).
 node_modules/
@@ -79,6 +97,10 @@ coverage.out
 coverage.html
 test-results/
 playwright-report/
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
 
 # Downloaded Windows tools are local utilities, not application source.
 # Keep ops/rclone-COPYING.txt: it is required by the host-tools image.
@@ -89,6 +111,8 @@ playwright-report/
 /backup-monitor-*.tar
 /backup-monitor-*.tar.gz
 /backup-monitor-*.zip
+/tmp/
+/temp/
 
 # Local editor settings, OS files and temporary copies.
 /.vscode/

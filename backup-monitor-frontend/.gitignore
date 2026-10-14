@@ -9,11 +9,7 @@ dist-ssr
 .DS_Store
 .vscode
 
-# Do not commit temporary checks or generated artifacts.
-tests/
-__tests__/
-*.test.*
-*.spec.*
+# Keep tests in Git; ignore only generated artifacts.
 coverage/
 test-results/
 playwright-report/
