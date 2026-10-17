@@ -8,12 +8,14 @@ import { applyCronImport, CronImportError } from './cronTransfer'
 import type { CronImportRow } from './cronTransfer'
 import type { Lang } from '../../shared/language'
 import { formatCronSchedule } from '../../shared/utils'
+import { localizeMessage } from '../../shared/messages'
 
 type Props = { lang: Lang; filename: string; plan: CronImportRow[]; onClose: () => void; onBusyChange: (busy: boolean) => void; onUpdated: () => void; onSaved: (count: number) => void }
 
 export default function CronImportDialog({ lang, filename, plan, onClose, onBusyChange, onUpdated, onSaved }: Props) {
   const vi = lang === 'vi'
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [progress, setProgress] = useState(0)
+  const [busy, setBusy] = useState(false), [progress, setProgress] = useState(0)
+  const [error, setError] = useState<{ message: string; completed: number; failedId: string; writeAttempted: boolean } | null>(null)
   const dialog = useRef<HTMLDivElement>(null), applying = useRef(false), close = useRef(onClose)
   const changed = plan.filter(row => row.change).length
   useEffect(() => { close.current = onClose }, [onClose])
@@ -41,7 +43,7 @@ export default function CronImportDialog({ lang, filename, plan, onClose, onBusy
   }, [])
   const apply = async () => {
     if (applying.current || !changed || error) return
-    applying.current = true; setBusy(true); onBusyChange(true); setError('')
+    applying.current = true; setBusy(true); onBusyChange(true); setError(null)
     try {
       const saved = await applyCronImport(plan, {
         jobs: fetchCronJobs, settings: fetchBackupSystem,
@@ -52,12 +54,7 @@ export default function CronImportDialog({ lang, filename, plan, onClose, onBusy
     } catch (cause: unknown) {
       const partial = cause instanceof CronImportError ? cause : null
       const message = apiErrorMessage(partial ? partial.cause : cause, vi ? 'Không nhập được lịch Cron.' : 'Could not import Cron schedules.')
-      setError([
-        message,
-        vi ? `Đã xác minh lưu ${partial?.completedIds.length ?? 0} tác vụ. Dừng nhập; các mục còn lại chưa được áp dụng.` : `${partial?.completedIds.length ?? 0} saved tasks verified. Import stopped; remaining tasks were not applied.`,
-        partial?.failedId ? `${vi ? 'Tác vụ cần kiểm tra' : 'Check task'}: ${backupTaskLabels[partial.failedId]?.[lang] ?? partial.failedId}.` : '',
-        partial?.writeAttempted ? (vi ? 'Tác vụ lỗi có thể đã được lưu. Hãy kiểm tra danh sách trước khi nhập lại.' : 'The failed task may have been saved. Check the list before importing again.') : '',
-      ].filter(Boolean).join(' '))
+      setError({ message, completed: partial?.completedIds.length ?? 0, failedId: partial?.failedId ?? '', writeAttempted: partial?.writeAttempted ?? false })
     } finally {
       applying.current = false; setBusy(false); onBusyChange(false); onUpdated()
     }
@@ -71,7 +68,12 @@ export default function CronImportDialog({ lang, filename, plan, onClose, onBusy
         <div className="cron-import-table-wrap"><table><thead><tr><th>{vi ? 'Tác vụ' : 'Task'}</th><th>{vi ? 'Lịch hiện tại' : 'Current schedule'}</th><th>{vi ? 'Lịch nhập' : 'Imported schedule'}</th><th>{vi ? 'Thay đổi' : 'Change'}</th></tr></thead><tbody>{plan.map(row => <tr key={`${row.id}:${row.schedule}`}><td>{backupTaskLabels[row.id][lang]}</td><td>{row.previous === null ? (vi ? 'Chưa có lịch' : 'Not scheduled') : formatCronSchedule(row.previous, lang)}</td><td>{formatCronSchedule(row.schedule, lang)}</td><td>{row.previous === null ? (vi ? 'Tạo mới · bật' : 'Create · enabled') : row.change ? (vi ? 'Cập nhật' : 'Update') : (vi ? 'Giữ nguyên' : 'Unchanged')}</td></tr>)}</tbody></table></div>
         {!changed && <p role="status">{vi ? 'Các lịch trong tệp đã giống lịch hiện tại, không cần nhập.' : 'Schedules already match; nothing to import.'}</p>}
         {busy && <p role="status">{vi ? `Đang kiểm tra và nhập: ${progress}/${plan.length} tác vụ…` : `Checking and importing: ${progress}/${plan.length} tasks…`}</p>}
-        {error && <p className="backup-system-error" role="alert">{error}</p>}
+        {error && <p className="backup-system-error" role="alert">{[
+          localizeMessage(error.message, lang),
+          vi ? `Đã xác minh lưu ${error.completed} tác vụ. Dừng nhập; các mục còn lại chưa được áp dụng.` : `${error.completed} saved tasks verified. Import stopped; remaining tasks were not applied.`,
+          error.failedId ? `${vi ? 'Tác vụ cần kiểm tra' : 'Check task'}: ${backupTaskLabels[error.failedId]?.[lang] ?? error.failedId}.` : '',
+          error.writeAttempted ? (vi ? 'Tác vụ lỗi có thể đã được lưu. Hãy kiểm tra danh sách trước khi nhập lại.' : 'The failed task may have been saved. Check the list before importing again.') : '',
+        ].filter(Boolean).join(' ')}</p>}
       </div>
       <div className="backup-system-actions"><button type="button" className="backup-system-secondary" disabled={busy} onClick={onClose}>{vi ? 'Hủy' : 'Cancel'}</button><button type="button" className="apex-settings-save" disabled={busy || !changed || !!error} onClick={() => void apply()}>{busy ? (vi ? 'Đang nhập…' : 'Importing…') : (vi ? 'Nhập cấu hình' : 'Import configuration')}</button></div>
     </div>

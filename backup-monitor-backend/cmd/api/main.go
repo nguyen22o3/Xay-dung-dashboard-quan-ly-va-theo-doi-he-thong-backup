@@ -125,6 +125,7 @@ func parseLocalSnapshots(output string) []localSnapshot {
 func parseLocalInventory(output string) []localSnapshot {
 	snapshots := make([]localSnapshot, 0)
 	seen := map[string]bool{}
+	roots := configuredLocalBackupRoots()
 	for _, line := range strings.Split(output, "\n") {
 		parts := strings.SplitN(strings.TrimSpace(line), "|", 3)
 		if len(parts) != 3 {
@@ -135,7 +136,7 @@ func parseLocalInventory(output string) []localSnapshot {
 			continue
 		}
 		prefix := ""
-		for _, root := range configuredLocalBackupRoots() {
+		for _, root := range roots {
 			if strings.HasPrefix(parts[2], root+"/") {
 				prefix = root + "/"
 				break
@@ -513,6 +514,16 @@ func cachedGet(key string, ttl time.Duration, producer func() ([]byte, error)) (
 }
 
 func cachedGetWithPolicy(key string, ttl time.Duration, producer func() ([]byte, error), ttlForValue func([]byte) time.Duration, staleValue func([]byte) []byte) ([]byte, error) {
+	return cachedRead(key, ttl, producer, ttlForValue, staleValue, true)
+}
+
+// Short local reads wait for one shared refresh instead of returning yesterday's
+// inventory for another frontend polling cycle. Errors still keep the last value.
+func cachedGetFresh(key string, ttl time.Duration, producer func() ([]byte, error)) ([]byte, error) {
+	return cachedRead(key, ttl, producer, nil, nil, false)
+}
+
+func cachedRead(key string, ttl time.Duration, producer func() ([]byte, error), ttlForValue func([]byte) time.Duration, staleValue func([]byte) []byte, allowStale bool) ([]byte, error) {
 	showStale := func(value []byte) []byte {
 		if staleValue != nil {
 			if marked := staleValue(value); len(marked) > 0 {
@@ -535,10 +546,13 @@ func cachedGetWithPolicy(key string, ttl time.Duration, producer func() ([]byte,
 	call, isRunning := inFlight[key]
 	if isRunning {
 		flightMu.Unlock()
-		if hasEntry && len(entry.value) > 0 {
+		if allowStale && hasEntry && len(entry.value) > 0 {
 			return showStale(entry.value), nil
 		}
 		<-call.done
+		if call.err != nil && hasEntry && len(entry.value) > 0 {
+			return showStale(entry.value), nil
+		}
 		return call.val, call.err
 	}
 
@@ -573,7 +587,7 @@ func cachedGetWithPolicy(key string, ttl time.Duration, producer func() ([]byte,
 	}
 
 	// Nếu đã có cache cũ, trả về luôn và làm mới ngầm (Stale-While-Revalidate)
-	if hasEntry && len(entry.value) > 0 {
+	if allowStale && hasEntry && len(entry.value) > 0 {
 		go doWork()
 		return showStale(entry.value), nil
 	}
@@ -586,6 +600,17 @@ func cachedGetWithPolicy(key string, ttl time.Duration, producer func() ([]byte,
 }
 
 func invalidate(keys ...string) {
+	// Keep callers independent of the shared internal read-cache layout.
+	for _, key := range keys {
+		switch key {
+		case "backup-status":
+			keys = append(keys, "drive-inventory", "backup-activity")
+		case "recovery-snapshots":
+			keys = append(keys, "drive-inventory")
+		case "local-snapshots":
+			keys = append(keys, "server-status")
+		}
+	}
 	flightMu.Lock()
 	cacheMu.Lock()
 	for _, k := range keys {
@@ -687,16 +712,9 @@ func getSSHClient() (*ssh.Client, error) {
 	sshClientMu.Lock()
 	defer sshClientMu.Unlock()
 
-	// Kiểm tra kết nối hiện tại còn sống không
+	// The actual NewSession below checks the pooled connection and retries once.
 	if sshClient != nil {
-		sess, err := sshClient.NewSession()
-		if err == nil {
-			sess.Close()
-			return sshClient, nil
-		}
-		// Kết nối đã chết, đóng và tạo mới
-		sshClient.Close()
-		sshClient = nil
+		return sshClient, nil
 	}
 
 	client, err := dialSSH()
@@ -717,12 +735,13 @@ func newSSHSession() (*ssh.Session, error) {
 		return session, nil
 	}
 
-	// The pooled connection may have closed between the health check and NewSession.
+	// A stale pooled connection gets one reconnect without a separate probe session.
 	sshClientMu.Lock()
 	if sshClient == client {
 		sshClient = nil
 	}
 	sshClientMu.Unlock()
+	_ = client.Close()
 	client, err = getSSHClient()
 	if err != nil {
 		return nil, err
@@ -1395,7 +1414,9 @@ func setupRouter(cfg AppConfig) *gin.Engine {
 				return
 			}
 		}
-		if c.Request.Method == http.MethodGet && storageReadRoute(c.Request.URL.Path) {
+		backupSystemMutation.RLock()
+		if c.Request.Method == http.MethodGet && storageReadRoute(c.Request.URL.Path) && backupSystemReadDue(time.Now()) {
+			backupSystemMutation.RUnlock()
 			backupSystemMutation.Lock()
 			err := refreshBackupSystemIfDue(func() ([]byte, error) { return backupSystemOperation("get", nil) }, time.Now())
 			backupSystemMutation.Unlock()
@@ -1403,8 +1424,8 @@ func setupRouter(cfg AppConfig) *gin.Engine {
 				c.AbortWithStatusJSON(http.StatusBadGateway, gin.H{"error": "Chưa xác nhận được nơi lưu hiện tại từ máy chủ; hãy thử lại"})
 				return
 			}
+			backupSystemMutation.RLock()
 		}
-		backupSystemMutation.RLock()
 		defer backupSystemMutation.RUnlock()
 		if c.Request.Method != http.MethodGet && !strings.HasPrefix(c.Request.URL.Path, "/api/backup-system/") && !backupSystemLoaded.Load() {
 			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "Chưa tải được cấu hình sao lưu từ máy chủ; hãy tải lại mục Hệ thống sao lưu trước khi thực hiện thay đổi"})
@@ -1432,14 +1453,7 @@ func setupRouter(cfg AppConfig) *gin.Engine {
 		})
 
 		auth.GET("/server-status", func(c *gin.Context) {
-			cmds := serverStatusReadCommand()
-			output, err := cachedGet("server-status", 15*time.Second, func() ([]byte, error) {
-				out, e := executeSSHCommandRaw(cmds)
-				if e != nil {
-					return nil, e
-				}
-				return parseServerStatus(out)
-			})
+			output, err := readServerStatus()
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thông số máy chủ", "detail": err.Error()})
 				return
@@ -1450,162 +1464,7 @@ func setupRouter(cfg AppConfig) *gin.Engine {
 
 		// API 2: Kiểm tra các file Backup trên Google Drive và Dung lượng
 		auth.GET("/backup-status", func(c *gin.Context) {
-			cmds := `
-TODAY=$(date +"%Y-%m-%d")
-
-LSF_OUT=$(timeout -k 5s 40s /usr/bin/rclone lsf -R --format "ps" gdrive:Backup --config /root/.config/rclone/rclone.conf --log-level ERROR --fast-list 2>&1)
-LSF_STATUS=$?
-DRIVE_ERROR=""
-if [ "$LSF_STATUS" -ne 0 ]; then
-  LSF_ERROR_LOWER=$(printf '%s' "$LSF_OUT" | tr '[:upper:]' '[:lower:]')
-  case "$LSF_ERROR_LOWER" in
-    *ratelimitexceeded*|*rate*limit*exceeded*|*quota*exceeded*) DRIVE_ERROR="Google Drive API đang giới hạn truy vấn; cần kiểm tra quota và cấu hình client ID riêng cho rclone" ;;
-    *) DRIVE_ERROR="rclone mã lỗi $LSF_STATUS; kiểm tra DNS, mạng và cấu hình rclone trên máy chủ" ;;
-  esac
-  LSF_OUT=""
-fi
-ABOUT=""
-ABOUT_CACHE=/tmp/rclone_about.json
-if [ -f "$ABOUT_CACHE" ] && [ ! -L "$ABOUT_CACHE" ]; then
-  CACHE_TIME=$(stat -c '%Y' "$ABOUT_CACHE" 2>/dev/null || printf '0')
-  CACHE_AGE=$(( $(date +%s) - CACHE_TIME ))
-  if [ "$CACHE_AGE" -ge 0 ] && [ "$CACHE_AGE" -lt 86400 ]; then
-    ABOUT=$(cat "$ABOUT_CACHE")
-  fi
-fi
-if [ -z "$DRIVE_ERROR" ] && [ -z "$ABOUT" ]; then
-  ABOUT=$(timeout -k 5s 10s /usr/bin/rclone about gdrive: --config /root/.config/rclone/rclone.conf --log-level ERROR --fast-list --json 2>/dev/null)
-  if [ -n "$ABOUT" ]; then
-    ABOUT_TMP=$(mktemp /tmp/rclone_about.XXXXXXXX)
-    printf '%s\n' "$ABOUT" > "$ABOUT_TMP"
-    mv -f -- "$ABOUT_TMP" "$ABOUT_CACHE"
-  fi
-fi
-if [ -z "$ABOUT" ] && [ -f "$ABOUT_CACHE" ] && [ ! -L "$ABOUT_CACHE" ]; then
-  ABOUT=$(cat "$ABOUT_CACHE")
-fi
-EVAL_OUT=$(printf '%s\n' "$LSF_OUT" | awk -F';' -v today="$TODAY" '
-$2 != "-1" && $2 != "" {
-    total_bytes += $2
-    total_files++
-    split($1, a, "/")
-    day = a[1]
-    if (day ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) {
-        days[day] = 1
-        size[day] += $2
-        count[day]++
-        if (day == today && length(a[2]) > 0) {
-            today_dirs[a[2]] = 1
-            if (a[2] == "site") { today_site++; today_site_bytes += $2 }
-            else if (a[2] == "database") { today_db++; today_db_bytes += $2 }
-            else if (a[2] == "panel") { today_panel++; today_panel_bytes += $2 }
-        }
-    }
-}
-END {
-    folders = 0
-    for (d in days) folders++
-
-    td = ""
-    for (subd in today_dirs) td = td subd ","
-
-    n = asorti(size, sorted_days)
-    hist = "["
-    first = 1
-    for (i = 1; i <= n; i++) {
-        d = sorted_days[i]
-        if (!first) hist = hist ","
-        hist = hist "{\"date\":\"" d "\", \"bytes\":" size[d] ", \"files\":" count[d] "}"
-        first = 0
-    }
-    hist = hist "]"
-
-    printf "%d|%d|%d|%s|%s|%d|%d|%d|%d|%d|%d", total_bytes, total_files, folders, td, hist, today_site+0, today_db+0, today_panel+0, today_site_bytes+0, today_db_bytes+0, today_panel_bytes+0
-}')
-
-TOTAL_BYTES=$(echo "$EVAL_OUT" | cut -d'|' -f1)
-TOTAL_FILES=$(echo "$EVAL_OUT" | cut -d'|' -f2)
-TOTAL_FOLDERS=$(echo "$EVAL_OUT" | cut -d'|' -f3)
-DIRS=$(echo "$EVAL_OUT" | cut -d'|' -f4)
-RAW_TAIL=$(echo "$EVAL_OUT" | cut -d'|' -f5-)
-TODAY_SITE=$(echo "$EVAL_OUT" | awk -F'|' '{print $(NF-5)}')
-TODAY_DB=$(echo "$EVAL_OUT" | awk -F'|' '{print $(NF-4)}')
-TODAY_PANEL=$(echo "$EVAL_OUT" | awk -F'|' '{print $(NF-3)}')
-TODAY_SITE_BYTES=$(echo "$EVAL_OUT" | awk -F'|' '{print $(NF-2)}')
-TODAY_DB_BYTES=$(echo "$EVAL_OUT" | awk -F'|' '{print $(NF-1)}')
-TODAY_PANEL_BYTES=$(echo "$EVAL_OUT" | awk -F'|' '{print $NF}')
-HISTORY=$(echo "$RAW_TAIL" | sed 's/|[0-9]*|[0-9]*|[0-9]*|[0-9]*|[0-9]*|[0-9]*$//')
-
-if [ -z "$TOTAL_BYTES" ]; then TOTAL_BYTES="0"; fi
-if [ -z "$TOTAL_FILES" ]; then TOTAL_FILES="0"; fi
-if [ -z "$TOTAL_FOLDERS" ]; then TOTAL_FOLDERS="0"; fi
-if [ -z "$HISTORY" ] || [ "$HISTORY" = "]" ]; then HISTORY="[]"; fi
-if [ -z "$ABOUT" ]; then ABOUT="{}"; fi
-
-SIZE="{\"bytes\": $TOTAL_BYTES, \"count\": $TOTAL_FILES}"
-if [ -n "$DRIVE_ERROR" ]; then
-  SIZE="null"
-  HISTORY="[]"
-fi
-
-ACTIVITY=$(__DRIVE_ACTIVITY_COMMAND__)
-
-LOCAL_LOGS=$(awk '
-    /start backup\[/ {
-        match($0, /\[(.*)\]/, arr)
-        dt = arr[1]
-        split(dt, d, " ")
-        date = d[1]
-        time = d[2]
-    }
-    /Backup site: / {
-        match($0, /site: (.*)/, arr)
-        name = "Backup Website: " arr[1]
-    }
-    /Backup .*database: / {
-        match($0, /database: (.*)/, arr)
-        name = "Backup Database: " arr[1]
-    }
-    /Compression completed, took / {
-        match($0, /took ([0-9.]*) seconds/, arr)
-        duration = arr[1]
-        status = "Successful"
-        printf "{\"name\":\"%s\",\"date\":\"%s\",\"time\":\"%s\",\"duration\":\"%s\",\"status\":\"%s\"},", name, date, time, duration, status
-    }
-    /Database backup completed, taking / {
-        match($0, /taking ([0-9.]*) seconds/, arr)
-        duration = arr[1]
-        status = "Successful"
-        printf "{\"name\":\"%s\",\"date\":\"%s\",\"time\":\"%s\",\"duration\":\"%s\",\"status\":\"%s\"},", name, date, time, duration, status
-    }
-    ' /www/server/cron/*.log 2>/dev/null | sed 's/,$//')
-CUSTOM_LOCAL_LOGS=$(__CUSTOM_LOCAL_ACTIVITY_COMMAND__)
-RUN_LOGS=$(__BACKUP_RUN_ACTIVITY_COMMAND__)
-PANEL_LOGS=$(__PANEL_ACTIVITY_COMMAND__)
-PANEL_ARCHIVES=$(__PANEL_ARCHIVE_ACTIVITY_COMMAND__)
-LOCAL_ACTIVITY="["
-SEP=""
-for ENTRIES in "$LOCAL_LOGS" "$CUSTOM_LOCAL_LOGS" "$RUN_LOGS" "$PANEL_LOGS" "$PANEL_ARCHIVES"; do
-  if [ -n "$ENTRIES" ]; then LOCAL_ACTIVITY="$LOCAL_ACTIVITY$SEP$ENTRIES"; SEP=","; fi
-done
-LOCAL_ACTIVITY="$LOCAL_ACTIVITY]"
-
-echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\": $TOTAL_FOLDERS, \"history\": $HISTORY, \"activity\": $ACTIVITY, \"localActivity\": $LOCAL_ACTIVITY, \"driveError\": \"$DRIVE_ERROR\", \"todayBreakdown\": {\"site\": ${TODAY_SITE:-0}, \"database\": ${TODAY_DB:-0}, \"panel\": ${TODAY_PANEL:-0}}, \"todayBreakdownBytes\": {\"site\": ${TODAY_SITE_BYTES:-0}, \"database\": ${TODAY_DB_BYTES:-0}, \"panel\": ${TODAY_PANEL_BYTES:-0}}}"
-`
-			output, err := cachedGetWithPolicy("backup-status", 120*time.Second, func() ([]byte, error) {
-				out, e := executeSSHCommandRaw(resolvedBackupStatusCommand(cmds))
-				if e != nil {
-					return nil, e
-				}
-				response, good, e := mergeDriveStatus([]byte(out), currentGoodDriveStatus(), time.Now())
-				if e != nil {
-					return nil, e
-				}
-				if len(good) > 0 {
-					rememberGoodDriveStatus(good)
-				}
-				return response, nil
-			}, backupStatusTTL, markDriveStatusStale)
+			output, err := readBackupStatus()
 
 			if err != nil {
 				if unavailable, ok := err.(driveUnavailableError); ok {
@@ -1704,7 +1563,7 @@ echo "{\"about\": $ABOUT, \"size\": $SIZE, \"dirs\": \"$DIRS\", \"totalFolders\"
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Không xác nhận được kết quả dọn dẹp aaPanel"})
 					return
 				}
-				invalidate("cron-jobs")
+				invalidate("cron-jobs", "server-status", "local-snapshots", "backup-activity")
 				c.JSON(http.StatusOK, gin.H{"status": "completed", "deletedCount": deleted})
 				return
 			}
@@ -1814,7 +1673,7 @@ done
 		})
 
 		auth.GET("/cron-jobs", func(c *gin.Context) {
-			output, err := cachedGet("cron-jobs", 15*time.Second, func() ([]byte, error) {
+			output, err := cachedGetFresh("cron-jobs", 3*time.Second, func() ([]byte, error) {
 				return fetchManagedCronJobs()
 			})
 			if err != nil {
@@ -2038,28 +1897,22 @@ fi
 
 		// API 9: Liệt kê các ảnh chụp sao lưu trên Google Drive
 		auth.GET("/recovery-snapshots", func(c *gin.Context) {
-			cmds := `/usr/bin/rclone lsf -R --format "pst" gdrive:Backup --config /root/.config/rclone/rclone.conf --fast-list --timeout 15s --contimeout 5s`
-			output, err := cachedGet("recovery-snapshots", 30*time.Second, func() ([]byte, error) {
-				out, e := executeSSHCommand(cmds)
-				return []byte(out), e
-			})
+			inventory, err := readDriveInventory()
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể liệt kê bản sao lưu", "detail": err.Error()})
 				return
 			}
 
-			c.JSON(http.StatusOK, parseSnapshotList(string(output)))
+			if !inventory.HasListing {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể liệt kê bản sao lưu", "detail": inventory.driveError()})
+				return
+			}
+			c.JSON(http.StatusOK, parseSnapshotList(inventory.Listing))
 		})
 
 		// API 10: Liệt kê các file backup cục bộ
 		auth.GET("/local-snapshots", func(c *gin.Context) {
-			cmds := configuredLocalInventoryCommand()
-			output, err := cachedGet("local-snapshots", 30*time.Second, func() ([]byte, error) {
-				// All roots are already resolved; do not rewrite private paths using
-				// shared defaults a second time.
-				out, e := executeSSHCommandRaw(cmds)
-				return []byte(out), e
-			})
+			output, err := readLocalInventory()
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể liệt kê bản sao lưu cục bộ", "detail": err.Error()})
 				return
@@ -2171,17 +2024,7 @@ fi
 		})
 
 		auth.POST("/refresh", func(c *gin.Context) {
-			cacheMu.Lock()
-			backupEntry, hasBackup := cache["backup-status"]
-			cache = make(map[string]cacheEntry)
-			if hasBackup && len(backupEntry.value) > 0 {
-				if stale := markDriveStatusStale(backupEntry.value); len(stale) > 0 {
-					backupEntry.value = stale
-					backupEntry.expiresAt = time.Time{}
-					cache["backup-status"] = backupEntry
-				}
-			}
-			cacheMu.Unlock()
+			refreshReadCaches()
 			c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Cache cleared"})
 		})
 

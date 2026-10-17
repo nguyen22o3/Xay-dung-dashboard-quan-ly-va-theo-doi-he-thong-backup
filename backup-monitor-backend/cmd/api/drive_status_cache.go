@@ -110,7 +110,7 @@ func backupStatusTTL(data []byte) time.Duration {
 		}
 		return 30 * time.Second
 	}
-	return 2 * time.Minute
+	return driveInventoryTTL
 }
 
 func currentGoodDriveStatus() []byte {
@@ -144,15 +144,6 @@ func warmDriveStatusCache() {
 	driveGoodMu.Lock()
 	driveGoodStatus = good
 	driveGoodMu.Unlock()
-	stale := markDriveStatusStale(good)
-	if len(stale) == 0 {
-		return
-	}
-	cacheMu.Lock()
-	if _, exists := cache["backup-status"]; !exists {
-		cache["backup-status"] = cacheEntry{value: stale, expiresAt: time.Now().Add(-time.Second)}
-	}
-	cacheMu.Unlock()
 }
 
 func clearDriveStatusSnapshot() {

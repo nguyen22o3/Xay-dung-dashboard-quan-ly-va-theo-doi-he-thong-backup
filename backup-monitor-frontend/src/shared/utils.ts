@@ -270,7 +270,7 @@ export function formatCronSchedule(schedule: string, lang: 'vi' | 'en' = 'vi'): 
   const dow = parts[4]
   if (/^\*\/[1-9]\d?$/.test(min) && hour === '*' && dayOfMonth === '*' && month === '*' && dow === '*') return lang === 'vi' ? `Mỗi ${Number(min.slice(2))} phút (tính từ phút 0 mỗi giờ)` : `Every ${Number(min.slice(2))} minutes (from minute 0 each hour)`
   if (/^\d{1,2}$/.test(min) && /^\*\/[1-9]\d?$/.test(hour) && dayOfMonth === '*' && month === '*' && dow === '*') return lang === 'vi' ? `Mỗi ${Number(hour.slice(2))} giờ, phút ${min.padStart(2, '0')} (tính từ 00:00 mỗi ngày)` : `Every ${Number(hour.slice(2))} hours at minute ${min.padStart(2, '0')} (from 00:00 daily)`
-  if (/^\d{1,2}$/.test(min) && /^\d{1,2}$/.test(hour) && /^\*\/[1-9]\d?$/.test(dayOfMonth) && month === '*' && dow === '*') return lang === 'vi' ? `${hour.padStart(2, '0')}:${min.padStart(2, '0')}, cách ${Number(dayOfMonth.slice(2))} ngày trong tháng (từ ngày 1)` : `${hour.padStart(2, '0')}:${min.padStart(2, '0')}, every ${Number(dayOfMonth.slice(2))} calendar days (from day 1)`
+  if (/^\d{1,2}$/.test(min) && /^\d{1,2}$/.test(hour) && /^\*\/[1-9]\d?$/.test(dayOfMonth) && month === '*' && dow === '*') return lang === 'vi' ? `${hour.padStart(2, '0')}:${min.padStart(2, '0')}, cách ${Number(dayOfMonth.slice(2))} ngày trong mỗi tháng (từ ngày 1)` : `${hour.padStart(2, '0')}:${min.padStart(2, '0')}, every ${Number(dayOfMonth.slice(2))} days within each month (from day 1)`
   if (!/^(?:\d{1,2}|\*)$/.test(min) || !/^(?:\d{1,2}|\*)$/.test(hour)) return schedule
 
   if (min === '*' && hour === '*' && dayOfMonth === '*' && month === '*' && dow === '*') {

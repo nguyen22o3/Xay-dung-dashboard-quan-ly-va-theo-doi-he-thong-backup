@@ -1,3 +1,4 @@
+import { localizeMessage } from '../../shared/messages'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, Folder, FolderPlus, RefreshCw, X } from 'lucide-react'
@@ -8,7 +9,7 @@ import type { Lang } from '../../shared/language'
 import type { CronJob } from '../../shared/types'
 import BackupTaskForm from './BackupTaskForm'
 import ManagedScriptPicker from './ManagedScriptPicker'
-import { backupSourceForTask, buildCronScheduleChange, cronScheduleIsStale, makeCronScheduleDraft, sourceConfigKeys, proposedCronSchedule, cronJobSelector, cronExecutionScript } from './backupTasks'
+import { backupSourceForTask, backupTaskLabels, buildCronScheduleChange, cronScheduleIsStale, makeCronScheduleDraft, sourceConfigKeys, proposedCronSchedule, cronJobSelector, cronExecutionScript } from './backupTasks'
 import type { CronScheduleDraft } from './backupTasks'
 import { formatCronSchedule } from '../../shared/utils'
 
@@ -19,8 +20,9 @@ const labels: Record<DirectoryKey, [string, string]> = {
   logsDir: ['Thư mục nhật ký (log)', 'Log directory'], driveFolder: ['Thư mục backup trên Google Drive', 'Google Drive backup folder'],
 }
 
-export function FolderPicker({ request, vi, close, choose, existingOnly = false }: { request: FolderRequest; vi: boolean; close: () => void; choose: (path: string) => void; existingOnly?: boolean }) {
+export function FolderPicker({ request, vi, close, choose, existingOnly = false, allowCreate = true }: { request: FolderRequest; vi: boolean; close: () => void; choose: (path: string) => void; existingOnly?: boolean; allowCreate?: boolean }) {
 	const sourceOnly = request.purpose.startsWith('source-') || existingOnly
+  const canCreate = !sourceOnly && allowCreate
   const [path, setPath] = useState(request.path), [name, setName] = useState('')
   const [listing, setListing] = useState<FolderList | null>(null)
   const [busy, setBusy] = useState(true), [error, setError] = useState('')
@@ -62,6 +64,7 @@ export function FolderPicker({ request, vi, close, choose, existingOnly = false 
     return () => { alive = false }
   }, [request, vi])
   const create = async (value: string) => {
+    if (!canCreate) return
     setBusy(true); setError('')
     try { await createBackupFolder({ ...request, path: value }); await load(value); setName('') }
     catch (error: unknown) { setError(apiErrorMessage(error, vi ? 'Không tạo được thư mục.' : 'Could not create folder.')); setBusy(false) }
@@ -70,8 +73,8 @@ export function FolderPicker({ request, vi, close, choose, existingOnly = false 
     && !(request.purpose === 'scripts' && ['/root', '/opt/backup-monitor'].includes(path))
   // Outside the animated, scrollable page; the shell keeps the active theme variables.
   return createPortal(<div className="backup-folder-overlay backup-management"><div className="backup-folder-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="folder-picker-title">
-    <div className="backup-system-heading"><h2 id="folder-picker-title">{existingOnly ? (vi ? 'Chọn thư mục backup cần giám sát' : 'Choose a backup folder to monitor') : sourceOnly ? (vi ? 'Chọn thư mục dữ liệu cần sao lưu' : 'Choose source data folder') : (vi ? 'Chọn hoặc tạo thư mục' : 'Choose or create a folder')} · {request.location === 'local' ? 'AlmaLinux' : 'Google Drive'}</h2><button type="button" className="backup-system-secondary" onClick={close} aria-label={vi ? 'Đóng' : 'Close'}><X size={18} /></button></div>
-    <p className="backup-system-note">{existingOnly ? (vi ? 'Chọn thư mục backup đã tồn tại. Script giám sát sẽ cập nhật khi bạn lưu cài đặt.' : 'Choose an existing backup folder. The monitoring script updates when you save settings.') : sourceOnly ? (vi ? 'Chọn thư mục dữ liệu đã tồn tại trên máy chủ. Chọn ở đây chưa đổi script; cần xác nhận áp dụng ở cuối form.' : 'Choose an existing server data folder. Selecting it does not update scripts until you confirm and apply the form.') : (vi ? 'Tên thư mục dùng chữ không dấu, số, -, _, .; không có khoảng trắng. Tạo thư mục chưa thay đổi nơi lưu trữ đang dùng.' : 'Use ASCII letters, numbers, -, _, and .; no spaces. Creating a folder does not change active storage.')}</p>
+    <div className="backup-system-heading"><h2 id="folder-picker-title">{existingOnly ? (vi ? 'Chọn thư mục backup cần giám sát' : 'Choose a backup folder to monitor') : sourceOnly ? (vi ? 'Chọn thư mục dữ liệu cần sao lưu' : 'Choose source data folder') : canCreate ? (vi ? 'Chọn hoặc tạo thư mục' : 'Choose or create a folder') : (vi ? 'Chọn thư mục' : 'Choose a folder')} · {request.location === 'local' ? 'AlmaLinux' : 'Google Drive'}</h2><button type="button" className="backup-system-secondary" onClick={close} aria-label={vi ? 'Đóng' : 'Close'}><X size={18} /></button></div>
+    <p className="backup-system-note">{existingOnly ? (vi ? 'Chọn thư mục backup đã tồn tại. Script giám sát sẽ cập nhật khi bạn lưu cài đặt.' : 'Choose an existing backup folder. The monitoring script updates when you save settings.') : sourceOnly ? (vi ? 'Chọn thư mục dữ liệu đã tồn tại trên máy chủ. Chọn ở đây chưa đổi script; cần xác nhận áp dụng ở cuối form.' : 'Choose an existing server data folder. Selecting it does not update scripts until you confirm and apply the form.') : canCreate ? (vi ? 'Tên thư mục dùng chữ không dấu, số, -, _, .; không có khoảng trắng. Tạo thư mục chưa thay đổi nơi lưu trữ đang dùng.' : 'Use ASCII letters, numbers, -, _, and .; no spaces. Creating a folder does not change active storage.') : (vi ? 'Chọn thư mục đã tồn tại. Thay đổi được áp dụng khi bạn lưu tác vụ.' : 'Choose an existing folder. Changes apply when you save the task.')}</p>
     <div className="backup-system-path"><input aria-label={vi ? 'Đường dẫn thư mục' : 'Folder path'} value={path} onChange={e => setPath(e.target.value)} disabled={busy} /><button type="button" className="backup-system-secondary" disabled={busy} onClick={() => void load(path)}>{vi ? 'Mở' : 'Open'}</button>{request.location === 'local' && <button type="button" className="backup-system-secondary" disabled={busy} onClick={() => void load('/')}>{vi ? 'Thư mục gốc /' : 'Server root /'}</button>}</div>
     <div className="backup-folder-list" aria-busy={busy}>{busy ? <p>{vi ? 'Đang đọc thư mục...' : 'Loading folders...'}</p> : <>
       {listing?.parent !== null && listing?.parent !== undefined && listing.parent !== path && <button type="button" onClick={() => void load(listing.parent!)}>← {vi ? 'Thư mục cha' : 'Parent folder'}</button>}
@@ -79,9 +82,9 @@ export function FolderPicker({ request, vi, close, choose, existingOnly = false 
       {listing?.exists && !listing.entries.length && <p>{vi ? 'Chưa có thư mục con.' : 'No subfolders.'}</p>}
       {listing && !listing.exists && <p>{vi ? 'Thư mục chưa tồn tại.' : 'Folder does not exist.'}</p>}
     </>}</div>
-    {error && <p role="alert" className="backup-system-error">{error}</p>}
-    {!sourceOnly && <div className="backup-system-path"><input aria-label={vi ? 'Tên thư mục mới' : 'New folder name'} placeholder={vi ? 'Tên thư mục con mới' : 'New subfolder name'} value={name} onChange={e => setName(e.target.value)} disabled={busy} /><button type="button" className="backup-system-secondary" disabled={busy || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(name)} onClick={() => void create(`${path.replace(/\/$/, '')}/${name}`.replace(/^\//, request.location === 'drive' ? '' : '/'))}><FolderPlus size={16} />{vi ? 'Tạo thư mục con' : 'Create subfolder'}</button></div>}
-    <div className="backup-system-actions">{!sourceOnly && <button type="button" className="backup-system-secondary" disabled={busy || !path || path === '/'} onClick={() => void create(path)}>{vi ? 'Tạo đường dẫn này nếu chưa có' : 'Create this path if missing'}</button>}<button type="button" className="apex-settings-save" disabled={busy || !selectable} onClick={() => choose(path)}>{vi ? 'Chọn thư mục này' : 'Use this folder'}</button></div>
+    {error && <p role="alert" className="backup-system-error">{localizeMessage(error, vi ? 'vi' : 'en')}</p>}
+    {canCreate && <div className="backup-system-path"><input aria-label={vi ? 'Tên thư mục mới' : 'New folder name'} placeholder={vi ? 'Tên thư mục con mới' : 'New subfolder name'} value={name} onChange={e => setName(e.target.value)} disabled={busy} /><button type="button" className="backup-system-secondary" disabled={busy || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(name)} onClick={() => void create(`${path.replace(/\/$/, '')}/${name}`.replace(/^\//, request.location === 'drive' ? '' : '/'))}><FolderPlus size={16} />{vi ? 'Tạo thư mục con' : 'Create subfolder'}</button></div>}
+    <div className="backup-system-actions">{canCreate && <button type="button" className="backup-system-secondary" disabled={busy || !path || path === '/'} onClick={() => void create(path)}>{vi ? 'Tạo đường dẫn này nếu chưa có' : 'Create this path if missing'}</button>}<button type="button" className="apex-settings-save" disabled={busy || !selectable} onClick={() => choose(path)}>{vi ? 'Chọn thư mục này' : 'Use this folder'}</button></div>
   </div></div>, document.querySelector('.app-shell') ?? document.body)
 }
 
@@ -104,7 +107,7 @@ export default function BackupSystemSettings({ lang, locked = false, expanded: c
   const [scriptsLoading, setScriptsLoading] = useState(false), [scriptsError, setScriptsError] = useState('')
   const [scriptsRevision, setScriptsRevision] = useState(0)
   const [scriptPickerOpen, setScriptPickerOpen] = useState(false)
-  const [feedback, setFeedback] = useState<{ text: string; error: boolean } | null>(null)
+  const [feedback, setFeedback] = useState<{ text: string | string[]; error: boolean } | null>(null)
   const [picker, setPicker] = useState<{ key: DirectoryKey | SourceKey; request: FolderRequest } | null>(null)
   const [localExpanded, setExpanded] = useState(true)
   const expanded = controlledExpanded ?? localExpanded
@@ -217,9 +220,9 @@ export default function BackupSystemSettings({ lang, locked = false, expanded: c
       if (!window.confirm(summary)) return
       const result = await applyBackupSystem(draft, state.version, checked.token, schedule)
       setState(result); setDraft(result.config); setDirectoryDraft(null); setSourceScript(null); setPreview(null); setScheduleDraft(null); onReload?.()
-      setFeedback({ error: false, text: [vi ? 'Đã lưu cấu hình và lịch chạy đã chọn. Không chạy backup ngay; chính sách 14 ngày không thay đổi.' : 'Selected configuration and schedule saved. No backup ran; the 14-day retention policy is unchanged.', ...(checked.backupMigration ? [vi ? `${checked.filesToMove} tệp backup đã được kiểm tra tại nơi lưu mới.` : `${checked.filesToMove} backup files verified at the new location.`] : []), ...(result.warnings || [])].join(' ') })
+      setFeedback({ error: false, text: [vi ? 'Đã lưu cấu hình và lịch chạy đã chọn. Không chạy backup ngay; chính sách 14 ngày không thay đổi.' : 'Selected configuration and schedule saved. No backup was started immediately; the 14-day retention policy is unchanged.', ...(checked.backupMigration ? [vi ? `${checked.filesToMove} tệp backup đã được kiểm tra tại nơi lưu mới.` : `${checked.filesToMove} backup files verified at the new location.`] : []), ...(result.warnings || [])] })
       task?.onApplied?.(checked.schedule)
-    } catch (error: unknown) { setPreview(null); setFeedback({ text: apiErrorMessage(error, vi ? 'Không áp dụng được cấu hình. Hãy tải lại rồi thử lại.' : 'Could not apply. Reload and try again.'), error: true }) }
+    } catch (error: unknown) { setPreview(null); setFeedback({ text: apiErrorMessage(error, vi ? 'Không áp dụng được cấu hình. Hãy tải lại rồi thử lại.' : 'Could not apply settings. Reload and try again.'), error: true }) }
     finally { applying.current = false; setBusy(false) }
   }
   const open = (key: DirectoryKey) => {
@@ -228,7 +231,7 @@ export default function BackupSystemSettings({ lang, locked = false, expanded: c
   return <section className="apex-settings-panel backup-system-panel" id={`${idPrefix}backup-storage`} aria-labelledby={`${idPrefix}backup-storage-title`}>
     <div className="backup-storage-heading"><h2 id={`${idPrefix}backup-storage-title`}>{mode === 'edit' ? (vi ? 'Sửa tác vụ' : 'Edit task') : <button type="button" aria-expanded={expanded} aria-controls={`${idPrefix}backup-storage-fields`} onClick={() => onToggle ? onToggle() : setExpanded(!expanded)}>{vi ? 'Thêm tác vụ' : 'Add task'}<ChevronDown size={17} className={expanded ? 'is-expanded' : ''} /></button>}</h2><div className="backup-edit-heading-actions"><button type="button" className="backup-system-secondary" disabled={disabled} onClick={() => void reload()} aria-label={vi ? 'Tải lại cấu hình' : 'Reload configuration'}><RefreshCw size={16} /></button>{mode === 'edit' && <button type="button" className="backup-system-secondary" disabled={disabled} onClick={onClose} aria-label={vi ? 'Đóng chỉnh sửa' : 'Close editor'}><X size={18} /></button>}</div></div>
     <div id={`${idPrefix}backup-storage-fields`} className="backup-storage-body" hidden={!expanded}>
-    {feedback && <p className={feedback.error ? 'backup-system-error' : 'backup-system-success'} role={feedback.error ? 'alert' : 'status'}>{feedback.text}</p>}
+    {feedback && <p className={feedback.error ? 'backup-system-error' : 'backup-system-success'} role={feedback.error ? 'alert' : 'status'}>{(Array.isArray(feedback.text) ? feedback.text : [feedback.text]).map(text => localizeMessage(text, lang)).join(' ')}</p>}
     {!draft || !state ? <p className="backup-system-note">{feedback?.error ? (vi ? 'Bấm tải lại để thử lại.' : 'Reload to retry.') : (vi ? 'Đang tải cấu hình từ AlmaLinux...' : 'Loading configuration from AlmaLinux...')}</p> : <>
       <form className="backup-unified-form" onSubmit={event => { event.preventDefault(); void apply() }}>
       {task && <BackupTaskForm lang={lang} jobs={task.jobs} selected={selected} draft={taskDraft} disabled={disabled} loading={task.loading} error={task.error} scriptPath={scriptPath} idPrefix={idPrefix} selectionLocked={mode === 'edit'}
@@ -239,7 +242,7 @@ export default function BackupSystemSettings({ lang, locked = false, expanded: c
         onReset={() => { setScheduleDraft(selected ? makeCronScheduleDraft(selected, task?.revision) : null); setPreview(null); onReload?.() }} />}
       <div className="backup-system-fields">
         <div className="apex-settings-field"><label htmlFor={`${idPrefix}backup-system-source`}>{vi ? 'Thư mục dữ liệu cần sao lưu' : 'Source data folder'}</label><div className="backup-system-path"><input id={`${idPrefix}backup-system-source`} value={source?.path ?? (sourceKey ? '' : fieldValue('backupRoot'))} disabled={disabled || !source} readOnly={!source} placeholder={sourceKey ? (vi ? 'Tải lại để lấy nguồn từ máy chủ' : 'Reload to get source settings') : undefined} onChange={e => sourceKey && chooseSource(sourceKey, e.target.value)} spellCheck={false} /><button type="button" className="backup-system-secondary" disabled={disabled || !source} onClick={() => source && sourceKey && setPicker({ key: sourceKey, request: { location: 'local', purpose: `source-${sourceId.replace('backup-', '')}` as FolderRequest['purpose'], path: source.path } })} aria-label={vi ? 'Chọn thư mục dữ liệu cần sao lưu' : 'Choose source data folder'} title={vi ? 'Chọn thư mục' : 'Choose folder'}><Folder size={16} aria-hidden="true" /></button></div></div>
-        {(['backupRoot', 'driveFolder', 'scriptsDir', 'logsDir'] as DirectoryKey[]).map(key => <div className="apex-settings-field" key={key}><label htmlFor={`${idPrefix}backup-system-${key}`}>{labels[key][vi ? 0 : 1]}</label><div className="backup-system-path"><input id={`${idPrefix}backup-system-${key}`} value={fieldValue(key)} disabled={disabled} onChange={e => edit(key, e.target.value)} spellCheck={false} /><button type="button" className="backup-system-secondary" disabled={disabled || (key === 'driveFolder' && !state.remotes.length)} onClick={() => open(key)} aria-label={`${vi ? 'Chọn' : 'Choose'} ${labels[key][vi ? 0 : 1]}`} title={`${vi ? 'Chọn / Tạo' : 'Browse / Create'} ${labels[key][vi ? 0 : 1]}`}><Folder size={16} aria-hidden="true" /></button></div></div>)}
+        {(['backupRoot', 'driveFolder', 'scriptsDir', 'logsDir'] as DirectoryKey[]).map(key => <div className="apex-settings-field" key={key}><label htmlFor={`${idPrefix}backup-system-${key}`}>{labels[key][vi ? 0 : 1]}</label><div className="backup-system-path"><input id={`${idPrefix}backup-system-${key}`} value={fieldValue(key)} disabled={disabled} onChange={e => edit(key, e.target.value)} spellCheck={false} /><button type="button" className="backup-system-secondary" disabled={disabled || (key === 'driveFolder' && !state.remotes.length)} onClick={() => open(key)} aria-label={`${vi ? 'Chọn' : 'Choose'} ${labels[key][vi ? 0 : 1]}`} title={`${vi ? 'Chọn' : 'Browse'} ${labels[key][vi ? 0 : 1]}`}><Folder size={16} aria-hidden="true" /></button></div></div>)}
       </div>
       {task && !state.supportsCronIsolation && <p role="alert" className="backup-system-error">{vi ? 'Cần cập nhật backup-manager trên máy chủ lên v18 để sửa cấu hình riêng từng cron.' : 'Update the server backup-manager to v18 for isolated cron settings.'}</p>}
       {mode === 'add' && task && !state.supportsManagedScriptSelection && <p className="backup-system-note">{vi ? 'Cập nhật helper v25 trên AlmaLinux để chọn script thực hiện.' : 'Update the AlmaLinux helper to v25 to choose an execution script.'}</p>}
@@ -258,11 +261,11 @@ export default function BackupSystemSettings({ lang, locked = false, expanded: c
       </form>
     </>}
     </div>
-    {scriptPickerOpen && canSelectScript && selected && <ManagedScriptPicker key={sourceId} vi={vi} taskName={selected.name} initialPath={directories.scriptsDir || '/root/scripts'} options={optionsReady ? scriptOptions.options : []} value={chosenScript ? (scriptChoiceValid ? chosenScript.selector : '__stale__') : ''} loading={scriptsLoading || (!optionsReady && !scriptsError)} error={scriptsError} onReload={() => setScriptsRevision(value => value + 1)} onClose={() => setScriptPickerOpen(false)} onChoose={selector => {
+    {scriptPickerOpen && canSelectScript && selected && <ManagedScriptPicker key={sourceId} vi={vi} taskName={backupTaskLabels[selected.id]?.[lang] ?? selected.name} initialPath={directories.scriptsDir || '/root/scripts'} options={optionsReady ? scriptOptions.options : []} value={chosenScript ? (scriptChoiceValid ? chosenScript.selector : '__stale__') : ''} loading={scriptsLoading || (!optionsReady && !scriptsError)} error={scriptsError} onReload={() => setScriptsRevision(value => value + 1)} onClose={() => setScriptPickerOpen(false)} onChoose={selector => {
       const option = optionsReady ? scriptOptions.options.find(item => item.selector === selector) : null
       if (selector && !option) return
       setSourceScript(option ? { ...option, taskID: sourceId } : null); setPreview(null); setFeedback(null); setScriptPickerOpen(false)
     }} />}
-    {picker && <FolderPicker request={picker.request} vi={vi} close={() => setPicker(null)} choose={value => { if (picker.key === 'siteSource' || picker.key === 'databaseSource' || picker.key === 'panelSource') chooseSource(picker.key, value); else edit(picker.key, value); setPicker(null) }} />}
+    {picker && <FolderPicker request={picker.request} vi={vi} allowCreate={false} close={() => setPicker(null)} choose={value => { if (picker.key === 'siteSource' || picker.key === 'databaseSource' || picker.key === 'panelSource') chooseSource(picker.key, value); else edit(picker.key, value); setPicker(null) }} />}
   </section>
 }

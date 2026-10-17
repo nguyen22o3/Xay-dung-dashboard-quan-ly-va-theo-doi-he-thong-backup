@@ -1,3 +1,4 @@
+import { localizeMessage } from '../../shared/messages'
 import { Button } from '../../shared/ui'
 import { useMemo, useRef, useState } from 'react'
 import { apiErrorMessage } from '../../api/dashboard'
@@ -39,7 +40,7 @@ export default function CronLogTools({ content, jobId, selector = jobId, lang }:
       <Button type="button" onClick={() => void older()} disabled={busy || (pages !== null && !cursor)}>{busy ? (vi ? 'Đang tải…' : 'Loading…') : pages === null ? (vi ? 'Xem log phân trang' : 'Paged log') : (vi ? 'Trang cũ hơn' : 'Older page')}</Button>
     </div>
     <div className="cron-log-body" role="status">
-      {error && <p className="cron-log-error">{error}</p>}
+      {error && <p className="cron-log-error">{localizeMessage(error, lang)}</p>}
       {partial && <p className="cron-log-note">{vi ? 'Đầu trang có thể là một phần dòng; tải trang cũ hơn để xem phần trước.' : 'The first line may be partial; load the previous page for context.'}</p>}
       {capped && <p className="cron-log-note">{vi ? 'Đã tải khoảng 1 MB. Trang tiếp theo thay cửa sổ hiển thị; không xóa dữ liệu lưu trữ.' : 'About 1 MB loaded. The next page replaces the display window, not stored data.'}</p>}
       {(query || level !== 'all') && <p className="cron-log-note">{vi ? 'Chỉ tìm/lọc phần log đã tải; dòng ngữ cảnh có thể không nằm trong kết quả.' : 'Search/filter applies to loaded text only; context lines may be excluded.'}</p>}

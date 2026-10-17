@@ -1,3 +1,4 @@
+import { localizeMessage } from '../../shared/messages'
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Cloud, ChevronDown } from 'lucide-react'
@@ -44,7 +45,7 @@ export default function DriveConnection({ lang, locked, onConnected, onBusyChang
       <p className="backup-system-note">{vi ? 'Tạo OAuth client dạng Desktop theo ' : 'Create a Desktop OAuth client using '}<a href="https://rclone.org/drive/#making-your-own-client-id" target="_blank" rel="noopener noreferrer">{vi ? 'hướng dẫn rclone' : 'the rclone guide'}</a>{vi ? ', rồi chạy trên máy có trình duyệt:' : ', then run on a computer with a browser:'}</p>
       <pre className="drive-authorize-command">rclone authorize drive "CLIENT_ID" "CLIENT_SECRET"</pre>
       <p className="backup-system-note">{vi ? 'Đăng nhập Google, cấp quyền, dán nguyên JSON token rclone trả về. Không chia sẻ token.' : 'Sign in to Google, authorize access, then paste the complete rclone token JSON. Do not share it.'}</p>
-      {error && <p className="backup-system-error" role="alert">{error}</p>}
+      {error && <p className="backup-system-error" role="alert">{localizeMessage(error, lang)}</p>}
       {saved && <p className="backup-system-success" role="status">{vi ? 'Đã lưu. Chọn kết nối và thư mục Drive trong phần Thêm tác vụ.' : 'Saved. Select the remote and Drive folder when adding a task.'}</p>}
       {status && !status.rcloneInstalled && <p className="backup-system-error">{vi ? 'Máy chủ chưa có /usr/bin/rclone. Chạy bộ cài local trước.' : 'Install /usr/bin/rclone on the host using the local installer.'}</p>}
       <form className="backup-unified-form" onSubmit={event => void save(event)}>

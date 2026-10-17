@@ -17,13 +17,13 @@ type DashboardProps = {
   onNavigate: (tab: TabKey) => void
 }
 
-const palette = ['#00bd82', '#0ea5a8', '#e8a318']
+const palette = ['#3b82f6', '#38bdf8', '#e8a318']
 
 function KpiCard({ label, value, detail, tone, icon: Icon, data }: {
   label: string
   value: string
   detail: string
-  tone: 'green' | 'blue' | 'amber' | 'purple'
+  tone: 'primary' | 'blue' | 'amber' | 'purple'
   icon: typeof Cloud
   data?: number[]
 }) {
@@ -85,8 +85,8 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
     .sort((a, b) => activityStamp(b).localeCompare(activityStamp(a)))
     .slice(0, 4)
   const nextCronTime = nextCronRun(cron.data ?? [], serverData?.server_time, lang)
-  const gridColor = isDark ? '#28302c' : '#e8eeea'
-  const mutedColor = isDark ? '#91a19a' : '#718076'
+  const gridColor = isDark ? '#273341' : '#e5edf6'
+  const mutedColor = isDark ? '#9baabd' : '#61738b'
 
   return (
     <div className="dashboard-overview">
@@ -125,7 +125,7 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
           dragConfig={{ handle: '.overview-drag-handle', cancel: 'button, a, input, select, textarea' }}
           resizeConfig={{ handles: ['s', 'w', 'e', 'n', 'sw', 'nw', 'se', 'ne'] }}
         >
-        <div key="drive-files"><KpiCard label={tr(lang, 'backupFilesDrive')} value={backupData?.size?.count?.toLocaleString() ?? '—'} detail="" tone="green" icon={Cloud} data={chartData.map((item) => item.files)} /></div>
+        <div key="drive-files"><KpiCard label={tr(lang, 'backupFilesDrive')} value={backupData?.size?.count?.toLocaleString() ?? '—'} detail="" tone="primary" icon={Cloud} data={chartData.map((item) => item.files)} /></div>
         <div key="drive-size"><KpiCard label={tr(lang, 'backupSizeDrive')} value={backupData?.size?.bytes != null ? formatBytes(backupData.size.bytes) : '—'} detail="" tone="blue" icon={DatabaseBackup} data={chartData.map((item) => item.bytes)} /></div>
         <div key="server-files"><KpiCard label={tr(lang, 'backupFilesServer')} value={serverData?.local_backup?.count?.toLocaleString() ?? '—'} detail={serverData?.local_backup?.size ? `${vi ? 'Dung lượng' : 'Storage'} ${serverData.local_backup.size}` : (vi ? 'Trên máy chủ' : 'On server')} tone="amber" icon={HardDrive} /></div>
         <div key="scheduled-jobs"><KpiCard label={tr(lang, 'scheduledJobsTitle')} value={cron.data?.length.toLocaleString() ?? '—'} detail={nextCronTime ? `${tr(lang, 'nextSchedule')}: ${nextCronTime}` : (vi ? 'Chưa xác nhận được lịch kế tiếp' : 'Next run is unconfirmed')} tone="purple" icon={CalendarClock} /></div>
@@ -139,12 +139,12 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
             <div className="overview-chart">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData} margin={{ top: 16, right: 14, left: 4, bottom: 4 }}>
-                  <defs><linearGradient id="backupTrendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#00bd82" stopOpacity={0.24} /><stop offset="100%" stopColor="#00bd82" stopOpacity={0} /></linearGradient></defs>
+                  <defs><linearGradient id="backupTrendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--app-accent)" stopOpacity={0.24} /><stop offset="100%" stopColor="var(--app-accent)" stopOpacity={0} /></linearGradient></defs>
                   <CartesianGrid vertical={false} stroke={gridColor} strokeDasharray="4 5" />
                   <XAxis dataKey="date" tickFormatter={(value: string) => value.slice(5)} tickLine={false} axisLine={false} tick={{ fill: mutedColor, fontSize: 11 }} dy={12} />
                   <YAxis tickFormatter={formatBytes} tickLine={false} axisLine={false} width={70} tick={{ fill: mutedColor, fontSize: 11 }} />
-                  <Tooltip formatter={(value) => [formatBytes(Number(value)), vi ? 'Dung lượng' : 'Size']} contentStyle={{ background: isDark ? '#171c19' : '#fff', border: `1px solid ${gridColor}`, borderRadius: 12, color: isDark ? '#f1f5f3' : '#17211d' }} />
-                  <Area type="monotone" dataKey="bytes" stroke="#00bd82" strokeWidth={3} fill="url(#backupTrendFill)" activeDot={{ r: 5, fill: '#00bd82' }} isAnimationActive={false} />
+                  <Tooltip formatter={(value) => [formatBytes(Number(value)), vi ? 'Dung lượng' : 'Size']} contentStyle={{ background: isDark ? '#151c24' : '#fff', border: `1px solid ${gridColor}`, borderRadius: 12, color: isDark ? '#f1f5fb' : '#182433' }} />
+                  <Area type="monotone" dataKey="bytes" stroke="var(--app-accent)" strokeWidth={3} fill="url(#backupTrendFill)" activeDot={{ r: 5, fill: 'var(--app-accent)' }} isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -175,8 +175,8 @@ export default function Dashboard({ isDark, lang, onNavigate }: DashboardProps) 
           <div className="overview-panel-heading overview-drag-handle"><div><h2>{vi ? 'Sức khỏe máy chủ' : 'Server health'}</h2><p>{vi ? 'Thông số hệ thống hiện tại' : 'Current system metrics'}</p></div><Server size={19} /></div>
           <div className="overview-health-list">
             {[
-              { label: 'CPU', value: readPercentage(serverData?.cpu), color: '#00bd82' },
-              { label: 'RAM', value: readPercentage(serverData?.ram?.usage), color: '#0ea5a8' },
+              { label: 'CPU', value: readPercentage(serverData?.cpu), color: 'var(--app-accent)' },
+              { label: 'RAM', value: readPercentage(serverData?.ram?.usage), color: '#38bdf8' },
               { label: vi ? 'Ổ đĩa' : 'Disk', value: readPercentage(serverData?.disk?.usage), color: '#e8a318' },
             ].map((metric) => <div className="overview-health-row" key={metric.label}><div><span>{metric.label}</span><strong>{metric.value !== null ? `${metric.value.toFixed(1)}%` : '—'}</strong></div><div className="overview-health-track"><span style={{ width: `${metric.value ?? 0}%`, background: metric.color }} /></div></div>)}
           </div>

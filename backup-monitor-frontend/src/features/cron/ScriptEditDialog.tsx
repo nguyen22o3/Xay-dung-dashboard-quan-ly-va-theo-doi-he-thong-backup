@@ -1,3 +1,5 @@
+import { localizeMessage } from '../../shared/messages'
+import { backupTaskLabels } from './backupTasks'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { RefreshCw, X } from 'lucide-react'
@@ -73,18 +75,18 @@ export default function ScriptEditDialog({ job, lang, running, onClose, onSaved 
     if (!window.confirm(vi ? 'Lưu nội dung script? Script chạy với quyền root. Hệ thống kiểm tra cú pháp và lưu bản dự phòng; không chạy tác vụ ngay.' : 'Save script? Scripts run as root. Syntax is checked and a recovery copy is saved; the task does not run now.')) return
     savingRef.current = true; setSaving(true); setError('')
     try { const result = await saveTaskScript(document, content); setDocument(result); setContent(result.content); onSaved(result.recoveryDir ?? '') }
-    catch (error: unknown) { setError(apiErrorMessage(error, vi ? 'Không lưu được script. Nếu nội dung máy chủ đã đổi, hãy tải lại trước khi sửa tiếp.' : 'Could not save. Reload if the server script changed.')) }
+    catch (error: unknown) { setError(apiErrorMessage(error, vi ? 'Không lưu được script. Nếu nội dung máy chủ đã đổi, hãy tải lại trước khi sửa tiếp.' : 'Could not save the script. If the server content changed, reload before continuing to edit.')) }
     finally { savingRef.current = false; setSaving(false) }
   }
   return createPortal(<div className="cron-log-overlay backup-management" onMouseDown={event => { if (event.target === event.currentTarget) closeRef.current() }}>
     <div className="cron-log-dialog cron-script-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="script-editor-title">
-      <div className="cron-log-heading"><div><h2 id="script-editor-title">{vi ? 'Sửa script' : 'Edit script'}: {job.name}</h2><p>{document?.path ?? job.script}</p></div><div className="cron-log-controls">
+      <div className="cron-log-heading"><div><h2 id="script-editor-title">{vi ? 'Sửa script' : 'Edit script'}: {backupTaskLabels[job.id]?.[lang] ?? job.name}</h2><p>{document?.path ?? job.script}</p></div><div className="cron-log-controls">
         <button type="button" disabled={loading || saving} aria-label={vi ? 'Tải lại script' : 'Reload script'} onClick={() => { if (!dirty || window.confirm(vi ? 'Tải lại và bỏ nội dung chưa lưu?' : 'Reload and discard changes?')) void load() }}><RefreshCw size={17} /></button>
         <button type="button" disabled={saving} onClick={() => closeRef.current()} aria-label={vi ? 'Đóng sửa script' : 'Close script editor'}><X size={18} /></button>
       </div></div>
-      <div className="cron-script-body"><p className="backup-system-warning">{vi ? 'Script thực thi với quyền root. Kiểm tra cú pháp không đảm bảo nội dung an toàn. Giữ phần ghi log, trạng thái và quản lý phiên bản để dashboard đọc đúng kết quả.' : 'Scripts execute as root. Syntax checking does not guarantee safety. Preserve logging, status and version management for dashboard results.'}</p>
+      <div className="cron-script-body">
         {running && <p className="cron-log-error" role="alert">{vi ? 'Tác vụ đang chạy; chờ kết thúc mới được lưu.' : 'Task is running; wait before saving.'}</p>}
-        {error && <p className="cron-log-error" role="alert">{error}</p>}
+        {error && <p className="cron-log-error" role="alert">{localizeMessage(error, lang)}</p>}
         {loading ? <p>{vi ? 'Đang đọc script...' : 'Loading script...'}</p> : document && <textarea aria-label={vi ? 'Nội dung script' : 'Script content'} value={content} onChange={event => setContent(event.target.value)} disabled={saving} spellCheck={false} autoCapitalize="off" autoComplete="off" wrap="off" />}
         {document?.recoveryDir && <p role="status">{vi ? 'Đã lưu. Bản dự phòng: ' : 'Saved. Recovery copy: '}{document.recoveryDir}</p>}
       </div><div className="backup-system-actions cron-script-footer"><button type="button" className="backup-system-secondary" disabled={saving} onClick={() => closeRef.current()}>{vi ? 'Đóng' : 'Close'}</button><button type="button" className="backup-system-primary" disabled={loading || saving || running || !dirty} onClick={() => void save()}>{saving ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu script' : 'Save script')}</button></div>

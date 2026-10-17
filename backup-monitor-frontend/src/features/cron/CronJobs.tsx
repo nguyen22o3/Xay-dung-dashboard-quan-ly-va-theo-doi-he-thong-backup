@@ -1,7 +1,8 @@
+import { localizeMessage } from '../../shared/messages'
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Eye, Pause, Pencil, Play, RefreshCw, Search, Trash2, X } from 'lucide-react'
-import { apiErrorMessage, deleteCronJob, fetchCronJobLog, runCronJob, updateCronJobState, useCronJobs } from '../../api/dashboard'
+import { apiErrorMessage, fetchCronJobLog, runCronJob, updateCronJobState, useCronJobs } from '../../api/dashboard'
 import type { Lang } from '../../shared/language'
 import type { CronJob, CronJobLog } from '../../shared/types'
 import { formatCronSchedule } from '../../shared/utils'
@@ -19,6 +20,7 @@ import { backupTaskLabels as jobLabels, backupTaskScripts, cronJobSelector } fro
 import type { BackupSystemState } from '../../api/backupSystem'
 import { fetchBackupSystem } from '../../api/backupSystem'
 import { cronLogForDisplay } from '../monitoring/cronLogDisplay'
+import { deleteCronSchedule } from './cronDeletion'
 
 const backupIds = ['backup-site', 'backup-database', 'backup-panel']
 const categories = [
@@ -170,10 +172,10 @@ export default function CronJobs({ lang }: { lang: Lang }) {
     setRunningJob(cronJobSelector(job)); setFeedback(null)
     try {
       const process = await taskProcess(cronJobSelector(job))
-      if (!process.managed || !process.running || !process.runId) throw new Error(vi ? 'Chưa xác minh được tiến trình quản lý đang chạy. Với cron cũ, cần bật ghi nhận cron trước; không dừng tiến trình theo tên.' : 'No verified managed process is running. Enable scheduled tracking for legacy cron jobs first.')
-      if (!window.confirm(vi ? `Hủy đúng lần chạy ${process.runId} của ${jobLabels[job.id]?.vi ?? job.name}? Có thể để lại tệp đang tạo dở. Không xóa lịch cron hoặc các bản sao lưu hoàn tất.` : `Cancel run ${process.runId}? Partial working files may remain. Schedules and completed backups stay unchanged.`)) return
+      if (!process.managed || !process.running || !process.runId) throw new Error(vi ? 'Chưa xác minh được tiến trình quản lý đang chạy. Với cron cũ, cần bật ghi nhận cron trước; không dừng tiến trình theo tên.' : 'No verified managed process is running. Enable scheduled tracking for legacy cron jobs first; do not stop processes by name.')
+      if (!window.confirm(vi ? `Hủy đúng lần chạy ${process.runId} của ${jobLabels[job.id]?.vi ?? job.name}? Có thể để lại tệp đang tạo dở. Không xóa lịch cron hoặc các bản sao lưu hoàn tất.` : `Cancel run ${process.runId} of ${jobLabels[job.id]?.en ?? job.name}? Partial working files may remain. Schedules and completed backups stay unchanged.`)) return
       await cancelTask(cronJobSelector(job), process.runId)
-      setFeedback({ error: false, message: vi ? 'Đã yêu cầu hủy. Chờ tiến trình kết thúc rồi làm mới để xác nhận; chưa coi là hủy xong.' : 'Cancellation requested. Refresh after the process exits to confirm completion.' })
+      setFeedback({ error: false, message: vi ? 'Đã yêu cầu hủy. Chờ tiến trình kết thúc rồi làm mới để xác nhận; chưa coi là hủy xong.' : 'Cancellation requested. Wait for the process to exit, then refresh to confirm; cancellation is not yet complete.' })
       cron.reload()
     } catch (e) { setFeedback({ error: true, message: apiErrorMessage(e, vi ? 'Không hủy được.' : 'Could not cancel.') }) }
     finally { setRunningJob(null) }
@@ -246,7 +248,7 @@ export default function CronJobs({ lang }: { lang: Lang }) {
               : (vi ? 'Đã dọn dẹp aaPanel: không còn file backup cũ cần xóa.' : 'aaPanel cleanup complete: no old backup files to delete.'))
           : (vi
               ? `Đã gửi yêu cầu chạy "${name}". Hãy kiểm tra log sau khi tác vụ kết thúc.`
-              : `Started "${name}". Check its log after the job finishes.`),
+              : `Requested a run of "${name}". Check its log after the job finishes.`),
         error: false,
       })
       cron.reload()
@@ -272,11 +274,14 @@ export default function CronJobs({ lang }: { lang: Lang }) {
     if (!deleteJob || deletingJob || deleteStale || deleteRunning || cron.error || typeof deleteJob.enabled !== 'boolean') return
     setDeletingJob(true); setDeleteError(null); setFeedback(null)
     try {
-      const result = await deleteCronJob(cronJobSelector(deleteJob), deleteJob.schedule, deleteJob.enabled)
+      const result = await deleteCronSchedule(deleteJob)
       const name = jobLabels[deleteJob.id]?.[lang] ?? deleteJob.name
+      const refreshedJobs = result.jobs
+      if (refreshedJobs) cron.updateData(() => refreshedJobs)
       setFeedback({ error: false, message: vi
-        ? `Đã xóa lịch cron "${name}". Giữ nguyên script, log và backup. Bản dự phòng crontab: ${result.backupPath}`
-        : `Deleted the schedule for "${name}". Scripts, logs and backups are unchanged. Crontab recovery copy: ${result.backupPath}` })
+        ? (result.jobs ? `Đã xác nhận lịch cron "${name}" không còn trong danh sách. Giữ nguyên script, log và backup.` : `Đã xóa lịch cron "${name}". Giữ nguyên script, log và backup.${result.backupPath ? ` Bản dự phòng crontab: ${result.backupPath}` : ''}`)
+        : (result.jobs ? `Confirmed that the schedule for "${name}" is no longer listed. Scripts, logs and backups are unchanged.` : `Deleted the schedule for "${name}". Scripts, logs and backups are unchanged.${result.backupPath ? ` Crontab recovery copy: ${result.backupPath}` : ''}`) })
+      setDeleteError(null)
       setDeleteJob(null)
       cron.reload()
       window.dispatchEvent(new Event('force-refresh'))
@@ -326,7 +331,7 @@ export default function CronJobs({ lang }: { lang: Lang }) {
       <DriveConnection lang={lang} locked={mutating} onBusyChange={setDriveBusy} onConnected={() => { setStorageRevision(value => value + 1); cron.reload() }} />
       <div className="backup-task-editor-anchor"><BackupSystemSettings key={storageRevision} lang={lang} expanded={taskExpanded} onToggle={() => setTaskExpanded(!taskExpanded)} onReload={cron.reload} locked={driveBusy || transferBusy || importFile !== null || editingJob !== null || scriptJob !== null || runningJob !== null || deleteJob !== null || stateJob !== null} onStateChange={setStorage} onBusyChange={setStorageBusy}
         task={{ jobs: editorJobs, selectedId: selectedJobId, revision: editorRevision, loading: cron.loading, error: cron.error, onSelect: id => { setSelectedJobId(id); setEditorRevision(value => value + 1) }, onApplied: saved => { cron.updateData(current => applySavedCronSchedule(current, saved)); setEditorRevision(value => value + 1) } }} /></div>
-      {feedback && <div className={`cron-feedback backup-management-feedback ${feedback.error ? 'cron-feedback--error' : ''}`} role={feedback.error ? 'alert' : 'status'}>{feedback.message}</div>}
+      {feedback && <div className={`cron-feedback backup-management-feedback ${feedback.error ? 'cron-feedback--error' : ''}`} role={feedback.error ? 'alert' : 'status'}>{localizeMessage(feedback.message, lang)}</div>}
       <section className="cron-panel backup-task-panel" id="backup-tasks" aria-labelledby="backup-tasks-title">
         <div className="cron-panel-heading">
           <div>
@@ -367,7 +372,7 @@ export default function CronJobs({ lang }: { lang: Lang }) {
                       <strong>{jobLabels[job.id]?.[vi ? 'vi' : 'en'] ?? job.name}</strong>
                       {job.status === 'running' && <TaskProgress id={cronJobSelector(job)} lang={lang} />}
                     </td>
-                    <td role="cell" data-label={vi ? 'Trạng thái' : 'Status'}><button className={`cron-schedule-state ${job.enabled === true ? 'is-enabled' : job.enabled === false ? 'is-paused' : ''}`} type="button" disabled={mutating || !!cron.error || job.status === 'running' || typeof job.enabled !== 'boolean'} onClick={() => { setStateJob({ ...job }); setStateError(null) }} aria-label={`${job.enabled ? (vi ? 'Tạm dừng cron' : 'Pause cron') : (vi ? 'Bật cron' : 'Enable cron')}: ${jobLabels[job.id]?.[lang] ?? job.name}`} title={vi ? 'Trạng thái lịch tự động; bấm để bật/tạm dừng, không phải kết quả backup' : 'Automatic schedule state; click to enable/pause, not the backup result'}>{job.enabled === true ? <>{vi ? 'Đã bật' : 'Enabled'} <Play size={12} fill="currentColor" /></> : job.enabled === false ? <>{vi ? 'Tạm dừng' : 'Stopped'} <Pause size={12} fill="currentColor" /></> : (vi ? 'Chưa xác minh' : 'Unverified')}</button></td>
+                    <td role="cell" data-label={vi ? 'Trạng thái' : 'Status'}><button className={`cron-schedule-state ${job.enabled === true ? 'is-enabled' : job.enabled === false ? 'is-paused' : ''}`} type="button" disabled={mutating || !!cron.error || job.status === 'running' || typeof job.enabled !== 'boolean'} onClick={() => { setStateJob({ ...job }); setStateError(null) }} aria-label={`${job.enabled ? (vi ? 'Tạm dừng cron' : 'Pause cron') : (vi ? 'Bật cron' : 'Enable cron')}: ${jobLabels[job.id]?.[lang] ?? job.name}`} title={vi ? 'Trạng thái lịch tự động; bấm để bật/tạm dừng, không phải kết quả backup' : 'Automatic schedule state; click to enable/pause, not the backup result'}>{job.enabled === true ? <>{vi ? 'Đã bật' : 'Enabled'} <Play size={12} fill="currentColor" /></> : job.enabled === false ? <>{vi ? 'Tạm dừng' : 'Paused'} <Pause size={12} fill="currentColor" /></> : (vi ? 'Chưa xác minh' : 'Unverified')}</button></td>
                     <td role="cell" data-label={vi ? 'Lịch chạy' : 'Schedule'}>
                       <span>{formatCronSchedule(job.schedule, lang)}</span>
                     </td>
@@ -400,9 +405,9 @@ export default function CronJobs({ lang }: { lang: Lang }) {
 
       {editingJob && <BackupTaskEditDialog lang={lang} job={editingJob} jobs={jobs} loading={cron.loading} error={cron.error} busy={editingBusy} locked={storageBusy || runningJob !== null || deleteJob !== null || stateJob !== null} onBusyChange={setEditingBusy} onClose={closeEditor} onReload={cron.reload} onSaved={saved => { cron.updateData(current => applySavedCronSchedule(current, saved)); setEditingJob(null); setEditingBusy(false); setStorageRevision(value => value + 1); setFeedback({ error: false, message: vi ? 'Đã lưu thay đổi tác vụ.' : 'Task changes saved.' }); cron.reload() }} />}
 
-      {importFile && <CronImportDialog lang={lang} filename={importFile.filename} plan={importFile.plan} onClose={() => { if (!transferBusy) setImportFile(null) }} onBusyChange={setTransferBusy} onUpdated={refreshAfterImport} onSaved={count => { setImportFile(null); setFeedback({ error: false, message: vi ? `Đã nhập ${count} lịch Cron. Không chạy backup ngay.` : `Imported ${count} Cron schedules. No backup ran.` }) }} />}
+      {importFile && <CronImportDialog lang={lang} filename={importFile.filename} plan={importFile.plan} onClose={() => { if (!transferBusy) setImportFile(null) }} onBusyChange={setTransferBusy} onUpdated={refreshAfterImport} onSaved={count => { setImportFile(null); setFeedback({ error: false, message: vi ? `Đã nhập ${count} lịch Cron. Không chạy backup ngay.` : `Imported ${count} Cron schedules. No backup was started immediately.` }) }} />}
 
-      {scriptJob && <ScriptEditDialog job={scriptJob} lang={lang} running={!!cron.error || jobs.find(job => cronJobSelector(job) === cronJobSelector(scriptJob))?.status === 'running'} onClose={() => setScriptJob(null)} onSaved={path => { setFeedback({ error: false, message: vi ? `Đã lưu script. Không chạy tác vụ ngay. Bản dự phòng: ${path}` : `Script saved. No task ran. Recovery copy: ${path}` }); cron.reload() }} />}
+      {scriptJob && <ScriptEditDialog job={scriptJob} lang={lang} running={!!cron.error || jobs.find(job => cronJobSelector(job) === cronJobSelector(scriptJob))?.status === 'running'} onClose={() => setScriptJob(null)} onSaved={path => { setFeedback({ error: false, message: vi ? `Đã lưu script. Không chạy tác vụ ngay. Bản dự phòng: ${path}` : `Script saved. No task was started immediately. Recovery copy: ${path}` }); cron.reload() }} />}
 
       {stateJob && createPortal(<div className="cron-log-overlay backup-management" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeState() }}>
         <div className="cron-log-dialog cron-delete-dialog" ref={stateDialog} role="dialog" aria-modal="true" aria-labelledby="cron-state-title" aria-describedby="cron-state-description">
@@ -415,7 +420,7 @@ export default function CronJobs({ lang }: { lang: Lang }) {
               : (vi ? 'Khôi phục chạy tự động theo lịch đã lưu. Không chạy script ngay và không chạy bù các lần đã bỏ lỡ.' : 'Resume automatic runs on the saved schedule. This does not run the script now or catch up missed runs.')}</p>
             {stateStale && <p className="cron-log-error" role="alert">{vi ? 'Lịch hoặc trạng thái đã thay đổi. Hãy đóng và làm mới danh sách.' : 'The schedule or state changed. Close and refresh the list.'}</p>}
             {stateRunning && <p className="cron-log-error" role="alert">{vi ? 'Tác vụ đang chạy. Hãy chờ kết thúc rồi đổi trạng thái.' : 'The task is running. Wait for it to finish before changing the state.'}</p>}
-            {stateError && <p className="cron-log-error" role="alert">{stateError}</p>}
+            {stateError && <p className="cron-log-error" role="alert">{localizeMessage(stateError, lang)}</p>}
             {cron.error && <p className="cron-log-error" role="alert">{vi ? 'Không thể xác minh lịch hiện tại: ' : 'Could not verify the current schedule: '}{cron.error}</p>}
             <div className="backup-system-actions"><button className="backup-system-secondary" type="button" onClick={closeState} disabled={updatingState}>{vi ? 'Hủy' : 'Cancel'}</button><button className="backup-system-primary" type="button" onClick={() => { void handleState() }} disabled={updatingState || stateStale || stateRunning || !!cron.error}>{updatingState ? (vi ? 'Đang lưu...' : 'Saving...') : stateJob.enabled ? (vi ? 'Tạm dừng cron' : 'Pause cron') : (vi ? 'Bật cron' : 'Enable cron')}</button></div>
           </div>
@@ -429,9 +434,9 @@ export default function CronJobs({ lang }: { lang: Lang }) {
             <strong>{jobLabels[deleteJob.id]?.[lang] ?? deleteJob.name}</strong>
             <p>{formatCronSchedule(deleteJob.schedule, lang)} · {vi ? 'giờ máy chủ' : 'server time'}</p>
             <p id="cron-delete-description">{vi ? 'Chỉ xóa lịch chạy tự động của tác vụ này. Không xóa file script, log hoặc bản backup. Hệ thống lưu bản dự phòng crontab trước khi thay đổi.' : 'Only this automatic schedule is removed. Script files, logs and backups are kept. A recovery copy of the crontab is saved before changing it.'}</p>
-            {deleteStale && <p className="cron-log-error" role="alert">{vi ? 'Lịch đã thay đổi hoặc tác vụ không còn. Hãy đóng và làm mới danh sách.' : 'The schedule changed or the task is gone. Close and refresh the list.'}</p>}
+            {deleteStale && !deletingJob && !deleteError && <p className="cron-log-error" role="alert">{vi ? 'Lịch đã thay đổi hoặc tác vụ không còn. Hãy đóng và làm mới danh sách.' : 'The schedule changed or the task is gone. Close and refresh the list.'}</p>}
             {deleteRunning && <p className="cron-log-error" role="alert">{vi ? 'Tác vụ đang chạy. Hãy chờ kết thúc rồi xóa lịch.' : 'The task is running. Wait for it to finish before deleting the schedule.'}</p>}
-            {deleteError && <p className="cron-log-error" role="alert">{deleteError}</p>}
+            {deleteError && <p className="cron-log-error" role="alert">{localizeMessage(deleteError, lang)}</p>}
             {cron.error && <p className="cron-log-error" role="alert">{vi ? 'Không thể xác minh lịch hiện tại: ' : 'Could not verify the current schedule: '}{cron.error}</p>}
             <div className="backup-system-actions"><button className="backup-system-secondary" type="button" onClick={closeDelete} disabled={deletingJob}>{vi ? 'Hủy' : 'Cancel'}</button><button className="cron-delete-confirm" type="button" onClick={() => { void handleDelete() }} disabled={deletingJob || deleteStale || deleteRunning || !!cron.error}>{deletingJob ? (vi ? 'Đang xóa...' : 'Deleting...') : (vi ? 'Xóa lịch cron' : 'Delete schedule')}</button></div>
           </div>
@@ -454,7 +459,7 @@ export default function CronJobs({ lang }: { lang: Lang }) {
             </div>
             {!logLoading && !logError && logData?.exists && logData.content ? <CronLogTools key={`${cronJobSelector(logJob)}:${logRevision}`} jobId={logJob.id} selector={cronJobSelector(logJob)} content={logData.content} lang={lang} /> : <div className="cron-log-body" role="status">
               {logLoading ? (vi ? 'Đang đọc log...' : 'Loading log...')
-                : logError ? <span className="cron-log-error">{logError}</span>
+                : logError ? <span className="cron-log-error">{localizeMessage(logError, lang)}</span>
                   : !logData?.exists ? (vi ? 'Chưa có file log cho tác vụ này.' : 'No log file for this job yet.')
                     : displayedLog.content ? <pre>{displayedLog.content}</pre>
                       : displayedLog.hiddenAdvisories ? (vi ? 'Không còn dòng log khác sau khi ẩn cảnh báo bộ lọc cũ.' : 'No other log entries after hiding old filter advisories.')

@@ -23,6 +23,8 @@ export default function App() {
   const [isDark, setIsDark] = useState<boolean>(() => localStorage.getItem('isDarkMode') !== 'false')
   const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('language') === 'en' ? 'en' : 'vi'))
 
+  useEffect(() => { document.documentElement.lang = lang }, [lang])
+
   useEffect(() => {
     localStorage.setItem('dashboardLayoutVersion', 'apex-v1')
     localStorage.setItem('activeTab', activeTab)
@@ -53,7 +55,7 @@ export default function App() {
 
   // Chưa đăng nhập → hiển thị trang Login
   if (!token) {
-    return <Login isDark={isDark} onLogin={(t) => setToken(t)} />
+    return <Login isDark={isDark} lang={lang} onToggleLang={onToggleLang} onLogin={(t) => setToken(t)} />
   }
 
   const activePage = (() => {
@@ -76,8 +78,8 @@ export default function App() {
         return (
           <div className="animate-fade-in" style={{ padding: '40px', textAlign: 'center', color: isDark ? '#a0a0a0' : '#666' }}>
             <div style={{ fontSize: '48px', marginBottom: '20px' }}>🚧</div>
-            <h2 style={{ margin: '0 0 10px 0', color: isDark ? '#e0e0e0' : '#333' }}>Under Construction</h2>
-            <p>This module is currently not implemented in this demo.</p>
+            <h2 style={{ margin: '0 0 10px 0', color: isDark ? '#e0e0e0' : '#333' }}>{lang === 'vi' ? 'Đang phát triển' : 'Under construction'}</h2>
+            <p>{lang === 'vi' ? 'Chức năng này chưa được triển khai trong bản demo.' : 'This module is not yet implemented in this demo.'}</p>
           </div>
         )
     }

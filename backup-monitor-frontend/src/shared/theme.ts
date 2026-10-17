@@ -6,6 +6,9 @@ export interface Theme {
   readonly textPrimary: string
   readonly textSecondary: string
   readonly gridLine: string
+  readonly accentText: string
+  readonly primary: string
+  readonly onPrimary: string
   readonly successText: string
   readonly errorText: string
   readonly titleColor: string
@@ -14,14 +17,17 @@ export interface Theme {
 export function makeTheme(isDark: boolean): Theme {
   return {
     isDark,
-    bg: isDark ? '#090b0b' : '#f4f7f6',
-    cardBg: isDark ? '#151818' : '#ffffff',
-    cardBorder: isDark ? '#292e2d' : '#dde6e2',
-    textPrimary: isDark ? '#f1f5f3' : '#17211d',
-    textSecondary: isDark ? '#9aa6a1' : '#64746c',
-    gridLine: isDark ? '#262c29' : '#e8efeb',
+    bg: isDark ? '#0f141a' : '#f4f7fb',
+    cardBg: isDark ? '#151c24' : '#ffffff',
+    cardBorder: isDark ? '#2b3643' : '#dce4ee',
+    textPrimary: isDark ? '#f1f5fb' : '#182433',
+    textSecondary: isDark ? '#9baabd' : '#61738b',
+    gridLine: isDark ? '#273341' : '#e5edf6',
+    accentText: isDark ? '#60a5fa' : '#1d63ed',
+    primary: '#1d63ed',
+    onPrimary: '#ffffff',
     successText: isDark ? '#08c889' : '#008d62',
     errorText: isDark ? '#fb7185' : '#d5344e',
-    titleColor: isDark ? '#f7faf8' : '#15251d',
+    titleColor: isDark ? '#f7faff' : '#14243b',
   }
 }

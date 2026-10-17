@@ -11,9 +11,9 @@ export function backupSourceForTask(config: BackupSystemConfig, state: BackupSys
 }
 
 export const backupTaskLabels: Record<string, { vi: string; en: string }> = {
-  'cleanup-panel': { vi: 'Dọn dẹp thư mục panel', en: 'Clean up panel backups' },
-  'backup-site': { vi: 'Sao lưu website', en: 'Backup websites' },
-  'backup-database': { vi: 'Sao lưu cơ sở dữ liệu', en: 'Backup databases' },
+  'cleanup-panel': { vi: 'Dọn dẹp bản sao lưu aaPanel', en: 'Clean up aaPanel backups' },
+  'backup-site': { vi: 'Sao lưu website', en: 'Back up websites' },
+  'backup-database': { vi: 'Sao lưu cơ sở dữ liệu', en: 'Back up databases' },
   'backup-panel': { vi: 'Sao lưu cấu hình aaPanel', en: 'Back up aaPanel configuration' },
   'drive-sync': { vi: 'Đồng bộ Google Drive', en: 'Sync Google Drive' },
   'integrity-check': { vi: 'Kiểm tra số thư mục sao lưu', en: 'Check backup folder count' },
@@ -56,7 +56,7 @@ export type CronScheduleDraft = { instanceKey?: string; id: string; expectedSche
 
 export const cycleLabels = {
   current: { vi: 'Giữ chu kỳ hiện tại', en: 'Keep current recurrence' },
-  daily: { vi: 'Hằng ngày', en: 'Daily' }, days: { vi: 'Mỗi N ngày trong tháng', en: 'Every N calendar days' },
+  daily: { vi: 'Hằng ngày', en: 'Daily' }, days: { vi: 'Mỗi N ngày trong tháng', en: 'Every N days within each month' },
   hourly: { vi: 'Hằng giờ', en: 'Hourly' }, hours: { vi: 'Mỗi N giờ', en: 'Every N hours' },
   minutes: { vi: 'Mỗi N phút', en: 'Every N minutes' }, weekly: { vi: 'Hằng tuần', en: 'Weekly' }, monthly: { vi: 'Hằng tháng', en: 'Monthly' },
 }

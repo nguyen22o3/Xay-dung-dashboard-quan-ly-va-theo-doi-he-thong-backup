@@ -41,7 +41,7 @@ func storageReadRoute(route string) bool {
 }
 
 func refreshBackupSystemIfDue(read func() ([]byte, error), now time.Time) error {
-	if backupSystemLoaded.Load() && !lastBackupSystemRead.IsZero() && now.Sub(lastBackupSystemRead) < 30*time.Second {
+	if !backupSystemReadDue(now) {
 		return nil
 	}
 	data, err := read()
@@ -49,6 +49,11 @@ func refreshBackupSystemIfDue(read func() ([]byte, error), now time.Time) error 
 		return err
 	}
 	return acceptBackupSystemConfig(data)
+}
+
+// The caller holds backupSystemMutation for reading or writing.
+func backupSystemReadDue(now time.Time) bool {
+	return !backupSystemLoaded.Load() || lastBackupSystemRead.IsZero() || now.Sub(lastBackupSystemRead) >= 30*time.Second
 }
 
 func defaultBackupSystem() BackupSystemSettings {

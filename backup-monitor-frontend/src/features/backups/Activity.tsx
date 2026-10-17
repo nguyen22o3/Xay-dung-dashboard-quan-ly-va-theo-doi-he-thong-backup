@@ -1,3 +1,4 @@
+import { localizeMessage } from '../../shared/messages'
 import { Fragment, useState, useMemo, useRef } from 'react'
 import { Check, ChevronDown, X, Trash2 } from 'lucide-react'
 import type { Lang } from '../../shared/language'
@@ -77,7 +78,7 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
 
       {clearError && (
         <div role="alert" style={{ marginBottom: '12px', color: '#ef4444', fontSize: '13px' }}>
-          {clearError}
+          {localizeMessage(clearError, lang)}
         </div>
       )}
 

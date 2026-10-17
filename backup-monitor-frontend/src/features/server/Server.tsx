@@ -70,7 +70,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
     return arr
   }, [localSnapshots.data, last14Days])
 
-  const chartColors = ['#10b981', '#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6']
+  const chartColors = ['#3b82f6', '#38bdf8', '#f59e0b', '#ec4899', '#8b5cf6']
   
   const s = server.data ?? {}
   const websitesStatus = websites.data ?? []
@@ -210,7 +210,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                 <span style={{ fontSize: '24px', fontWeight: 'bold', color: theme.titleColor }}>{s.cpu ? `${cpuPercent.toFixed(1)}%` : '—'}</span>
               </div>
               <div style={{ width: '100%', background: theme.gridLine, height: '24px', borderRadius: '12px', overflow: 'hidden', marginBottom: '10px' }}>
-                <div style={{ width: `${cpuPercent}%`, background: cpuPercent >= 85 ? theme.errorText : theme.successText, height: '100%', transition: 'width 0.4s' }} />
+                <div style={{ width: `${cpuPercent}%`, background: cpuPercent >= 85 ? theme.errorText : theme.accentText, height: '100%', transition: 'width 0.4s' }} />
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: theme.textSecondary, fontSize: '12px' }}>
                 <span>{lang === 'vi' ? 'Đang dùng' : 'Used'}</span>
@@ -232,7 +232,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                     <span style={{ fontSize: '24px', fontWeight: 'bold', color: theme.titleColor }}>{s.ram.total}</span>
                   </div>
                   <div style={{ width: '100%', background: theme.gridLine, height: '24px', borderRadius: '12px', overflow: 'hidden', marginBottom: '10px' }}>
-                    <div style={{ width: `${ramPercent}%`, background: ramPercent >= 85 ? theme.errorText : theme.successText, height: '100%', transition: 'width 0.4s' }} />
+                    <div style={{ width: `${ramPercent}%`, background: ramPercent >= 85 ? theme.errorText : theme.accentText, height: '100%', transition: 'width 0.4s' }} />
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', color: theme.textSecondary, fontSize: '12px' }}>
                     <span>{lang === 'vi' ? 'Đã dùng' : 'Used'} ({ramPercent.toFixed(1)}%)</span>
@@ -256,7 +256,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                     <span style={{ fontSize: '24px', fontWeight: 'bold', color: theme.titleColor }}>{s.disk.total}</span>
                   </div>
                   <div style={{ width: '100%', background: theme.gridLine, height: '24px', borderRadius: '12px', overflow: 'hidden', marginBottom: '10px' }}>
-                    <div style={{ width: `${diskPercent}%`, background: diskPercent >= 85 ? theme.errorText : theme.successText, height: '100%', transition: 'width 0.4s' }} />
+                    <div style={{ width: `${diskPercent}%`, background: diskPercent >= 85 ? theme.errorText : theme.accentText, height: '100%', transition: 'width 0.4s' }} />
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', color: theme.textSecondary, fontSize: '12px' }}>
                     <span>{lang === 'vi' ? 'Đã dùng' : 'Used'} ({diskPercent.toFixed(1)}%)</span>

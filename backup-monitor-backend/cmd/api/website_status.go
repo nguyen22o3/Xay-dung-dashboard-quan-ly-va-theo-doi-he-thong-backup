@@ -11,7 +11,6 @@ import (
 )
 
 const websiteProbeTimeoutSeconds = 15
-const websiteSlowThresholdSeconds = 2
 const websiteDiscoveryCommand = `set -o pipefail
 find /www/wwwroot -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | LC_ALL=C sort`
 
@@ -47,10 +46,8 @@ func parseWebsiteProbe(name, output string) websiteProbeResult {
 	case exit != 0 || code == 0:
 		return result
 	case (code >= 200 && code < 400) || code == 401 || code == 403:
+		// Availability is independent of response speed; keep the timing as detail.
 		result.Status, result.Reason = "ONLINE", ""
-		if seconds >= websiteSlowThresholdSeconds {
-			result.Status, result.Reason = "SLOW", "slow_response"
-		}
 	default:
 		result.Status, result.Reason = "ERROR", "http_error"
 	}

@@ -87,20 +87,46 @@ dist-ssr/
 build/
 .cache/
 .vite/
-/.go-cache/
+.go-cache/
 /.backup-monitor-runtime/
 /.project-cleanup-*/
 *.exe
+*.test
 *.tsbuildinfo
+.eslintcache
+.stylelintcache
+.nyc_output/
 coverage/
 coverage.out
 coverage.html
 test-results/
 playwright-report/
+blob-report/
 __pycache__/
 .pytest_cache/
 .venv/
 venv/
+
+# Local backend binaries built without an extension.
+/backup-monitor-backend/backup-monitor-backend-linux-*
+/backup-monitor-backend/backup-manager
+/backup-monitor-backend/backup-manager-linux-*
+/backup-monitor-backend/backup-monitor-backend
+/backup-monitor-backend/api
+
+# Frontend-only local overrides and names previously ignored by its .gitignore.
+/backup-monitor-frontend/**/*.local
+/backup-monitor-frontend/**/node_modules
+/backup-monitor-frontend/**/dist
+/backup-monitor-frontend/**/dist-ssr
+/backup-monitor-frontend/**/.vscode
+
+# Keep the source checkout free of test files and generated test fixtures.
+*_test.go
+*.test.*
+*.spec.*
+tests/
+__tests__/
 
 # Downloaded Windows tools are local utilities, not application source.
 # Keep ops/rclone-COPYING.txt: it is required by the host-tools image.

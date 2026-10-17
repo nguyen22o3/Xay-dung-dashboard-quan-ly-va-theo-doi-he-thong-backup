@@ -1,3 +1,4 @@
+import { localizeMessage } from '../../shared/messages'
 import { backupTaskLabels, cronScheduleIsStale, cycleLabels, proposedCronSchedule } from './backupTasks'
 import type { CronScheduleDraft } from './backupTasks'
 import type { Lang } from '../../shared/language'
@@ -29,9 +30,9 @@ export default function BackupTaskForm({ lang, jobs, selected, draft, disabled, 
       <div className="apex-settings-field"><label htmlFor={`${idPrefix}backup-task-type`}>{vi ? 'Loại tác vụ (Task type)' : 'Task type'}</label><select id={`${idPrefix}backup-task-type`} value={selected.id} disabled={disabled || selectionLocked} onChange={event => onSelect(event.target.value)}>{choices.map(job => <option key={job.id} value={job.id}>{backupTaskLabels[job.id]?.[lang] ?? job.name}</option>)}</select></div>
       <div className="apex-settings-field"><label htmlFor={`${idPrefix}backup-task-script`}>{vi ? 'Script thực hiện' : 'Execution script'}</label>{scriptChoices ? <>
         <div className="backup-system-path"><input id={`${idPrefix}backup-task-script`} readOnly value={scriptChoices.value === '__stale__' ? (vi ? 'Script đã thay đổi — chọn lại' : 'Script changed — select again') : scriptChoices.options.find(option => option.selector === scriptChoices.value)?.path ?? scriptPath} spellCheck={false} /><button className="backup-system-secondary" type="button" disabled={disabled} onClick={scriptChoices.onOpen} aria-haspopup="dialog" aria-label={vi ? 'Chọn script trên AlmaLinux' : 'Choose an AlmaLinux script'} title={vi ? 'Chọn script' : 'Choose script'}><Folder size={16} aria-hidden="true" /></button></div>
-        {scriptChoices.error && <p className="backup-system-error" role="alert" style={{ gridColumn: '1 / -1', margin: 0 }}>{scriptChoices.error}</p>}
+        {scriptChoices.error && <p className="backup-system-error" role="alert" style={{ gridColumn: '1 / -1', margin: 0 }}>{localizeMessage(scriptChoices.error, lang)}</p>}
       </> : <input id={`${idPrefix}backup-task-script`} readOnly value={scriptPath} spellCheck={false} />}</div>
-      <div className="apex-settings-field"><label htmlFor={`${idPrefix}backup-task-cycle`}>{vi ? 'Chu kỳ thực hiện' : 'Execute cycle'}</label>
+      <div className="apex-settings-field"><label htmlFor={`${idPrefix}backup-task-cycle`}>{vi ? 'Chu kỳ thực hiện' : 'Recurrence'}</label>
         <div className="backup-task-cycle">
           <select id={`${idPrefix}backup-task-cycle`} disabled={locked} value={draft.cycle} onChange={event => onDraftChange({ cycle: event.target.value as CronScheduleDraft['cycle'] })}>{Object.entries(cycleLabels).filter(([key]) => key !== 'current' || draft.cycle === 'current').map(([key, label]) => <option key={key} value={key}>{label[lang]}</option>)}</select>
           {['days', 'hours', 'minutes'].includes(draft.cycle) && <div className="backup-time-unit"><input type="text" inputMode="numeric" maxLength={2} pattern="[0-9]{1,2}" aria-label={vi ? 'Khoảng cách chu kỳ' : 'Cycle interval'} value={draft.every} disabled={locked} onChange={event => { if (/^\d{0,2}$/.test(event.target.value)) onDraftChange({ every: event.target.value }) }} required /><span>{draft.cycle === 'days' ? (vi ? 'Ngày' : 'Days') : draft.cycle === 'hours' ? (vi ? 'Giờ' : 'Hours') : (vi ? 'Phút' : 'Minutes')}</span></div>}
@@ -46,7 +47,7 @@ export default function BackupTaskForm({ lang, jobs, selected, draft, disabled, 
       </div>
     </div>
     {(stale || error) && <div className="backup-task-editor-notes">
-      <p className="backup-system-error" role="alert">{error || (vi ? 'Lịch hoặc trạng thái trên máy chủ đã thay đổi. Tải lịch hiện tại trước khi xem trước.' : 'The server schedule or state changed. Reload the current schedule before previewing.')}</p>
+      <p className="backup-system-error" role="alert">{(error && localizeMessage(error, lang)) || (vi ? 'Lịch hoặc trạng thái trên máy chủ đã thay đổi. Tải lịch hiện tại trước khi xem trước.' : 'The server schedule or state changed. Reload the current schedule before previewing.')}</p>
       <button type="button" className="backup-system-secondary" disabled={disabled} onClick={onReset}>{vi ? 'Tải lịch hiện tại' : 'Reload current schedule'}</button>
     </div>}
   </div>

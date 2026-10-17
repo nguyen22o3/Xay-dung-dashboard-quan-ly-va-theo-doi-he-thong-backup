@@ -25,9 +25,10 @@ export function Button({
     '--app-border': theme.cardBorder,
     '--app-text': theme.textPrimary,
     '--app-muted': theme.textSecondary,
-    '--app-accent': theme.successText,
+    '--app-accent': theme.accentText,
+    '--app-primary': theme.primary,
     '--app-danger': theme.errorText,
-    '--app-on-accent': theme.isDark ? '#05291d' : '#ffffff',
+    '--app-on-accent': theme.onPrimary,
   } as CSSProperties : undefined
   return (
     <button

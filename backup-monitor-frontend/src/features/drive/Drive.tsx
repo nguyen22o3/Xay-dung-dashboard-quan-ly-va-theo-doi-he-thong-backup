@@ -111,7 +111,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
           { name: categoryLabel('database', lang), value: breakdownBytes.database },
           { name: categoryLabel('panel', lang), value: breakdownBytes.panel },
         ]
-  const PIE_COLORS = ['#4caf50', '#2196f3', '#ff9800']
+  const PIE_COLORS = ['#3b82f6', '#38bdf8', '#ff9800']
 
   // Parse History to get charts data
   let chartData: ChartDatum[] = []
@@ -190,7 +190,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
       <div style={{ margin: '0 -15px' }}>
         <div ref={containerRef} style={{ minHeight: '500px', width: '100%' }}>
           {mounted && containerWidth > 0 && (
-            <ErrorBoundary>
+            <ErrorBoundary lang={lang}>
               <Responsive
                 width={containerWidth}
                 className="layout"
@@ -253,8 +253,8 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                         </div>
                         <div style={{ flex: 1.5, fontSize: '12px' }}>
                           {[
-                            { label: categoryLabel('site', lang), value: breakdownBytes.site, color: '#4caf50' },
-                            { label: categoryLabel('database', lang), value: breakdownBytes.database, color: '#2196f3' },
+                            { label: categoryLabel('site', lang), value: breakdownBytes.site, color: '#3b82f6' },
+                            { label: categoryLabel('database', lang), value: breakdownBytes.database, color: '#38bdf8' },
                             { label: categoryLabel('panel', lang), value: breakdownBytes.panel, color: '#ff9800' },
                           ].map((item) => {
                             const pct = totalPieBytes > 0 ? Math.round((item.value / totalPieBytes) * 100) : 0
@@ -415,11 +415,11 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                           <Tooltip content={<ChartTooltip unit="bytes" palette={{ bg: theme.cardBg, border: theme.cardBorder, text: theme.textPrimary }} />} />
                           <defs>
                             <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor={theme.successText} stopOpacity={0.8} />
-                              <stop offset="95%" stopColor={theme.successText} stopOpacity={0.1} />
+                              <stop offset="5%" stopColor={theme.accentText} stopOpacity={0.8} />
+                              <stop offset="95%" stopColor={theme.accentText} stopOpacity={0.1} />
                             </linearGradient>
                           </defs>
-                          <Area type="monotone" dataKey="totalSize" stroke={theme.successText} strokeWidth={2} fill="url(#colorTotal)" />
+                          <Area type="monotone" dataKey="totalSize" stroke={theme.accentText} strokeWidth={2} fill="url(#colorTotal)" />
                         </AreaChart>
                       </ResponsiveContainer>
                     ) : (
@@ -455,7 +455,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                             contentStyle={{ backgroundColor: theme.cardBg, border: `1px solid ${theme.cardBorder}`, fontSize: '12px' }}
                             cursor={{ fill: theme.gridLine }}
                           />
-                          <Bar dataKey="success" stackId="a" fill={theme.successText} barSize={20} name={tr(lang, 'filesCount')} />
+                          <Bar dataKey="success" stackId="a" fill={theme.accentText} barSize={20} name={tr(lang, 'filesCount')} />
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
@@ -517,7 +517,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                           }}
                         >
                           <span>{lang === 'vi' ? 'Số ngày có bản sao lưu' : 'Days with backup files'}</span>
-                          <strong style={{ color: theme.successText }}>
+                          <strong style={{ color: theme.accentText }}>
                             {driveUnavailable || backupStatus.totalFolders == null ? '—' : backupStatus.totalFolders}
                           </strong>
                         </div>

@@ -1,3 +1,4 @@
+import { localizeMessage } from '../../shared/messages'
 import { Button } from '../../shared/ui'
 import { useMemo, useState } from 'react'
 import { CloudDownload, Info, RefreshCw } from 'lucide-react'
@@ -83,7 +84,7 @@ export default function Available({ isDark, lang }: { isDark: boolean; lang: Lan
 
       {(snapshots.error || downloadError) && (
         <div role="alert" style={{ marginBottom: '14px', padding: '10px 12px', border: '1px solid rgba(239,68,68,0.35)', borderRadius: '4px', color: '#ef4444', fontSize: '13px' }}>
-          {downloadError || (isVi ? `Không thể tải danh sách: ${snapshots.error}` : `Could not load backups: ${snapshots.error}`)}
+          {(downloadError && localizeMessage(downloadError, lang)) || (isVi ? `Không thể tải danh sách: ${snapshots.error}` : `Could not load backups: ${snapshots.error}`)}
         </div>
       )}
       {restoreFile && <RestorePanel key={restoreFile.path || snapshotKey(restoreFile)} file={restoreFile} lang={lang} close={() => setRestoreFile(null)} />}

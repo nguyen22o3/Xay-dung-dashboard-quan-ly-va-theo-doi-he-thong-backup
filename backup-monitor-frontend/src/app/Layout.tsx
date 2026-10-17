@@ -1,3 +1,4 @@
+import { localizeMessage } from '../shared/messages'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { Activity, ArrowUpRight, Archive, CalendarClock, Cloud, Database, LayoutDashboard, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Server, Settings, Sun, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -102,7 +103,7 @@ export default function Layout({ activeTab, onNavigate, isDark, onToggleDark, la
       <aside className={`app-sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
         <div className="app-brand">
           <span className="app-brand-mark"><Database size={22} strokeWidth={2.2} /></span>
-          <button className="app-collapse-button" type="button" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setCollapsed(!collapsed)}>
+          <button className="app-collapse-button" type="button" aria-label={collapsed ? (vi ? 'Mở rộng thanh bên' : 'Expand sidebar') : (vi ? 'Thu gọn thanh bên' : 'Collapse sidebar')} onClick={() => setCollapsed(!collapsed)}>
             {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </button>
           <button className="app-icon-button app-mobile-close" type="button" aria-label={vi ? 'Đóng menu' : 'Close menu'} onClick={() => setMobileOpen(false)}><X size={20} /></button>
@@ -148,7 +149,7 @@ export default function Layout({ activeTab, onNavigate, isDark, onToggleDark, la
             <button className="app-icon-button" type="button" onClick={onToggleDark} title={isDark ? (vi ? 'Giao diện sáng' : 'Light theme') : (vi ? 'Giao diện tối' : 'Dark theme')} aria-label={isDark ? (vi ? 'Giao diện sáng' : 'Light theme') : (vi ? 'Giao diện tối' : 'Dark theme')}>{isDark ? <Sun size={19} /> : <Moon size={19} />}</button>
           </div>
         </header>
-        {refreshError && <div className="app-global-error" role="alert">{refreshError}</div>}
+        {refreshError && <div className="app-global-error" role="alert">{localizeMessage(refreshError, lang)}</div>}
         <main className="app-content" ref={contentRef}>{children}</main>
       </div>
     </div>

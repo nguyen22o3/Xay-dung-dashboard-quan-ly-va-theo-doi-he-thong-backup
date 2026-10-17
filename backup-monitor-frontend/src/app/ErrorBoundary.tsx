@@ -1,8 +1,10 @@
 import React from 'react';
 import type { ReactNode } from 'react';
+import type { Lang } from '../shared/language';
 
 interface Props {
   children?: ReactNode;
+  lang: Lang;
 }
 
 interface State {
@@ -30,7 +32,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div style={{ padding: '20px', background: '#ffebee', color: '#c62828' }}>
-          <h2>Something went wrong.</h2>
+          <h2>{this.props.lang === 'vi' ? 'Đã xảy ra lỗi hiển thị.' : 'Something went wrong while displaying this page.'}</h2>
           <details style={{ whiteSpace: 'pre-wrap' }}>
             {this.state.error && this.state.error.toString()}
             <br />

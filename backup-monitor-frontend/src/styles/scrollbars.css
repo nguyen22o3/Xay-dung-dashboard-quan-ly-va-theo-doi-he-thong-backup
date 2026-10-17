@@ -1,12 +1,12 @@
 /* Shared native scrollbars for the page, widgets, tables and shell portals. */
 .app-shell {
   --ui-scrollbar-size: 10px;
-  --ui-scrollbar-thumb: #637e70;
+  --ui-scrollbar-thumb: #52657c;
   color-scheme: dark;
 }
 
 .app-shell[data-theme="light"] {
-  --ui-scrollbar-thumb: #7b9286;
+  --ui-scrollbar-thumb: #8c9caf;
   color-scheme: light;
 }
 

@@ -5,15 +5,18 @@
   --ui-control-radius: 9px;
   --ui-panel-radius: 16px;
   --app-card: #ffffff;
-  --app-border: #dde6e2;
-  --app-text: #17211d;
-  --app-muted: #64746c;
-  --app-accent: #008d62;
-  --app-soft-accent: rgba(0, 141, 98, .1);
+  --app-border: #dce4ee;
+  --app-text: #182433;
+  --app-muted: #61738b;
+  --app-accent: #1d63ed;
+  --app-primary: #1d63ed;
+  --app-soft-accent: rgba(29, 99, 237, .1);
+  --app-success: #008d62;
+  --app-soft-success: rgba(0, 141, 98, .1);
   --app-danger: #d5344e;
   --app-on-accent: #ffffff;
 }
-.app-shell { --app-danger: #fb7185; --app-on-accent: #05291d; }
+.app-shell { --app-danger: #fb7185; --app-on-accent: #ffffff; }
 .app-shell[data-theme="light"] { --app-danger: #d5344e; --app-on-accent: #ffffff; }
 
 :is(.ui-button, .legacy-tab-button, .legacy-secondary-button, .legacy-danger-button,
@@ -53,10 +56,10 @@
 }
 :is(.ui-button[data-variant="primary"], .ui-button[data-variant="success"],
     .backup-system-primary, .apex-settings-save, .app-topbar-primary) {
-  --control-bg: var(--app-accent);
+  --control-bg: var(--app-primary);
   --control-color: var(--app-on-accent);
-  --control-border: var(--app-accent);
-  --control-hover-bg: color-mix(in srgb, var(--app-accent) 88%, var(--app-text));
+  --control-border: var(--app-primary);
+  --control-hover-bg: color-mix(in srgb, var(--app-primary) 85%, #000);
   --control-hover-color: var(--app-on-accent);
   --control-hover-border: var(--control-hover-bg);
 }
@@ -163,7 +166,7 @@
   line-height: 1.4;
   white-space: nowrap;
 }
-.ui-status[data-tone="success"] { color: var(--app-accent); background: var(--app-soft-accent); }
+.ui-status[data-tone="success"] { color: var(--app-success); background: var(--app-soft-success); }
 .ui-status[data-tone="failed"] { color: var(--app-danger); background: color-mix(in srgb, var(--app-danger) 10%, var(--app-card)); }
 .ui-status[data-tone="warning"] { color: #9a6500; background: rgba(232, 163, 24, .12); }
 .app-shell[data-theme="dark"] .ui-status[data-tone="warning"] { color: #fbbf24; }
@@ -222,7 +225,7 @@
 .login-page { padding: 20px; }
 .login-page input { min-height: var(--ui-control-height); }
 .login-page input:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 3px; }
-.login-page[data-theme="dark"] { --app-accent: #08c889; }
+.login-page[data-theme="dark"] { --app-accent: #60a5fa; --app-primary: #1d63ed; }
 
 @media (max-width: 760px) {
   .app-topbar-primary, .overview-secondary-action { display: none; }
@@ -244,7 +247,7 @@
 }
 .task-progress { display: flex; flex-direction: column; gap: .3rem; min-width: 0; max-width: 24rem; padding-top: .5rem; }
 .task-progress span, .task-progress small { overflow-wrap: anywhere; white-space: normal; }
-.task-progress progress { width: 100%; height: .5rem; accent-color: var(--accent, #00b989); }
+.task-progress progress { width: 100%; height: .5rem; accent-color: var(--app-accent, #1d63ed); }
 .cron-table td > small { display: block; white-space: normal; overflow-wrap: anywhere; }
 
 .backup-task-cycle { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }

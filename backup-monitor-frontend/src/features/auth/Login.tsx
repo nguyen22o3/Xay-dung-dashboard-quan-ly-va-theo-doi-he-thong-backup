@@ -3,13 +3,17 @@ import { Database } from 'lucide-react'
 import { makeTheme } from '../../shared/theme'
 import { useEffect, useState } from 'react'
 import { apiErrorMessage, createAdministrator, fetchAuthStatus, login } from '../../api/dashboard'
+import { tr, type Lang } from '../../shared/language'
+import { localizeMessage } from '../../shared/messages'
 
 interface LoginProps {
   isDark: boolean
+  lang: Lang
+  onToggleLang: () => void
   onLogin: (token: string) => void
 }
 
-export default function Login({ isDark, onLogin }: LoginProps) {
+export default function Login({ isDark, lang, onToggleLang, onLogin }: LoginProps) {
   const theme = makeTheme(isDark)
   const { bg, cardBg, cardBorder, textPrimary, textSecondary } = theme
   const [username, setUsername] = useState('')
@@ -26,7 +30,7 @@ export default function Login({ isDark, onLogin }: LoginProps) {
     fetchAuthStatus().then(status => {
       if (mounted) setSetupRequired(status.setupRequired)
     }).catch(statusError => {
-      if (mounted) setError(apiErrorMessage(statusError, 'Không thể kiểm tra tài khoản. Vui lòng thử lại'))
+      if (mounted) setError(apiErrorMessage(statusError, tr('vi', 'accountStatusError')))
     }).finally(() => {
       if (mounted) setChecking(false)
     })
@@ -38,7 +42,7 @@ export default function Login({ isDark, onLogin }: LoginProps) {
     if (setupRequired === null || checking || loading) return
     setError('')
     if (setupRequired && (password !== confirmation || new TextEncoder().encode(password).length < 12 || new TextEncoder().encode(password).length > 72)) {
-      setError(password !== confirmation ? 'Mật khẩu xác nhận không khớp' : 'Mật khẩu cần từ 12 đến 72 byte')
+      setError(tr(lang, password !== confirmation ? 'passwordMismatch' : 'passwordLengthError'))
       return
     }
     setLoading(true)
@@ -52,7 +56,7 @@ export default function Login({ isDark, onLogin }: LoginProps) {
       localStorage.setItem('auth_token', token)
       onLogin(token)
     } catch (loginError: unknown) {
-      setError(apiErrorMessage(loginError, 'Không thể kết nối đến máy chủ'))
+      setError(apiErrorMessage(loginError, tr(lang, 'loginConnectionError'), lang))
       // Another tab may already have completed setup, or its response was lost.
       if (setupRequired) {
         try { setSetupRequired((await fetchAuthStatus()).setupRequired) } catch { /* Keep the current form; retry remains explicit. */ }
@@ -84,8 +88,8 @@ export default function Login({ isDark, onLogin }: LoginProps) {
           <div style={{
             width: 56,
             height: 56,
-            background: theme.successText,
-            color: isDark ? '#05291d' : '#ffffff',
+            background: theme.primary,
+            color: theme.onPrimary,
             borderRadius: 14,
             display: 'flex',
             alignItems: 'center',
@@ -96,18 +100,22 @@ export default function Login({ isDark, onLogin }: LoginProps) {
             <Database size={28} />
           </div>
           <h1 style={{ color: textPrimary, fontSize: 22, fontWeight: 700, margin: 0 }}>
-            {setupRequired ? 'Tạo quản trị viên' : 'Backup Monitor'}
+            {tr(lang, setupRequired ? 'setupTitle' : 'loginTitle')}
           </h1>
           <p style={{ color: textSecondary, fontSize: 14, marginTop: 6 }}>
-            {checking ? 'Đang kiểm tra tài khoản…' : setupRequired ? 'Thiết lập một tài khoản quản trị cho bản cài này' : 'Đăng nhập để tiếp tục'}
+            {tr(lang, checking ? 'checkingAccount' : setupRequired ? 'setupDescription' : 'loginDescription')}
           </p>
+          <div role="group" aria-label={lang === 'vi' ? 'Ngôn ngữ' : 'Language'} style={{ display: 'flex', justifyContent: 'center', gap: 8 }}>
+            <Button type="button" theme={theme} aria-pressed={lang === 'vi'} onClick={() => { if (lang !== 'vi') onToggleLang() }}>Tiếng Việt</Button>
+            <Button type="button" theme={theme} aria-pressed={lang === 'en'} onClick={() => { if (lang !== 'en') onToggleLang() }}>English</Button>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit}>
           {/* Username */}
           <div style={{ marginBottom: 16 }}>
             <label htmlFor="admin-username" style={{ display: 'block', color: textSecondary, fontSize: 13, marginBottom: 6, fontWeight: 500 }}>
-              Tên đăng nhập
+              {tr(lang, 'username')}
             </label>
             <input
               id="admin-username"
@@ -115,10 +123,10 @@ export default function Login({ isDark, onLogin }: LoginProps) {
               autoComplete="username"
               disabled={checking || setupRequired === null || loading}
               pattern={setupRequired ? '[a-zA-Z0-9][a-zA-Z0-9_.\\-]{2,63}' : undefined}
-              title={setupRequired ? '3–64 ký tự: chữ, số, dấu chấm, gạch dưới hoặc gạch ngang' : undefined}
+              title={setupRequired ? tr(lang, 'usernameHint') : undefined}
               value={username}
               onChange={e => setUsername(e.target.value)}
-              placeholder="Nhập tên đăng nhập"
+              placeholder={tr(lang, 'usernamePlaceholder')}
               required
               style={{
                 width: '100%',
@@ -137,7 +145,7 @@ export default function Login({ isDark, onLogin }: LoginProps) {
           {/* Password */}
           <div style={{ marginBottom: 24 }}>
             <label htmlFor="admin-password" style={{ display: 'block', color: textSecondary, fontSize: 13, marginBottom: 6, fontWeight: 500 }}>
-              Mật khẩu
+              {tr(lang, 'password')}
             </label>
             <input
               id="admin-password"
@@ -146,7 +154,7 @@ export default function Login({ isDark, onLogin }: LoginProps) {
               disabled={checking || setupRequired === null || loading}
               value={password}
               onChange={e => setPassword(e.target.value)}
-              placeholder="Nhập mật khẩu"
+              placeholder={tr(lang, 'passwordPlaceholder')}
               required
               style={{
                 width: '100%',
@@ -163,11 +171,11 @@ export default function Login({ isDark, onLogin }: LoginProps) {
           </div>
 
           {setupRequired && <div style={{ marginBottom: 24 }}>
-            <label htmlFor="admin-confirmation" style={{ display: 'block', color: textSecondary, fontSize: 13, marginBottom: 6, fontWeight: 500 }}>Nhập lại mật khẩu</label>
+            <label htmlFor="admin-confirmation" style={{ display: 'block', color: textSecondary, fontSize: 13, marginBottom: 6, fontWeight: 500 }}>{tr(lang, 'confirmPassword')}</label>
             <input id="admin-confirmation" type="password" autoComplete="new-password" required
               value={confirmation} onChange={e => setConfirmation(e.target.value)} disabled={loading}
               style={{ width: '100%', padding: '10px 14px', background: bg, border: `1px solid ${cardBorder}`, borderRadius: 8, color: textPrimary, fontSize: 14, boxSizing: 'border-box' }} />
-            <p style={{ color: textSecondary, fontSize: 12, lineHeight: 1.6 }}>Mật khẩu từ 12–72 byte. Tài khoản được lưu trong tệp riêng; cập nhật ứng dụng không làm mất tài khoản.</p>
+            <p style={{ color: textSecondary, fontSize: 12, lineHeight: 1.6 }}>{tr(lang, 'passwordHint')}</p>
           </div>}
 
           {/* Error */}
@@ -181,7 +189,7 @@ export default function Login({ isDark, onLogin }: LoginProps) {
               fontSize: 13,
               marginBottom: 16,
             }}>
-              <span role="alert">{error}</span>
+              <span role="alert">{localizeMessage(error, lang)}</span>
             </div>
           )}
 
@@ -189,7 +197,7 @@ export default function Login({ isDark, onLogin }: LoginProps) {
             setError('')
             setChecking(true)
             setStatusAttempt(value => value + 1)
-          }} style={{ width: '100%', marginBottom: 12 }}>Thử kết nối lại</Button>}
+          }} style={{ width: '100%', marginBottom: 12 }}>{tr(lang, 'retryConnection')}</Button>}
 
           {/* Submit */}
           <Button theme={theme} variant="primary"
@@ -197,7 +205,7 @@ export default function Login({ isDark, onLogin }: LoginProps) {
             disabled={loading || checking || setupRequired === null}
             style={{ width: '100%' }}
           >
-            {loading ? (setupRequired ? 'Đang tạo tài khoản…' : 'Đang đăng nhập…') : setupRequired ? 'Tạo tài khoản và đăng nhập' : 'Đăng nhập'}
+            {tr(lang, loading ? (setupRequired ? 'creatingAccount' : 'signingIn') : setupRequired ? 'createAndSignIn' : 'signIn')}
           </Button>
         </form>
       </div>

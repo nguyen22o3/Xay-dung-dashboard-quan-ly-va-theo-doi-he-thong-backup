@@ -1,5 +1,6 @@
+import { localizeMessage } from '../../shared/messages'
 import { useEffect, useState } from 'react'
-import { CheckCircle2, ChevronDown, CircleAlert, Cloud, FolderOpen, Hash, Languages, Mail, MessageCircle, Moon, Plus, Sun, Trash2 } from 'lucide-react'
+import { CheckCircle2, ChevronDown, CircleAlert, Cloud, Hash, Languages, Mail, MessageCircle, Moon, Plus, Sun, Trash2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { apiErrorMessage, fetchAlertSettings, saveAlertSettings } from '../../api/dashboard'
 import type { FolderRequest } from '../../api/backupSystem'
@@ -12,14 +13,14 @@ type Props = { isDark: boolean; onToggleDark: () => void; lang: Lang; onToggleLa
 type Channel = { id: ChannelId; title: string; vi: string; en: string; icon: LucideIcon }
 
 const channels: Channel[] = [
-  { id: 'telegram', title: 'Telegram', vi: 'Nhận thông báo qua Telegram', en: 'Receive alerts through a Telegram', icon: MessageCircle },
+  { id: 'telegram', title: 'Telegram', vi: 'Nhận thông báo qua Telegram', en: 'Receive alerts via Telegram', icon: MessageCircle },
   { id: 'discord', title: 'Discord', vi: 'Nhận thông báo qua kênh trên Discord', en: 'Deliver notifications to a channel through a webhook', icon: Hash },
   { id: 'email', title: 'Email', vi: 'Nhận thông báo qua Gmail SMTP', en: 'Send alerts through Gmail SMTP', icon: Mail },
 ]
 
 const tabs: { id: Section; vi: string; en: string }[] = [
-  { id: 'alerts', vi: 'Cảnh báo', en: 'Alerts' },
   { id: 'monitoring', vi: 'Giám sát', en: 'Monitoring' },
+  { id: 'alerts', vi: 'Cảnh báo', en: 'Alerts' },
   { id: 'appearance', vi: 'Giao diện', en: 'Appearance' },
 ]
 
@@ -27,7 +28,7 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
   const vi = lang === 'vi'
   const [section, setSection] = useState<Section>(() => {
     const saved = localStorage.getItem('settings-section')
-    return saved === 'alerts' || saved === 'monitoring' || saved === 'appearance' ? saved : 'alerts'
+    return saved === 'alerts' || saved === 'monitoring' || saved === 'appearance' ? saved : 'monitoring'
   })
   const [expanded, setExpanded] = useState<Record<ChannelId, boolean>>({ telegram: false, discord: false, email: false })
   const [telegramToken, setTelegramToken] = useState('')
@@ -67,7 +68,7 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
       .catch((error: unknown) => {
         if (!alive) return
         setMessageType('error')
-        setMessage(apiErrorMessage(error, 'Không thể tải cấu hình cảnh báo / Could not load alert settings.'))
+        setMessage(apiErrorMessage(error, 'Không thể tải cấu hình cảnh báo.'))
       })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
@@ -105,7 +106,7 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
   const saveFooter = <div className="apex-settings-footer">
     {message && <div className={`apex-settings-feedback ${messageType === 'error' ? 'is-error' : ''}`} role={messageType === 'error' ? 'alert' : 'status'}>
       {messageType === 'error' ? <CircleAlert size={16} /> : <CheckCircle2 size={16} />}
-      <span>{message}</span>
+      <span>{localizeMessage(message, lang)}</span>
     </div>}
   </div>
 
@@ -117,7 +118,7 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
   }
 
   return <div className="apex-settings-page animate-fade-in">
-    <header className="apex-settings-heading"><h1>{vi ? 'Cài đặt' : 'Settings'}</h1><p>{vi ? 'Quản lý cảnh báo, giám sát và giao diện.' : 'Manage alerts, monitoring, and appearance.'}</p></header>
+    <header className="apex-settings-heading"><h1>{vi ? 'Cài đặt' : 'Settings'}</h1><p>{vi ? 'Quản lý giám sát, cảnh báo và giao diện.' : 'Manage monitoring, alerts, and appearance.'}</p></header>
     <div className="apex-settings-tabs" role="tablist" aria-label={vi ? 'Nhóm cài đặt' : 'Settings sections'}>
       {tabs.map((tab) => <button key={tab.id} id={`settings-tab-${tab.id}`} role="tab" type="button" aria-controls={`settings-panel-${tab.id}`} aria-selected={section === tab.id} tabIndex={section === tab.id ? 0 : -1} className={section === tab.id ? 'is-active' : ''} onClick={() => selectSection(tab.id)} onKeyDown={(event) => {
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
@@ -155,21 +156,20 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
           </div>}
         </div>)}
       </div>
-      <div className="apex-settings-monitor-folders">
-        <div className="apex-settings-monitor-heading"><FolderOpen size={19} /><span><strong>{vi ? 'Thư mục backup cần giám sát trên máy chủ' : 'Server backup folders to monitor'}</strong><small>{vi ? 'Chỉ cảnh báo khi file backup bị xóa bất thường. Lưu thay đổi sẽ tự cập nhật và khởi động lại script giám sát.' : 'Alerts only for unexpected backup deletion. Saving automatically updates and restarts the monitoring script.'}</small></span></div>
-        <div className="apex-settings-monitor-list">{monitorPaths.map((folder) => <div className="apex-settings-monitor-path" key={folder}><code>{folder}</code><button type="button" aria-label={`${vi ? 'Bỏ theo dõi' : 'Stop monitoring'} ${folder}`} title={vi ? 'Bỏ theo dõi' : 'Stop monitoring'} disabled={loading || saving || toggling || monitorPaths.length === 1} onClick={() => setMonitorPaths((current) => current.filter((item) => item !== folder))}><Trash2 size={16} /></button></div>)}</div>
-        <button type="button" className="backup-system-secondary" disabled={loading || saving || toggling || monitorPaths.length >= 8} onClick={() => setFolderPickerRequest({ location: 'local', purpose: 'backup', path: monitorPaths[0] || '/' })}><Plus size={16} />{vi ? 'Chọn thêm thư mục' : 'Choose another folder'}</button>
-        <div className="apex-settings-channel-actions"><span /><button type="button" className="apex-settings-save" onClick={() => void save(enabled, 'form', undefined, 'monitor')} disabled={loading || saving || toggling}>{saving && !savingChannel ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu' : 'Save')}</button></div>
-      </div>
       {message && saveFooter}
       </section>
     </section>}
 
     {section === 'monitoring' && <section className="apex-settings-panel" role="tabpanel" id="settings-panel-monitoring" aria-labelledby="settings-tab-monitoring">
+      <div className="apex-settings-monitor-folders">
+        <div className="apex-settings-monitor-heading"><span><strong>{vi ? 'Thư mục backup cần giám sát trên máy chủ' : 'Server backup folders to monitor'}</strong><small>{vi ? 'Chỉ cảnh báo khi file backup bị xóa bất thường. Lưu thay đổi sẽ tự cập nhật và khởi động lại script giám sát.' : 'Alerts only for unexpected backup deletion. Saving automatically updates and restarts the monitoring script.'}</small></span></div>
+        <div className="apex-settings-monitor-list">{monitorPaths.map((folder) => <div className="apex-settings-monitor-path" key={folder}><code>{folder}</code><button type="button" aria-label={`${vi ? 'Bỏ theo dõi' : 'Stop monitoring'} ${folder}`} title={vi ? 'Bỏ theo dõi' : 'Stop monitoring'} disabled={loading || saving || toggling || monitorPaths.length === 1} onClick={() => setMonitorPaths((current) => current.filter((item) => item !== folder))}><Trash2 size={16} /></button></div>)}</div>
+        <button type="button" className="backup-system-secondary" disabled={loading || saving || toggling || monitorPaths.length >= 8} onClick={() => setFolderPickerRequest({ location: 'local', purpose: 'backup', path: monitorPaths[0] || '/' })}><Plus size={16} />{vi ? 'Chọn thêm thư mục' : 'Choose another folder'}</button>
+      </div>
       <div className="apex-settings-list">
         <div className="apex-settings-row"><span className="apex-settings-row-icon"><Cloud size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Giám sát bản sao lưu Google Drive — đặt số thư mục backup tối thiểu' : 'Google Drive backup monitoring — minimum backup folder count'}</strong><small>{vi ? 'Nếu Drive có ít hơn số này, hệ thống sẽ cảnh báo.' : 'The system warns you when Drive has fewer than this number.'}</small></span><input className="apex-settings-number" type="text" inputMode="numeric" pattern="[0-9]*" value={threshold} aria-label={vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folder count'} onChange={(event) => setThreshold(event.target.value === '' ? '' : Number(event.target.value.replace(/\D/g, '')))} /></div>
       </div>
-      <div className="apex-settings-channel-actions"><span /> <button type="button" className="apex-settings-save" onClick={() => void save()} disabled={loading || saving || toggling}>{saving ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu' : 'Save')}</button></div>
+      <div className="apex-settings-channel-actions"><span /> <button type="button" className="apex-settings-save" onClick={() => void save(enabled, 'form', undefined, 'monitor')} disabled={loading || saving || toggling}>{saving ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu' : 'Save')}</button></div>
       {message && saveFooter}
     </section>}
 

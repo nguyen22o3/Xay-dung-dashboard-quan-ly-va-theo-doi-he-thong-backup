@@ -1,3 +1,4 @@
+import { localizeMessage } from '../../shared/messages'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { FileCode, Folder, RefreshCw, Search, X } from 'lucide-react'
@@ -80,8 +81,8 @@ export default function ManagedScriptPicker({ vi, taskName, initialPath, options
         <label className={`managed-script-picker-file${selection === null ? ' is-selected' : ''}`}><input type="radio" name="managed-script-selection" checked={selection === null} disabled={loading} onChange={() => setSelection(null)} /><FileCode size={20} aria-hidden="true" /><span><strong>{vi ? 'Script mặc định' : 'Default script'}</strong><small>{vi ? 'Tạo script chuẩn nếu chưa có' : 'Create a standard script if missing'}</small></span></label>
       </div>
       {selection && <p className="managed-script-picker-selected">{vi ? 'Đã chọn: ' : 'Selected: '}<code>{selection.path}</code></p>}
-      {folderState.error && <p role="alert" className="backup-system-error">{folderState.error}</p>}
-      {error && <p role="alert" className="backup-system-error">{error}</p>}
+      {folderState.error && <p role="alert" className="backup-system-error">{localizeMessage(folderState.error, vi ? 'vi' : 'en')}</p>}
+      {error && <p role="alert" className="backup-system-error">{localizeMessage(error, vi ? 'vi' : 'en')}</p>}
       {!valid && !loading && <p role="alert" className="backup-system-error">{vi ? 'Script đã đổi hoặc không còn khả dụng; hãy chọn lại.' : 'The script changed or is no longer available; select again.'}</p>}
       <div className="backup-system-actions"><button type="button" className="backup-system-secondary" onClick={onClose}>{vi ? 'Hủy' : 'Cancel'}</button><button type="button" className="apex-settings-save" disabled={loading || !valid || (!!selection && !!error)} onClick={() => onChoose(selection?.selector ?? '')}>{vi ? 'Chọn script này' : 'Use this script'}</button></div>
     </div>

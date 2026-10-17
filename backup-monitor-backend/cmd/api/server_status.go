@@ -8,8 +8,7 @@ import (
 	"strings"
 )
 
-// Inventory and metrics use one resolved configuration and one SSH round-trip.
-// Do not pass this through shared-default rewriting a second time.
+// Metrics are read alongside the shared local inventory in readServerStatus.
 func serverStatusReadCommand() string {
 	return `DISK=$(df -h / | awk 'NR==2 {printf "{\"total\":\"%s\",\"used\":\"%s\",\"free\":\"%s\",\"usage\":\"%s\"}", $2, $3, $4, $5}')
 RAM=$(free -m | awk 'NR==2 {printf "{\"total\":\"%sMB\",\"used\":\"%sMB\",\"free\":\"%sMB\",\"usage\":\"%.1f%%\"}", $2, $3, $4, $3*100/$2}')
@@ -20,8 +19,6 @@ WEBSITES=$(find /www/wwwroot -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep 
 DATABASES=$(find /www/server/data -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -vE '/(mysql|performance_schema|sys|phpmyadmin)$' | wc -l)
 printf '__METRICS__\n'
 printf '{"server_time":"%s","disk":%s,"ram":%s,"cpu":"%s","uptime":"%s","websites":%s,"databases":%s}\n' "$SERVER_TIME" "$DISK" "$RAM" "$CPU" "$UPTIME" "$WEBSITES" "$DATABASES"
-printf '__LOCAL_INVENTORY__\n'
-` + configuredLocalInventoryCommand() + `
 printf '__CRONTAB__\n'
 crontab -l 2>/dev/null || true
 `
