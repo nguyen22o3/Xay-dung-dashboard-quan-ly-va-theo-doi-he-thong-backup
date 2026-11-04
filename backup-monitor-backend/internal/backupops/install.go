@@ -162,7 +162,7 @@ func (c *Controller) InstallPlan() ([]scriptChange, error) {
 				return nil, err
 			}
 		}
-		result = append(result, scriptChange{source, source, original, []byte(runtimeTemplate(updated))})
+		result = append(result, scriptChange{Source: source, Target: source, Original: original, Updated: []byte(runtimeTemplate(updated))})
 	}
 	return result, nil
 }

@@ -107,13 +107,13 @@ export interface LoginResponse {
 
 export interface AlertSettings {
   telegramChat: string
-  smtpEmail: string
   targetEmail: string
   threshold: number
   monitorPaths: string[]
   telegramConfigured: boolean
   discordConfigured: boolean
   smtpConfigured: boolean
+  smtpSenderConfigured?: boolean
   telegramEnabled?: boolean
   discordEnabled?: boolean
   smtpEnabled?: boolean
@@ -123,8 +123,6 @@ export interface AlertSettingsUpdate {
   telegramToken: string
   telegramChat: string
   discordWebhook: string
-  smtpEmail: string
-  smtpPassword: string
   targetEmail: string
   threshold: number
   monitorPaths: string[]

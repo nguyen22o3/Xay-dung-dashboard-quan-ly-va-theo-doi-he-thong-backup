@@ -14,6 +14,8 @@ services:
       CORS_ALLOWED_ORIGINS: "http://__DASHBOARD_HOST__:8090,http://localhost:8090,http://127.0.0.1:8090"
       ADMIN_ACCOUNT_FILE: /data/admin_account.json
       RESTORE_STATE_FILE: /data/restore_state.json
+      SMTP_EMAIL: "${SMTP_EMAIL:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
     volumes:
       - app-data:/data
       - /var/lib/backup-monitor-agent/run:/run/host-agent:ro,z

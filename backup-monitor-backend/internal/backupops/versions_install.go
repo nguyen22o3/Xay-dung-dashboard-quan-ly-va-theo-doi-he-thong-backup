@@ -129,7 +129,7 @@ func (c *Controller) DailyVersionsPlan() ([]scriptChange, error) {
 			}
 			after = strings.ReplaceAll(after, old, actual)
 			if after != string(before) {
-				plan = append(plan, scriptChange{p, p, before, []byte(after)})
+				plan = append(plan, scriptChange{Source: p, Target: p, Original: before, Updated: []byte(after)})
 			}
 			continue
 		}
@@ -138,7 +138,7 @@ func (c *Controller) DailyVersionsPlan() ([]scriptChange, error) {
 			return nil, err
 		}
 		if after != string(before) {
-			plan = append(plan, scriptChange{p, p, before, []byte(after)})
+			plan = append(plan, scriptChange{Source: p, Target: p, Original: before, Updated: []byte(after)})
 		}
 	}
 	return plan, nil

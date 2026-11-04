@@ -57,6 +57,8 @@ type AppConfig struct {
 	SSH              SSHSettings
 	HostAgent        *hostagent.Client
 	HostIdentity     string
+	SMTPEmail        string
+	SMTPPassword     string
 }
 
 type loginAttempt struct {
@@ -331,6 +333,10 @@ func parseCORSOrigins(raw string) ([]string, error) {
 }
 
 func loadConfigFromEnv() (AppConfig, error) {
+	smtpEmail, smtpPassword, err := loadSMTPSenderFromEnv()
+	if err != nil {
+		return AppConfig{}, err
+	}
 	mode := strings.TrimSpace(os.Getenv("HOST_CONNECTION_MODE"))
 	if mode == "" {
 		mode = "ssh"
@@ -372,7 +378,7 @@ func loadConfigFromEnv() (AppConfig, error) {
 		return AppConfig{}, err
 	}
 	cfg := AppConfig{JWTSecret: []byte(jwtSecret), APIBindAddr: bindAddr, CORSAllowOrigins: corsOrigins,
-		SSH: sshSettings, HostAgent: agent, HostIdentity: identity}
+		SSH: sshSettings, HostAgent: agent, HostIdentity: identity, SMTPEmail: smtpEmail, SMTPPassword: smtpPassword}
 	cfg.Account, err = initializeAdminAccount()
 	if err != nil {
 		return AppConfig{}, err
@@ -837,8 +843,8 @@ type AlertSettings struct {
 	TelegramToken   string   `json:"telegramToken"`
 	TelegramChat    string   `json:"telegramChat"`
 	DiscordWebhook  string   `json:"discordWebhook"`
-	SmtpEmail       string   `json:"smtpEmail"`
-	SmtpPassword    string   `json:"smtpPassword"`
+	SmtpEmail       string   `json:"smtpEmail,omitempty"`
+	SmtpPassword    string   `json:"smtpPassword,omitempty"`
 	TargetEmail     string   `json:"targetEmail"`
 	Threshold       int      `json:"threshold"`
 	MonitorPaths    []string `json:"monitorPaths,omitempty"`
@@ -848,17 +854,17 @@ type AlertSettings struct {
 }
 
 type AlertSettingsResponse struct {
-	TelegramChat       string   `json:"telegramChat"`
-	SmtpEmail          string   `json:"smtpEmail"`
-	TargetEmail        string   `json:"targetEmail"`
-	Threshold          int      `json:"threshold"`
-	MonitorPaths       []string `json:"monitorPaths"`
-	TelegramConfigured bool     `json:"telegramConfigured"`
-	DiscordConfigured  bool     `json:"discordConfigured"`
-	SmtpConfigured     bool     `json:"smtpConfigured"`
-	TelegramEnabled    bool     `json:"telegramEnabled"`
-	DiscordEnabled     bool     `json:"discordEnabled"`
-	SmtpEnabled        bool     `json:"smtpEnabled"`
+	TelegramChat         string   `json:"telegramChat"`
+	TargetEmail          string   `json:"targetEmail"`
+	Threshold            int      `json:"threshold"`
+	MonitorPaths         []string `json:"monitorPaths"`
+	TelegramConfigured   bool     `json:"telegramConfigured"`
+	DiscordConfigured    bool     `json:"discordConfigured"`
+	SmtpConfigured       bool     `json:"smtpConfigured"`
+	SmtpSenderConfigured bool     `json:"smtpSenderConfigured"`
+	TelegramEnabled      bool     `json:"telegramEnabled"`
+	DiscordEnabled       bool     `json:"discordEnabled"`
+	SmtpEnabled          bool     `json:"smtpEnabled"`
 }
 
 func alertChannelEnabled(value *bool, configured bool) bool {
@@ -913,20 +919,53 @@ var (
 	telegramChatRe  = regexp.MustCompile(`^(?:-?[0-9]{1,20}|@[A-Za-z0-9_]{5,32})$`)
 )
 
+func emailAlertConfigured(settings AlertSettings) bool {
+	return settings.SmtpEmail != "" && settings.SmtpPassword != "" && settings.TargetEmail != ""
+}
+
 func safeAlertSettings(settings AlertSettings) AlertSettingsResponse {
+	emailConfigured := emailAlertConfigured(settings)
 	return AlertSettingsResponse{
-		TelegramChat:       settings.TelegramChat,
-		SmtpEmail:          settings.SmtpEmail,
-		TargetEmail:        settings.TargetEmail,
-		Threshold:          settings.Threshold,
-		MonitorPaths:       effectiveMonitorPaths(settings),
-		TelegramConfigured: settings.TelegramToken != "",
-		DiscordConfigured:  settings.DiscordWebhook != "",
-		SmtpConfigured:     settings.SmtpPassword != "",
-		TelegramEnabled:    alertChannelEnabled(settings.TelegramEnabled, settings.TelegramToken != ""),
-		DiscordEnabled:     alertChannelEnabled(settings.DiscordEnabled, settings.DiscordWebhook != ""),
-		SmtpEnabled:        alertChannelEnabled(settings.SmtpEnabled, settings.SmtpPassword != ""),
+		TelegramChat:         settings.TelegramChat,
+		TargetEmail:          settings.TargetEmail,
+		Threshold:            settings.Threshold,
+		MonitorPaths:         effectiveMonitorPaths(settings),
+		TelegramConfigured:   settings.TelegramToken != "",
+		DiscordConfigured:    settings.DiscordWebhook != "",
+		SmtpConfigured:       emailConfigured,
+		SmtpSenderConfigured: settings.SmtpEmail != "" && settings.SmtpPassword != "",
+		TelegramEnabled:      alertChannelEnabled(settings.TelegramEnabled, settings.TelegramToken != ""),
+		DiscordEnabled:       alertChannelEnabled(settings.DiscordEnabled, settings.DiscordWebhook != ""),
+		SmtpEnabled:          alertChannelEnabled(settings.SmtpEnabled, emailConfigured),
 	}
+}
+
+// SMTP credentials belong to the deployment, not to a browser request. Keep
+// existing JSON credentials as a fallback until the operator configures env.
+func loadSMTPSenderFromEnv() (string, string, error) {
+	email := strings.TrimSpace(os.Getenv("SMTP_EMAIL"))
+	password := strings.ReplaceAll(os.Getenv("SMTP_PASSWORD"), " ", "")
+	if email == "" && password == "" {
+		return "", "", nil
+	}
+	if email == "" || password == "" {
+		return "", "", fmt.Errorf("configure SMTP_EMAIL and SMTP_PASSWORD together on the backend")
+	}
+	if validateEmailAddress(email) != nil {
+		return "", "", fmt.Errorf("invalid backend SMTP_EMAIL")
+	}
+	if strings.ContainsAny(password, "\x00\r\n") || len(password) > 1024 {
+		return "", "", fmt.Errorf("invalid backend SMTP_PASSWORD")
+	}
+	return email, password, nil
+}
+
+func effectiveAlertSettings(settings AlertSettings) AlertSettings {
+	if runtimeConfig.SMTPEmail != "" && runtimeConfig.SMTPPassword != "" {
+		settings.SmtpEmail = runtimeConfig.SMTPEmail
+		settings.SmtpPassword = runtimeConfig.SMTPPassword
+	}
+	return settings
 }
 
 func validateEmailAddress(value string) error {
@@ -989,8 +1028,16 @@ func validateAlertSettings(settings AlertSettings) error {
 			return fmt.Errorf("invalid target email")
 		}
 	}
-	if settings.SmtpPassword != "" && (settings.SmtpEmail == "" || settings.TargetEmail == "") {
-		return fmt.Errorf("SMTP sender and target email are required when SMTP is configured")
+	if (settings.SmtpEmail == "") != (settings.SmtpPassword == "") {
+		return fmt.Errorf("SMTP sender and password must be configured together on the backend")
+	}
+	if settings.SmtpEnabled != nil && *settings.SmtpEnabled {
+		if settings.SmtpEmail == "" || settings.SmtpPassword == "" {
+			return fmt.Errorf("Quản trị viên chưa cấu hình email gửi trên máy chủ")
+		}
+		if settings.TargetEmail == "" {
+			return fmt.Errorf("Nhập email nhận cảnh báo trước khi bật thông báo email")
+		}
 	}
 	return nil
 }
@@ -1029,9 +1076,10 @@ func mergeAlertSecrets(current, incoming AlertSettings) AlertSettings {
 	if strings.TrimSpace(incoming.DiscordWebhook) == "" {
 		incoming.DiscordWebhook = current.DiscordWebhook
 	}
-	if incoming.SmtpPassword == "" {
-		incoming.SmtpPassword = current.SmtpPassword
-	}
+	// Ignore legacy sender fields even if a client submits them. Only server
+	// configuration (or the existing on-disk fallback) may select the sender.
+	incoming.SmtpEmail = current.SmtpEmail
+	incoming.SmtpPassword = current.SmtpPassword
 	incoming.TelegramToken = strings.TrimSpace(incoming.TelegramToken)
 	incoming.TelegramChat = strings.TrimSpace(incoming.TelegramChat)
 	incoming.DiscordWebhook = strings.TrimSpace(incoming.DiscordWebhook)
@@ -1137,6 +1185,10 @@ func buildAlertScripts(settings AlertSettings) (string, string) {
 }
 
 func buildAlertScriptsForRoots(settings AlertSettings, roots []string) (string, string) {
+	return buildIntegrityAlertScript(settings, backupSystemSettings()), buildRealtimeAlertScript(settings, roots)
+}
+
+func buildRealtimeAlertScript(settings AlertSettings, roots []string) string {
 	quotedRoots := make([]string, 0, len(roots))
 	for _, root := range roots {
 		root = strings.TrimRight(root, "/")
@@ -1144,56 +1196,7 @@ func buildAlertScriptsForRoots(settings AlertSettings, roots []string) (string, 
 			quotedRoots = append(quotedRoots, activityShellQuote(root))
 		}
 	}
-	variables := fmt.Sprintf(`decode_value() { printf '%%s' "$1" | base64 -d; }
-DISCORD_WEBHOOK=$(decode_value '%s')
-TELEGRAM_TOKEN=$(decode_value '%s')
-TELEGRAM_CHAT=$(decode_value '%s')
-SMTP_EMAIL=$(decode_value '%s')
-SMTP_PASSWORD=$(decode_value '%s')
-TARGET_EMAIL=$(decode_value '%s')`,
-		encodeForShell(settings.DiscordWebhook),
-		encodeForShell(settings.TelegramToken),
-		encodeForShell(settings.TelegramChat),
-		encodeForShell(settings.SmtpEmail),
-		encodeForShell(settings.SmtpPassword),
-		encodeForShell(settings.TargetEmail),
-	)
-	if alertChannelEnabled(settings.DiscordEnabled, settings.DiscordWebhook != "") {
-		variables += "\nDISCORD_ENABLED=1"
-	} else {
-		variables += "\nDISCORD_ENABLED=0"
-	}
-	if alertChannelEnabled(settings.TelegramEnabled, settings.TelegramToken != "") {
-		variables += "\nTELEGRAM_ENABLED=1"
-	} else {
-		variables += "\nTELEGRAM_ENABLED=0"
-	}
-	if alertChannelEnabled(settings.SmtpEnabled, settings.SmtpPassword != "") {
-		variables += "\nSMTP_ENABLED=1"
-	} else {
-		variables += "\nSMTP_ENABLED=0"
-	}
-
-	integrityScript := fmt.Sprintf(`#!/bin/bash
-set -u
-%s
-if ! BACKUP_DIRS=$(/usr/bin/rclone lsd gdrive:Backup/ --config /root/.config/rclone/rclone.conf); then
-    echo "[$(date '+%%F %%T')] Không thể đọc Google Drive; chưa xác nhận số thư mục" >&2
-    exit 1
-fi
-BACKUP_COUNT=$(printf '%%s\n' "$BACKUP_DIRS" | sed '/^$/d' | wc -l)
-echo "[$(date '+%%F %%T')] Da kiem tra Drive: $BACKUP_COUNT thu muc Backup"
-if [ "$BACKUP_COUNT" -lt %d ]; then
-    MSG="CANH BAO THIEU THU MUC BACKUP: Google Drive hien co $BACKUP_COUNT/%d thu muc. Vui long kiem tra!"
-	echo "[$(date '+%%F %%T')] CẢNH BÁO: $MSG"
-    if [ "$DISCORD_ENABLED" = 1 ] && [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$MSG\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
-    if [ "$TELEGRAM_ENABLED" = 1 ] && [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$MSG" >/dev/null; fi
-    if [ "$SMTP_ENABLED" = 1 ] && [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [ALERT] Backup Monitor\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$MSG" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
-    exit 1
-fi
-exit 0`, variables, settings.Threshold, settings.Threshold)
-
-	realtimeScript := fmt.Sprintf(`#!/bin/bash
+	return fmt.Sprintf(`#!/bin/bash
 set -u
 %s
 %s
@@ -1208,7 +1211,7 @@ if (( ${#WATCH_ROOTS[@]} == 0 )); then
 fi
 send_delete_alert() {
     local file="$1" msg
-    msg="BAO DONG KHAN CAP: File backup [$file] vua bi XOA khoi may chu! Thoi gian: $(date)"
+    msg="THONG BAO: File backup [$file] vua bi XOA khoi may chu! Thoi gian: $(date)"
     if [ "$DISCORD_ENABLED" = 1 ] && [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$msg\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
     if [ "$TELEGRAM_ENABLED" = 1 ] && [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$msg" >/dev/null; fi
     if [ "$SMTP_ENABLED" = 1 ] && [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [URGENT] File Deleted\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$msg" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
@@ -1263,12 +1266,65 @@ do
     fi
 
     send_delete_alert "$FILE"
- done`, variables, rotationDecisionShell, strings.Join(quotedRoots, " "), localRetentionCopies)
-
-	return configuredBackupCommand(integrityScript), realtimeScript
+ done`, alertScriptVariables(settings), rotationDecisionShell, strings.Join(quotedRoots, " "), localRetentionCopies)
 }
 
-func buildAlertInstallCommand(integrityScript, realtimeScript string, monitorPaths []string) string {
+func alertScriptVariables(settings AlertSettings) string {
+	variables := fmt.Sprintf(`decode_value() { printf '%%s' "$1" | base64 -d; }
+DISCORD_WEBHOOK=$(decode_value '%s')
+TELEGRAM_TOKEN=$(decode_value '%s')
+TELEGRAM_CHAT=$(decode_value '%s')
+SMTP_EMAIL=$(decode_value '%s')
+SMTP_PASSWORD=$(decode_value '%s')
+TARGET_EMAIL=$(decode_value '%s')`,
+		encodeForShell(settings.DiscordWebhook),
+		encodeForShell(settings.TelegramToken),
+		encodeForShell(settings.TelegramChat),
+		encodeForShell(settings.SmtpEmail),
+		encodeForShell(settings.SmtpPassword),
+		encodeForShell(settings.TargetEmail),
+	)
+	if alertChannelEnabled(settings.DiscordEnabled, settings.DiscordWebhook != "") {
+		variables += "\nDISCORD_ENABLED=1"
+	} else {
+		variables += "\nDISCORD_ENABLED=0"
+	}
+	if alertChannelEnabled(settings.TelegramEnabled, settings.TelegramToken != "") {
+		variables += "\nTELEGRAM_ENABLED=1"
+	} else {
+		variables += "\nTELEGRAM_ENABLED=0"
+	}
+	if alertChannelEnabled(settings.SmtpEnabled, emailAlertConfigured(settings)) {
+		variables += "\nSMTP_ENABLED=1"
+	} else {
+		variables += "\nSMTP_ENABLED=0"
+	}
+	return variables
+}
+
+func buildIntegrityAlertScript(settings AlertSettings, cfg BackupSystemSettings) string {
+	return fmt.Sprintf(`#!/bin/bash
+set -u
+%s
+if ! BACKUP_DIRS=$(/usr/bin/rclone lsd %s --config %s); then
+    echo "[$(date '+%%F %%T')] Không thể đọc Google Drive; chưa xác nhận số thư mục" >&2
+    exit 1
+fi
+BACKUP_COUNT=$(printf '%%s\n' "$BACKUP_DIRS" | sed '/^$/d' | wc -l)
+echo "[$(date '+%%F %%T')] Da kiem tra Drive: $BACKUP_COUNT thu muc Backup"
+if [ "$BACKUP_COUNT" -lt %d ]; then
+    MSG="CANH BAO THIEU THU MUC BACKUP: Google Drive hien co $BACKUP_COUNT/%d thu muc. Vui long kiem tra!"
+	echo "[$(date '+%%F %%T')] CẢNH BÁO: $MSG"
+    if [ "$DISCORD_ENABLED" = 1 ] && [ -n "$DISCORD_WEBHOOK" ]; then curl -fsS -H "Content-Type: application/json" --data "{\"content\":\"$MSG\"}" "$DISCORD_WEBHOOK" >/dev/null; fi
+    if [ "$TELEGRAM_ENABLED" = 1 ] && [ -n "$TELEGRAM_TOKEN" ]; then curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" --data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$MSG" >/dev/null; fi
+    if [ "$SMTP_ENABLED" = 1 ] && [ -n "$SMTP_PASSWORD" ]; then printf 'From: %%s\nTo: %%s\nSubject: [ALERT] Backup Monitor\n\n%%s\n' "$SMTP_EMAIL" "$TARGET_EMAIL" "$MSG" | curl -fsS --url 'smtps://smtp.gmail.com:465' --ssl-reqd --mail-from "$SMTP_EMAIL" --mail-rcpt "$TARGET_EMAIL" --user "$SMTP_EMAIL:$SMTP_PASSWORD" -T - >/dev/null; fi
+    exit 1
+fi
+exit 0`, alertScriptVariables(settings), activityShellQuote(cfg.DriveRemote+":"+strings.TrimRight(cfg.DriveFolder, "/")+"/"),
+		activityShellQuote(remoteInstallation().RcloneConfig), settings.Threshold, settings.Threshold)
+}
+
+func buildAlertInstallCommand(integrityScript, realtimeScript string, monitorPaths []string, updates ...alertScriptUpdate) string {
 	quotedPaths := make([]string, 0, len(monitorPaths))
 	for _, selected := range monitorPaths {
 		quotedPaths = append(quotedPaths, activityShellQuote(selected))
@@ -1284,24 +1340,38 @@ SCRIPTS_DIR=/root/scripts
 [ ! -L "$SCRIPTS_DIR" ] || { printf 'Scripts directory must not be a symlink\n' >&2; exit 1; }
 install -d -m 700 "$SCRIPTS_DIR"
 [ "$(stat -c '%%u' "$SCRIPTS_DIR")" = 0 ] || { printf 'Scripts directory must be root-owned\n' >&2; exit 1; }
-INTEGRITY_TMP=$(mktemp "$SCRIPTS_DIR/.check_integrity.XXXXXXXX")
-REALTIME_TMP=$(mktemp "$SCRIPTS_DIR/.realtime_monitor.XXXXXXXX")
-trap 'rm -f -- "$INTEGRITY_TMP" "$REALTIME_TMP"' EXIT
-printf '%%s' '%s' | base64 -d > "$INTEGRITY_TMP"
-printf '%%s' '%s' | base64 -d > "$REALTIME_TMP"
-chmod 600 "$INTEGRITY_TMP" "$REALTIME_TMP"
-bash -n "$INTEGRITY_TMP" "$REALTIME_TMP"
-mv -f -- "$INTEGRITY_TMP" "$SCRIPTS_DIR/check_integrity.sh"
-mv -f -- "$REALTIME_TMP" "$SCRIPTS_DIR/realtime_monitor.sh"
 exec 8>/root/.backup-monitor-crontab.lock
 flock -x 8
 CURRENT_CRON=$(crontab -l 2>/dev/null || true)
-UPDATED_CRON=$(printf '%%s\n' "$CURRENT_CRON" | grep -v 'realtime_monitor.sh' || true)
-if ! printf '%%s\n' "$CURRENT_CRON" | awk 'NF >= 7 && $1 !~ /^#/ && $6 == "/bin/bash" && $7 == "/root/scripts/check_integrity.sh" {found=1} END {exit !found}'; then
-  UPDATED_CRON="$UPDATED_CRON
-0 12 * * * /bin/bash /root/scripts/check_integrity.sh >> /root/check_integrity.log 2>&1"
-fi
-printf '%%s\n' "$UPDATED_CRON" '@reboot nohup /bin/bash /root/scripts/realtime_monitor.sh >/dev/null 2>&1 &' | crontab -
+STAGED_FILES=()
+SCRIPT_TARGETS=()
+trap 'if (( ${#STAGED_FILES[@]} )); then rm -f -- "${STAGED_FILES[@]}"; fi' EXIT
+stage_alert_script() {
+  local target="$1" content="$2" required="$3" dir tmp
+  dir=$(dirname -- "$target")
+  [ -d "$dir" ] && [ "$(realpath -e -- "$dir")" = "$dir" ] && [ "$(stat -c '%%u' "$dir")" = 0 ] || { printf 'Invalid scripts directory\n' >&2; return 1; }
+  [ ! -L "$target" ] || { printf 'Script must not be a symlink\n' >&2; return 1; }
+  if [ -e "$target" ]; then
+    [ -f "$target" ] && [ "$(stat -c '%%u' "$target")" = 0 ] || { printf 'Script must be a root-owned regular file\n' >&2; return 1; }
+  elif [ "$required" = 1 ]; then
+    printf 'Scheduled integrity-check script is missing; restore it in Cron before saving settings\n' >&2
+    return 1
+  fi
+  tmp=$(mktemp "$dir/.alert-script.XXXXXXXX")
+  STAGED_FILES+=("$tmp")
+  SCRIPT_TARGETS+=("$target")
+  printf '%%s' "$content" | base64 -d > "$tmp"
+  chmod 600 "$tmp"
+  bash -n "$tmp"
+}
+stage_alert_script "$SCRIPTS_DIR/check_integrity.sh" '%s' 0
+stage_alert_script "$SCRIPTS_DIR/realtime_monitor.sh" '%s' 0
+%s
+# Publish only after every selected script has passed validation. Never write
+# crontab here: schedules (including @reboot) belong to installation/Cron.
+for ((i = 0; i < ${#STAGED_FILES[@]}; i++)); do
+  mv -f -- "${STAGED_FILES[$i]}" "${SCRIPT_TARGETS[$i]}"
+done
 flock -u 8
 exec 8>&-
 OLD_MONITORS=$(pgrep -f '%s' || true)
@@ -1318,7 +1388,7 @@ for attempt in 1 2 3 4 5; do
 done
 printf 'Previous backup monitor still holds the lock\n' >&2
 exit 1
-`, strings.Join(quotedPaths, " "), encodeForShell(integrityScript), encodeForShell(realtimeScript), "^(/bin/)?bash ("+regexp.QuoteMeta(configuredScript("realtime_monitor.sh"))+"|/root/(scripts/)?realtime_monitor[.]sh)$")
+`, strings.Join(quotedPaths, " "), encodeForShell(integrityScript), encodeForShell(realtimeScript), stageIntegrityAlertUpdates(updates), "^(/bin/)?bash ("+regexp.QuoteMeta(configuredScript("realtime_monitor.sh"))+"|/root/(scripts/)?realtime_monitor[.]sh)$")
 }
 
 var runJobSSHCommand = executeSSHCommand
@@ -1982,7 +2052,7 @@ fi
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể đọc cấu hình cảnh báo"})
 				return
 			}
-			c.JSON(http.StatusOK, safeAlertSettings(settings))
+			c.JSON(http.StatusOK, safeAlertSettings(effectiveAlertSettings(settings)))
 		})
 
 		auth.POST("/alert-settings", func(c *gin.Context) {
@@ -1997,14 +2067,15 @@ fi
 				return
 			}
 			settings := mergeAlertSecrets(current, incoming)
-			if err := validateAlertSettings(settings); err != nil {
+			effective := effectiveAlertSettings(settings)
+			if err := validateAlertSettings(effective); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
 
-			integrityScript, realtimeScript := buildAlertScripts(settings)
+			integrityScript, realtimeScript := buildAlertScripts(effective)
 
-			if _, err := executeSSHCommand(buildAlertInstallCommand(integrityScript, realtimeScript, effectiveMonitorPaths(settings))); err != nil {
+			if _, err := executeSSHCommand(buildAlertInstallCommand(integrityScript, realtimeScript, effectiveMonitorPaths(settings), integrityAlertScriptUpdates(effective)...)); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
@@ -2020,7 +2091,7 @@ fi
 			}
 
 			invalidate("cron-jobs", "server-status")
-			c.JSON(http.StatusOK, safeAlertSettings(settings))
+			c.JSON(http.StatusOK, safeAlertSettings(effective))
 		})
 
 		auth.POST("/refresh", func(c *gin.Context) {

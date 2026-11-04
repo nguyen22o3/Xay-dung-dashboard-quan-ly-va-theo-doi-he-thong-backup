@@ -258,7 +258,7 @@ func (c *Controller) cleanArchiveNamesPlan() (nameMigrationPlan, error) {
 			return p, err
 		}
 		if after != string(before) {
-			p.Scripts = append(p.Scripts, scriptChange{path, path, before, []byte(after)})
+			p.Scripts = append(p.Scripts, scriptChange{Source: path, Target: path, Original: before, Updated: []byte(after)})
 		}
 	}
 	return p, nil

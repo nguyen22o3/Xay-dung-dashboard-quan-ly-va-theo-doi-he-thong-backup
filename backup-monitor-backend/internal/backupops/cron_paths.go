@@ -176,6 +176,40 @@ func privateRunner(global, local Settings) []byte {
 	// state are private to this cron. No credentials are written into wrappers.
 	return []byte(Rewrite(ScheduledRunner(local), [][2]string{{logPath(local, "backup-monitor-runs.log"), logPath(global, "backup-monitor-runs.log")}}))
 }
+
+// replaceableCronTarget permits an edit to take over a stale private-cron
+// script only. Creation always remains exclusive. The file must be a safe,
+// root-owned executable regular file and no current (including paused) cron
+// entry may reference it.
+func replaceableCronTarget(cron []byte, target string) ([]byte, error) {
+	if err := SafeParents(target); err != nil {
+		return nil, errors.New("Script đích không an toàn")
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || !privateRootOwned(info) || info.Mode().Perm()&0100 == 0 || info.Size() > MaxScriptBytes {
+		return nil, errors.New("Script đích không an toàn; chỉ ghi đè tệp script riêng do root sở hữu")
+	}
+	for _, line := range strings.Split(string(cron), "\n") {
+		body := strings.TrimSpace(strings.TrimPrefix(line, pausedSchedulePrefix))
+		if body == "" || strings.HasPrefix(body, "#") {
+			continue
+		}
+		for _, field := range strings.Fields(body) {
+			if field == target {
+				return nil, errors.New("Script đích đang được cron khác sử dụng; không thể ghi đè")
+			}
+		}
+	}
+	data, err := readRegular(target)
+	if err != nil || len(data) > MaxScriptBytes {
+		return nil, errors.New("Không đọc được script đích để tạo bản dự phòng")
+	}
+	return data, nil
+}
+
 func (c *Controller) updatePrivateScripts(p *Proposal) error {
 	keys := []string{}
 	for key := range p.Old.CronLocations {
@@ -206,7 +240,7 @@ func (c *Controller) updatePrivateScripts(p *Proposal) error {
 				}
 				updated = []byte(patched)
 			}
-			p.Scripts = append(p.Scripts, scriptChange{source, scriptPath(next, name), data, updated})
+			p.Scripts = append(p.Scripts, scriptChange{Source: source, Target: scriptPath(next, name), Original: data, Updated: updated})
 		}
 	}
 	return nil
@@ -331,8 +365,23 @@ func (c *Controller) cronProposal(r Request) (*Proposal, error) {
 			if selectedScript != nil && name == TaskScripts[change.ID] {
 				source, fromSettings = selectedScript.Path, selectedSettings
 			}
-			if SafeParents(target) != nil || (source != target && exists(target)) {
-				return nil, errors.New("Script đích đã tồn tại hoặc không an toàn")
+			var targetOriginal []byte
+			targetExisted := false
+			if err := SafeParents(target); err != nil {
+				return nil, errors.New("Script đích không an toàn")
+			}
+			if source != target && exists(target) {
+				// Only an existing private cron may replace an orphaned script
+				// while its directories are being moved. New schedules remain
+				// create-only, so they cannot overwrite another task's file.
+				if change.Create || change.InstanceKey == "" || !moved {
+					return nil, errors.New("Script đích đã tồn tại; chỉ cron đang sửa mới được ghi đè script cũ khi đổi thư mục")
+				}
+				targetOriginal, err = replaceableCronTarget(p.Cron, target)
+				if err != nil {
+					return nil, err
+				}
+				targetExisted = true
 			}
 			original, readErr := readRegular(source)
 			if selectedScript != nil && name == TaskScripts[change.ID] {
@@ -373,7 +422,7 @@ func (c *Controller) cronProposal(r Request) (*Proposal, error) {
 				p.Scripts = filtered
 			}
 			// Keep clones before source-path entries in the transactional plan.
-			p.Scripts = append([]scriptChange{{source, target, original, data}}, p.Scripts...)
+			p.Scripts = append([]scriptChange{{Source: source, Target: target, Original: original, Updated: data, TargetOriginal: targetOriginal, TargetExistedBeforePreview: targetExisted}}, p.Scripts...)
 			planned[target] = true
 		}
 		logName, _ := taskLogName(change.ID)

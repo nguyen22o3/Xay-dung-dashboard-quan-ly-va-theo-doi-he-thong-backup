@@ -55,6 +55,35 @@ func migrationLayout(c *Controller, global Settings, root string) *Layout {
 	return &Layout{Root: root, MetadataDir: metadata}
 }
 
+// cronUsesTaskLocation reports whether a private cron location is still
+// scheduled. CronLocations deliberately retains deleted rows so their files
+// can be recovered or inspected later; those stale rows must not prevent a
+// remaining schedule from moving its own archive root.
+func cronUsesTaskLocation(cron []byte, cfg Settings, id string) bool {
+	name, ok := TaskScripts[id]
+	if !ok {
+		return false
+	}
+	script := scriptPath(cfg, name)
+	runner := scriptPath(cfg, "backup-monitor-run.sh")
+	for _, line := range strings.Split(string(cron), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, pausedSchedulePrefix) {
+			line = strings.TrimPrefix(line, pausedSchedulePrefix)
+		} else if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 7 || fields[5] != "/bin/bash" {
+			continue
+		}
+		if fields[6] == script || (len(fields) >= 8 && fields[6] == runner && fields[7] == id) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Controller) planCronBackupTransfer(p *Proposal, change ScheduleChange, oldLocal, nextLocal Settings) error {
 	category := map[string]string{"backup-site": "site", "backup-database": "database", "backup-panel": "panel"}[change.ID]
 	if category == "" {
@@ -72,6 +101,9 @@ func (c *Controller) planCronBackupTransfer(p *Proposal, change ScheduleChange, 
 		other, err := CronSettings(p.Old, loc.ID, key)
 		if err != nil {
 			return err
+		}
+		if !cronUsesTaskLocation(p.Cron, other, loc.ID) {
+			continue
 		}
 		if other.BackupRoot == oldLocal.BackupRoot {
 			return errors.New("Nhiều cron cùng loại dùng chung kho; chưa xác định được backup riêng để chuyển an toàn")

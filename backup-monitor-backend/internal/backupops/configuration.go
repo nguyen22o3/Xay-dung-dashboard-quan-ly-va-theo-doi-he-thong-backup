@@ -33,8 +33,10 @@ type Preview struct {
 	Sources         []SourcePreview      `json:"sources,omitempty"`
 }
 type scriptChange struct {
-	Source, Target    string
-	Original, Updated []byte
+	Source, Target             string
+	Original, Updated          []byte
+	TargetOriginal             []byte
+	TargetExistedBeforePreview bool
 }
 type logChange struct{ Source, Target, Hash string }
 type fileCheck struct {
@@ -187,7 +189,7 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 						return nil, err
 					}
 				}
-				p.Scripts = append(p.Scripts, scriptChange{source, target, nil, data})
+				p.Scripts = append(p.Scripts, scriptChange{Source: source, Target: target, Updated: data})
 				planned[source] = true
 				continue
 			}
@@ -229,7 +231,7 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 				updated = []byte(patched)
 			}
 		}
-		p.Scripts = append(p.Scripts, scriptChange{source, target, original, updated})
+		p.Scripts = append(p.Scripts, scriptChange{Source: source, Target: target, Original: original, Updated: updated})
 	}
 	if err = c.updatePrivateScripts(p); err != nil {
 		return nil, err
@@ -378,7 +380,7 @@ func (c *Controller) Proposal(r Request) (*Proposal, error) {
 	p.NewCron = []byte(strings.Join(lines, "\n") + "\n")
 	fingerprints := []interface{}{Version, version, new, hashBytes(p.Cron), r.Schedule, hashBytes(p.NewCron)}
 	for _, script := range p.Scripts {
-		fingerprints = append(fingerprints, []string{script.Source, script.Target, hashBytes(script.Original), hashBytes(script.Updated)})
+		fingerprints = append(fingerprints, []string{script.Source, script.Target, hashBytes(script.Original), hashBytes(script.Updated), hashBytes(script.TargetOriginal), fmt.Sprint(script.TargetExistedBeforePreview)})
 	}
 	for _, log := range p.Logs {
 		fingerprints = append(fingerprints, []string{log.Source, log.Hash})
@@ -551,11 +553,15 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 		return state, err
 	}
 	for _, script := range p.Scripts {
-		if script.Original == nil {
-			continue
+		if script.Original != nil {
+			if err = c.Write(filepath.Join(recovery, hashBytes([]byte(script.Source))[:16]+"-"+filepath.Base(script.Source)), script.Original, 0600); err != nil {
+				return state, err
+			}
 		}
-		if err = c.Write(filepath.Join(recovery, hashBytes([]byte(script.Source))[:16]+"-"+filepath.Base(script.Source)), script.Original, 0600); err != nil {
-			return state, err
+		if script.TargetExistedBeforePreview {
+			if err = c.Write(filepath.Join(recovery, hashBytes([]byte(script.Target))[:16]+"-"+filepath.Base(script.Target)+".target-before"), script.TargetOriginal, 0600); err != nil {
+				return state, err
+			}
 		}
 	}
 	manifest, _ := json.MarshalIndent(struct {
@@ -613,7 +619,13 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 		for i := len(installed) - 1; i >= 0; i-- {
 			script := installed[i]
 			var err error
-			if script.Original == nil {
+			if script.TargetExistedBeforePreview {
+				if sum, readErr := Digest(script.Target); readErr != nil || sum != hashBytes(script.Updated) {
+					err = errors.New("Script đích đã thay đổi; không khôi phục")
+				} else {
+					err = c.Write(script.Target, script.TargetOriginal, 0700)
+				}
+			} else if script.Original == nil {
 				sum, readErr := Digest(script.Target)
 				if readErr != nil || sum != hashBytes(script.Updated) {
 					err = errors.New("Script mới đã thay đổi; không xóa")
@@ -704,7 +716,16 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 	}
 	for _, script := range p.Scripts {
 		if script.Original == nil {
-			if err = writeScriptExclusive(script.Target, script.Updated); err != nil {
+			if script.TargetExistedBeforePreview {
+				currentTarget, targetErr := readRegular(script.Target)
+				if targetErr != nil || hashBytes(currentTarget) != hashBytes(script.TargetOriginal) {
+					return state, errors.New("Script đích đã thay đổi sau xem trước; chưa ghi đè")
+				}
+				err = c.Write(script.Target, script.Updated, 0700)
+			} else {
+				err = writeScriptExclusive(script.Target, script.Updated)
+			}
+			if err != nil {
 				return state, err
 			}
 			installed = append(installed, script)
@@ -713,14 +734,21 @@ func (c *Controller) Apply(r Request) (state State, resultErr error) {
 		if script.Source == script.Target && string(script.Original) == string(script.Updated) {
 			continue
 		}
-		if script.Source != script.Target && exists(script.Target) {
-			return state, errors.New("Script đích đã xuất hiện sau xem trước")
+		if script.Source != script.Target {
+			if script.TargetExistedBeforePreview {
+				currentTarget, targetErr := readRegular(script.Target)
+				if targetErr != nil || hashBytes(currentTarget) != hashBytes(script.TargetOriginal) {
+					return state, errors.New("Script đích đã thay đổi sau xem trước; chưa ghi đè")
+				}
+			} else if exists(script.Target) {
+				return state, errors.New("Script đích đã xuất hiện sau xem trước")
+			}
 		}
 		current, readErr := readRegular(script.Source)
 		if readErr != nil || hashBytes(current) != hashBytes(script.Original) {
 			return state, errors.New("Script đã thay đổi sau xem trước; chưa ghi đè")
 		}
-		if script.Source != script.Target {
+		if script.Source != script.Target && !script.TargetExistedBeforePreview {
 			err = writeScriptExclusive(script.Target, script.Updated)
 		} else {
 			err = c.Write(script.Target, script.Updated, 0700)

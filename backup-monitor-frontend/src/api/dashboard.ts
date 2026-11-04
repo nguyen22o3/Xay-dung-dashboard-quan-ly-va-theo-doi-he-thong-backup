@@ -356,7 +356,11 @@ function createPollResource<T>(fetcher: (signal?: AbortSignal) => Promise<T>, ma
     const request = { controller: new AbortController(), revision }
     const requestToken = token
     inFlight = request
-    publish({ ...state, loading: true })
+    // Keep existing data interactive while it is refreshed in the background.
+    // `loading` remains reserved for the initial request where there is no data
+    // to display yet. Otherwise controls that depend on fresh cached data would
+    // be disabled again on every polling cycle.
+    if (state.data === null) publish({ ...state, loading: true })
     const current = () => request.revision === revision && requestToken === localStorage.getItem('auth_token')
     try {
       const data = await fetcher(request.controller.signal)

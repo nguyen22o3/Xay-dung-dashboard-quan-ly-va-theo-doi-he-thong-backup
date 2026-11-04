@@ -15,7 +15,7 @@ type Channel = { id: ChannelId; title: string; vi: string; en: string; icon: Luc
 const channels: Channel[] = [
   { id: 'telegram', title: 'Telegram', vi: 'Nhận thông báo qua Telegram', en: 'Receive alerts via Telegram', icon: MessageCircle },
   { id: 'discord', title: 'Discord', vi: 'Nhận thông báo qua kênh trên Discord', en: 'Deliver notifications to a channel through a webhook', icon: Hash },
-  { id: 'email', title: 'Email', vi: 'Nhận thông báo qua Gmail SMTP', en: 'Send alerts through Gmail SMTP', icon: Mail },
+  { id: 'email', title: 'Email', vi: 'Nhận cảnh báo qua email do hệ thống gửi', en: 'Receive alerts from the system email account', icon: Mail },
 ]
 
 const tabs: { id: Section; vi: string; en: string }[] = [
@@ -34,9 +34,8 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
   const [telegramToken, setTelegramToken] = useState('')
   const [telegramChat, setTelegramChat] = useState('')
   const [discordWebhook, setDiscordWebhook] = useState('')
-  const [smtpEmail, setSmtpEmail] = useState('')
-  const [smtpPassword, setSmtpPassword] = useState('')
   const [targetEmail, setTargetEmail] = useState('')
+  const [emailSenderConfigured, setEmailSenderConfigured] = useState(false)
   const [threshold, setThreshold] = useState<number | ''>(14)
   const [monitorPaths, setMonitorPaths] = useState<string[]>([])
   const [folderPickerRequest, setFolderPickerRequest] = useState<FolderRequest | null>(null)
@@ -58,8 +57,8 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
       .then((settings) => {
         if (!alive) return
         setTelegramChat(settings.telegramChat || '')
-        setSmtpEmail(settings.smtpEmail || '')
         setTargetEmail(settings.targetEmail || '')
+        setEmailSenderConfigured(settings.smtpSenderConfigured ?? settings.smtpConfigured)
         setThreshold(settings.threshold || 14)
         setMonitorPaths(settings.monitorPaths ?? [])
         setConfigured({ telegram: settings.telegramConfigured, discord: settings.discordConfigured, email: settings.smtpConfigured })
@@ -82,11 +81,11 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
     setMessageType(null)
     setLastSavedChannel(null)
     try {
-      const settings = await saveAlertSettings({ telegramToken, telegramChat, discordWebhook, smtpEmail, smtpPassword, targetEmail, threshold: Number(threshold), monitorPaths, telegramEnabled: nextEnabled.telegram, discordEnabled: nextEnabled.discord, smtpEnabled: nextEnabled.email })
+      const settings = await saveAlertSettings({ telegramToken, telegramChat, discordWebhook, targetEmail, threshold: Number(threshold), monitorPaths, telegramEnabled: nextEnabled.telegram, discordEnabled: nextEnabled.discord, smtpEnabled: nextEnabled.email })
       setTelegramToken('')
       setDiscordWebhook('')
-      setSmtpPassword('')
       setConfigured({ telegram: settings.telegramConfigured, discord: settings.discordConfigured, email: settings.smtpConfigured })
+      setEmailSenderConfigured(settings.smtpSenderConfigured ?? settings.smtpConfigured)
       setMonitorPaths(settings.monitorPaths ?? monitorPaths)
       // Keep the requested state when an older backend omits the new fields.
       setEnabled({ telegram: settings.telegramEnabled ?? nextEnabled.telegram, discord: settings.discordEnabled ?? nextEnabled.discord, email: settings.smtpEnabled ?? nextEnabled.email })
@@ -147,16 +146,15 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
               <label className="apex-settings-field"><span>Chat ID</span><input type="text" value={telegramChat} onChange={(event) => setTelegramChat(event.target.value)} /></label>
             </div>}
             {id === 'discord' && <div className="apex-settings-field-grid apex-settings-field-grid--single"><label className="apex-settings-field"><span>Webhook URL</span><input type="password" autoComplete="new-password" value={discordWebhook} onChange={(event) => setDiscordWebhook(event.target.value)} /></label></div>}
-            {id === 'email' && <div className="apex-settings-field-grid">
-              <label className="apex-settings-field"><span>{vi ? 'Email gửi' : 'Sender email'}</span><input type="email" value={smtpEmail} onChange={(event) => setSmtpEmail(event.target.value)} /></label>
-              <label className="apex-settings-field"><span>{vi ? 'Mật khẩu ứng dụng' : 'App password'}</span><input type="password" autoComplete="new-password" value={smtpPassword} onChange={(event) => setSmtpPassword(event.target.value)} /></label>
+            {id === 'email' && <div className="apex-settings-field-grid apex-settings-field-grid--single">
               <label className="apex-settings-field apex-settings-field--wide"><span>{vi ? 'Email nhận cảnh báo' : 'Recipient email'}</span><input type="email" value={targetEmail} onChange={(event) => setTargetEmail(event.target.value)} /></label>
+              {!loading && !emailSenderConfigured && <p role="status">{vi ? 'Quản trị viên chưa cấu hình email gửi trên máy chủ. Bạn vẫn có thể lưu email nhận.' : 'The administrator has not configured the server email sender yet. You can still save a recipient.'}</p>}
             </div>}
             <div className="apex-settings-channel-actions"><span className={`apex-settings-channel-saved ${lastSavedChannel === id && messageType === 'success' ? '' : 'is-placeholder'}`}>{vi ? 'Đã lưu' : 'Saved'}</span><button type="button" className="apex-settings-save" onClick={() => void save(enabled, 'form', id)} disabled={loading || toggling || (saving && savingChannel === id)}>{saving && savingChannel === id ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu' : 'Save')}</button></div>
           </div>}
         </div>)}
       </div>
-      {message && saveFooter}
+      {messageType === 'error' && message && saveFooter}
       </section>
     </section>}
 
