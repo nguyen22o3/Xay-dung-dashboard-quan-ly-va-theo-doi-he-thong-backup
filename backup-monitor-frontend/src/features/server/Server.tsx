@@ -9,6 +9,7 @@ import { useServerStatus, useBackupStatus, useWebsitesStatus, useCronJobs, useLo
 import { activityStatus, calendarDays, categoryLabel, formatBytes, formatCronSchedule, formatStorageShare, localBackupDurationByDay, nextCronRun, readPercentage } from '../../shared/utils'
 import { makeTheme } from '../../shared/theme'
 import { websiteStatusPresentation } from './websiteStatus'
+import { diskStatusPresentation } from './diskStatus'
 import { CheckCircle, AlertTriangle, Clock, Calendar } from 'lucide-react'
 import { tr, type Lang } from '../../shared/language'
 
@@ -100,6 +101,14 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
 
   const diskUsage = readPercentage(s.disk?.usage)
   const diskPercent = diskUsage ?? 0
+  const diskStatus = diskStatusPresentation(server.error ? null : diskUsage, lang)
+  const diskStatusColor = {
+    healthy: theme.successText,
+    warning: isDark ? '#fbbf24' : '#92400e',
+    error: theme.errorText,
+    neutral: theme.textSecondary,
+  }[diskStatus.tone]
+  const diskBarColor = diskStatus.tone === 'healthy' ? theme.accentText : diskStatusColor
   const cpuPercent = s.cpu ? parseFloat(s.cpu) : 0
   const ramPercent = s.ram && s.ram.usage ? parseFloat(s.ram.usage) : 0
 
@@ -143,11 +152,11 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
 
               {/* Alerts */}
               <div style={{ flex: 1, minWidth: '180px', display: 'flex', alignItems: 'center', gap: '15px', background: theme.gridLine, padding: '15px', borderRadius: '8px' }}>
-                <AlertTriangle size={32} color={diskPercent >= 85 ? theme.errorText : theme.successText} />
+                <AlertTriangle size={32} color={diskStatusColor} />
                 <div>
                   <div style={{ fontSize: '12px', color: theme.textSecondary }}>{lang === 'vi' ? 'Tình trạng ổ đĩa' : 'Disk status'}</div>
-                  <div style={{ fontSize: '18px', fontWeight: 'bold', color: diskPercent >= 85 ? theme.errorText : theme.successText }}>
-                    {diskUsage === null || server.error ? (lang === 'vi' ? 'Chưa xác nhận' : 'Unconfirmed') : diskPercent >= 85 ? (lang === 'vi' ? 'Sắp hết dung lượng' : 'Low disk space') : (lang === 'vi' ? 'Bình thường' : 'Normal')}
+                  <div role="status" style={{ fontSize: '18px', fontWeight: 'bold', color: diskStatusColor }}>
+                    {diskStatus.label}
                   </div>
                 </div>
               </div>
@@ -234,7 +243,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                     <span style={{ fontSize: '24px', fontWeight: 'bold', color: theme.titleColor }}>{s.disk.total}</span>
                   </div>
                   <div style={{ width: '100%', background: theme.gridLine, height: '24px', borderRadius: '12px', overflow: 'hidden', marginBottom: '10px' }}>
-                    <div style={{ width: `${diskPercent}%`, background: diskPercent >= 85 ? theme.errorText : theme.accentText, height: '100%', transition: 'width 0.4s' }} />
+                    <div style={{ width: `${diskPercent}%`, background: diskBarColor, height: '100%', transition: 'width 0.4s' }} />
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', color: theme.textSecondary, fontSize: '12px' }}>
                     <span>{lang === 'vi' ? 'Đã dùng' : 'Used'} ({diskPercent.toFixed(1)}%)</span>
