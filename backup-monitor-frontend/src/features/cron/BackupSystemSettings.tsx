@@ -1,10 +1,10 @@
 import { localizeMessage } from '../../shared/messages'
 import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { ChevronDown, Folder, FolderPlus, RefreshCw, X } from 'lucide-react'
+import { FolderPicker } from '../../shared/FolderPicker'
+import { ChevronDown, Folder, RefreshCw, X } from 'lucide-react'
 import { apiErrorMessage } from '../../api/dashboard'
-import { applyBackupSystem, createBackupFolder, fetchBackupSystem, fetchManagedScripts, listBackupFolders, previewBackupSystem } from '../../api/backupSystem'
-import type { BackupSource, BackupSystemConfig, BackupSystemState, ConfigurationPreview, CronDirectories, FolderList, FolderRequest, ManagedScriptOption } from '../../api/backupSystem'
+import { applyBackupSystem, fetchBackupSystem, fetchManagedScripts, previewBackupSystem } from '../../api/backupSystem'
+import type { BackupSource, BackupSystemConfig, BackupSystemState, ConfigurationPreview, CronDirectories, FolderRequest, ManagedScriptOption } from '../../api/backupSystem'
 import type { Lang } from '../../shared/language'
 import type { CronJob } from '../../shared/types'
 import BackupTaskForm from './BackupTaskForm'
@@ -18,74 +18,6 @@ type SourceKey = 'siteSource' | 'databaseSource' | 'panelSource'
 const labels: Record<DirectoryKey, [string, string]> = {
   backupRoot: ['Thư mục backup trên AlmaLinux', 'AlmaLinux backup directory'], scriptsDir: ['Thư mục scripts', 'Scripts directory'],
   logsDir: ['Thư mục nhật ký (log)', 'Log directory'], driveFolder: ['Thư mục backup trên Google Drive', 'Google Drive backup folder'],
-}
-
-export function FolderPicker({ request, vi, close, choose, existingOnly = false, allowCreate = true }: { request: FolderRequest; vi: boolean; close: () => void; choose: (path: string) => void; existingOnly?: boolean; allowCreate?: boolean }) {
-	const sourceOnly = request.purpose.startsWith('source-') || existingOnly
-  const canCreate = !sourceOnly && allowCreate
-  const [path, setPath] = useState(request.path), [name, setName] = useState('')
-  const [listing, setListing] = useState<FolderList | null>(null)
-  const [busy, setBusy] = useState(true), [error, setError] = useState('')
-  const dialog = useRef<HTMLDivElement>(null), sequence = useRef(0), closeRef = useRef(close)
-  useEffect(() => { closeRef.current = close }, [close])
-  const load = async (value: string) => {
-    const id = ++sequence.current
-    setBusy(true); setError(''); setPath(value); setListing(null)
-    try { const result = await listBackupFolders({ ...request, path: value }); if (sequence.current === id) setListing(result) }
-    catch (error: unknown) { if (sequence.current === id) setError(apiErrorMessage(error, vi ? 'Không đọc được thư mục.' : 'Could not list folders.')) }
-    finally { if (sequence.current === id) setBusy(false) }
-  }
-  useEffect(() => {
-    const restore = document.activeElement as HTMLElement | null
-    const scrollContainers = [document.body, document.querySelector<HTMLElement>('.app-content')].filter((element): element is HTMLElement => !!element)
-    const previousOverflow = scrollContainers.map(element => element.style.overflow)
-    scrollContainers.forEach(element => { element.style.overflow = 'hidden' })
-    dialog.current?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true })
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeRef.current()
-      if (event.key !== 'Tab') return
-      const items = Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)') ?? [])
-      const first = items[0], last = items[items.length - 1]
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
-    }
-    document.addEventListener('keydown', keydown)
-    return () => {
-      document.removeEventListener('keydown', keydown)
-      scrollContainers.forEach((element, index) => { element.style.overflow = previousOverflow[index] })
-      restore?.focus({ preventScroll: true })
-    }
-  }, [])
-  useEffect(() => {
-    let alive = true
-    listBackupFolders(request).then(result => { if (alive) setListing(result) })
-      .catch((error: unknown) => { if (alive) setError(apiErrorMessage(error, vi ? 'Không đọc được thư mục.' : 'Could not list folders.')) })
-      .finally(() => { if (alive) setBusy(false) })
-    return () => { alive = false }
-  }, [request, vi])
-  const create = async (value: string) => {
-    if (!canCreate) return
-    setBusy(true); setError('')
-    try { await createBackupFolder({ ...request, path: value }); await load(value); setName('') }
-    catch (error: unknown) { setError(apiErrorMessage(error, vi ? 'Không tạo được thư mục.' : 'Could not create folder.')); setBusy(false) }
-  }
-  const selectable = listing?.exists && listing.path === path && path !== '/' && (request.location !== 'drive' || !!path)
-    && !(request.purpose === 'scripts' && ['/root', '/opt/backup-monitor'].includes(path))
-  // Outside the animated, scrollable page; the shell keeps the active theme variables.
-  return createPortal(<div className="backup-folder-overlay backup-management"><div className="backup-folder-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="folder-picker-title">
-    <div className="backup-system-heading"><h2 id="folder-picker-title">{existingOnly ? (vi ? 'Chọn thư mục backup cần giám sát' : 'Choose a backup folder to monitor') : sourceOnly ? (vi ? 'Chọn thư mục dữ liệu cần sao lưu' : 'Choose source data folder') : canCreate ? (vi ? 'Chọn hoặc tạo thư mục' : 'Choose or create a folder') : (vi ? 'Chọn thư mục' : 'Choose a folder')} · {request.location === 'local' ? 'AlmaLinux' : 'Google Drive'}</h2><button type="button" className="backup-system-secondary" onClick={close} aria-label={vi ? 'Đóng' : 'Close'}><X size={18} /></button></div>
-    <p className="backup-system-note">{existingOnly ? (vi ? 'Chọn thư mục backup đã tồn tại. Script giám sát sẽ cập nhật khi bạn lưu cài đặt.' : 'Choose an existing backup folder. The monitoring script updates when you save settings.') : sourceOnly ? (vi ? 'Chọn thư mục dữ liệu đã tồn tại trên máy chủ. Chọn ở đây chưa đổi script; cần xác nhận áp dụng ở cuối form.' : 'Choose an existing server data folder. Selecting it does not update scripts until you confirm and apply the form.') : canCreate ? (vi ? 'Tên thư mục dùng chữ không dấu, số, -, _, .; không có khoảng trắng. Tạo thư mục chưa thay đổi nơi lưu trữ đang dùng.' : 'Use ASCII letters, numbers, -, _, and .; no spaces. Creating a folder does not change active storage.') : (vi ? 'Chọn thư mục đã tồn tại. Thay đổi được áp dụng khi bạn lưu tác vụ.' : 'Choose an existing folder. Changes apply when you save the task.')}</p>
-    <div className="backup-system-path"><input aria-label={vi ? 'Đường dẫn thư mục' : 'Folder path'} value={path} onChange={e => setPath(e.target.value)} disabled={busy} /><button type="button" className="backup-system-secondary" disabled={busy} onClick={() => void load(path)}>{vi ? 'Mở' : 'Open'}</button>{request.location === 'local' && <button type="button" className="backup-system-secondary" disabled={busy} onClick={() => void load('/')}>{vi ? 'Thư mục gốc /' : 'Server root /'}</button>}</div>
-    <div className="backup-folder-list" aria-busy={busy}>{busy ? <p>{vi ? 'Đang đọc thư mục...' : 'Loading folders...'}</p> : <>
-      {listing?.parent !== null && listing?.parent !== undefined && listing.parent !== path && <button type="button" onClick={() => void load(listing.parent!)}>← {vi ? 'Thư mục cha' : 'Parent folder'}</button>}
-      {listing?.entries.map(entry => <button type="button" key={entry.path} onClick={() => void load(entry.path)}><Folder size={16} />{entry.name}</button>)}
-      {listing?.exists && !listing.entries.length && <p>{vi ? 'Chưa có thư mục con.' : 'No subfolders.'}</p>}
-      {listing && !listing.exists && <p>{vi ? 'Thư mục chưa tồn tại.' : 'Folder does not exist.'}</p>}
-    </>}</div>
-    {error && <p role="alert" className="backup-system-error">{localizeMessage(error, vi ? 'vi' : 'en')}</p>}
-    {canCreate && <div className="backup-system-path"><input aria-label={vi ? 'Tên thư mục mới' : 'New folder name'} placeholder={vi ? 'Tên thư mục con mới' : 'New subfolder name'} value={name} onChange={e => setName(e.target.value)} disabled={busy} /><button type="button" className="backup-system-secondary" disabled={busy || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(name)} onClick={() => void create(`${path.replace(/\/$/, '')}/${name}`.replace(/^\//, request.location === 'drive' ? '' : '/'))}><FolderPlus size={16} />{vi ? 'Tạo thư mục con' : 'Create subfolder'}</button></div>}
-    <div className="backup-system-actions">{canCreate && <button type="button" className="backup-system-secondary" disabled={busy || !path || path === '/'} onClick={() => void create(path)}>{vi ? 'Tạo đường dẫn này nếu chưa có' : 'Create this path if missing'}</button>}<button type="button" className="apex-settings-save" disabled={busy || !selectable} onClick={() => choose(path)}>{vi ? 'Chọn thư mục này' : 'Use this folder'}</button></div>
-  </div></div>, document.querySelector('.app-shell') ?? document.body)
 }
 
 export default function BackupSystemSettings({ lang, locked = false, expanded: controlledExpanded, onToggle, onReload, task, onStateChange, onBusyChange, mode = 'add', onClose }: {
@@ -232,6 +164,7 @@ export default function BackupSystemSettings({ lang, locked = false, expanded: c
     <div className="backup-storage-heading"><h2 id={`${idPrefix}backup-storage-title`}>{mode === 'edit' ? (vi ? 'Sửa tác vụ' : 'Edit task') : <button type="button" aria-expanded={expanded} aria-controls={`${idPrefix}backup-storage-fields`} onClick={() => onToggle ? onToggle() : setExpanded(!expanded)}>{vi ? 'Thêm tác vụ' : 'Add task'}<ChevronDown size={17} className={expanded ? 'is-expanded' : ''} /></button>}</h2><div className="backup-edit-heading-actions"><button type="button" className="backup-system-secondary" disabled={disabled} onClick={() => void reload()} aria-label={vi ? 'Tải lại cấu hình' : 'Reload configuration'}><RefreshCw size={16} /></button>{mode === 'edit' && <button type="button" className="backup-system-secondary" disabled={disabled} onClick={onClose} aria-label={vi ? 'Đóng chỉnh sửa' : 'Close editor'}><X size={18} /></button>}</div></div>
     <div id={`${idPrefix}backup-storage-fields`} className="backup-storage-body" hidden={!expanded}>
     {feedback && <p className={feedback.error ? 'backup-system-error' : 'backup-system-success'} role={feedback.error ? 'alert' : 'status'}>{(Array.isArray(feedback.text) ? feedback.text : [feedback.text]).map(text => localizeMessage(text, lang)).join(' ')}</p>}
+    {(state ? !state.remotes.length : feedback?.error) && <p className="backup-system-warning">{vi ? 'Nếu chưa có kết nối Google Drive, hãy cấu hình rclone qua SSH rồi tải lại.' : 'If Google Drive is not configured, set up rclone over SSH, then reload.'}</p>}
     {!draft || !state ? <p className="backup-system-note">{feedback?.error ? (vi ? 'Bấm tải lại để thử lại.' : 'Reload to retry.') : (vi ? 'Đang tải cấu hình từ AlmaLinux...' : 'Loading configuration from AlmaLinux...')}</p> : <>
       <form className="backup-unified-form" onSubmit={event => { event.preventDefault(); void apply() }}>
       {task && <BackupTaskForm lang={lang} jobs={task.jobs} selected={selected} draft={taskDraft} disabled={disabled} loading={task.loading} error={task.error} scriptPath={scriptPath} idPrefix={idPrefix} selectionLocked={mode === 'edit'}
@@ -248,7 +181,6 @@ export default function BackupSystemSettings({ lang, locked = false, expanded: c
       {mode === 'add' && task && !state.supportsManagedScriptSelection && <p className="backup-system-note">{vi ? 'Cập nhật helper v25 trên AlmaLinux để chọn script thực hiện.' : 'Update the AlmaLinux helper to v25 to choose an execution script.'}</p>}
       {moveBackups && !state.supportsCronBackupMigration && <p role="alert" className="backup-system-error">{vi ? 'Cần cập nhật backup-manager trên AlmaLinux lên v19 để chuyển backup cũ khi đổi nơi lưu.' : 'Update the AlmaLinux backup-manager to v19 to migrate existing backups.'}</p>}
       {!state.ready && <p role="alert" className="backup-system-error">{vi ? 'Thiếu helper lưu trữ theo ngày; cần cài helper trước khi đổi đường dẫn.' : 'The daily-layout helper is missing; install it before changing paths.'}</p>}
-      {!state.remotes.length && <p className="backup-system-warning">{vi ? 'Kết nối Google Drive ở phía trên trước khi thêm tác vụ.' : 'Connect Google Drive above before adding tasks.'}</p>}
       {mode === 'add' && task && !state.supportsMultipleSchedules && <p role="alert" className="backup-system-error">{vi ? 'backup-manager trên máy chủ chưa hỗ trợ nhiều lịch cùng loại. Cần cập nhật công cụ này lên bản v14 trước khi thêm lịch.' : 'The server backup-manager does not support multiple schedules yet. Update this helper to v14 before adding schedules.'}</p>}
       {preview && <div className="backup-system-preview" aria-label={vi ? 'Xem trước cấu hình' : 'Configuration preview'}><h3>{vi ? 'Ảnh hưởng khi áp dụng' : 'Changes to apply'}</h3><p>{vi ? `${preview.filesToMove} tệp backup / ${preview.daysToMove} thư mục ngày (${(preview.bytesToMove / 1048576).toFixed(2)} MB); ${preview.scriptsToUpdate} script cập nhật; ${preview.logsToMove} log sao chép.` : `${preview.filesToMove} backup files / ${preview.daysToMove} dated folders (${(preview.bytesToMove / 1048576).toFixed(2)} MB); ${preview.scriptsToUpdate} scripts updated; ${preview.logsToMove} logs copied.`}</p>{preview.driveChanged && <p className="backup-system-warning">{vi ? 'Thư mục Drive mới dùng cho lần đẩy tiếp theo. Backup cũ vẫn ở thư mục cũ; không bị xóa hoặc chuyển. Dashboard sẽ đọc thư mục mới.' : 'The new Drive folder is used for future uploads. Old backups stay in the old folder, without deletion or migration. The dashboard reads the new folder.'}</p>}{!preview.changed && <p>{vi ? 'Không có thay đổi để áp dụng.' : 'No changes to apply.'}</p>}</div>}
       {preview?.schedule && <p className="backup-system-note">{vi ? 'Lịch tác vụ đã chọn: ' : 'Selected task schedule: '}{preview.schedule.previous ? formatCronSchedule(preview.schedule.previous, lang) : (vi ? 'Chưa có lịch' : 'Not scheduled')} → {formatCronSchedule(preview.schedule.proposed, lang)}{preview.schedule.enabled ? '' : (vi ? ' · giữ trạng thái tạm dừng' : ' · stays paused')}</p>}
@@ -266,6 +198,6 @@ export default function BackupSystemSettings({ lang, locked = false, expanded: c
       if (selector && !option) return
       setSourceScript(option ? { ...option, taskID: sourceId } : null); setPreview(null); setFeedback(null); setScriptPickerOpen(false)
     }} />}
-    {picker && <FolderPicker request={picker.request} vi={vi} allowCreate={false} close={() => setPicker(null)} choose={value => { if (picker.key === 'siteSource' || picker.key === 'databaseSource' || picker.key === 'panelSource') chooseSource(picker.key, value); else edit(picker.key, value); setPicker(null) }} />}
+    {picker && <FolderPicker request={picker.request} vi={vi} close={() => setPicker(null)} choose={value => { if (picker.key === 'siteSource' || picker.key === 'databaseSource' || picker.key === 'panelSource') chooseSource(picker.key, value); else edit(picker.key, value); setPicker(null) }} />}
   </section>
 }

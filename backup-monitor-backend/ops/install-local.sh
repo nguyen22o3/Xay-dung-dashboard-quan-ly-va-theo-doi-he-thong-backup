@@ -8,12 +8,14 @@ umask 077
 release=1.1.6
 dashboard_host=
 data_dir=
+enable_restore_check=0
 while (($#)); do
   case "$1" in
     --host) [[ $# -ge 2 ]] || { echo 'Missing --host address' >&2; exit 1; }; dashboard_host=$2; shift 2 ;;
     --version) [[ $# -ge 2 ]] || exit 1; release=$2; shift 2 ;;
     --data-dir) [[ $# -ge 2 ]] || exit 1; data_dir=$2; shift 2 ;;
-    *) echo 'Usage: install-local.sh [--host PRIVATE_IPV4] [--version X.Y.Z] [--data-dir /opt/backup-monitor]' >&2; exit 1 ;;
+    --enable-restore-check) enable_restore_check=1; shift ;;
+    *) echo 'Usage: install-local.sh [--host PRIVATE_IPV4] [--version X.Y.Z] [--data-dir /opt/backup-monitor] [--enable-restore-check]' >&2; exit 1 ;;
   esac
 done
 [[ $EUID == 0 && $(uname -s) == Linux ]] || { echo 'Run with sudo on AlmaLinux, not on Windows.' >&2; exit 1; }
@@ -81,6 +83,11 @@ container_id=$(docker create "$tools_image")
 docker cp "$container_id:/backup-manager" "$task_tmp/backup-manager"
 docker cp "$container_id:/rclone" "$task_tmp/rclone"
 docker cp "$container_id:/bundle/." "$task_tmp/"
+if [[ $enable_restore_check == 1 ]]; then
+  for component in install-restore-check.sh backup-monitor-restore-check.service backup-monitor-restore-check.timer; do
+    [[ -f $task_tmp/$component ]] || { echo "The selected release is missing $component." >&2; exit 1; }
+  done
+fi
 chmod 700 "$task_tmp/backup-manager" "$task_tmp/rclone"
 [[ $("$task_tmp/backup-manager" version) == backup-manager-go-v26 ]] || { echo 'This installer requires a release containing helper v26; older published images cannot select application storage.' >&2; exit 1; }
 "$task_tmp/rclone" version
@@ -187,3 +194,6 @@ echo 'No .env, SSH password, known_hosts or SSH tunnel is required for this loca
 echo 'Connect your own Google Drive in Cron. No backup schedules were created or backups executed.'
 echo 'This address is for trusted LAN use only. Use an HTTPS reverse proxy before Internet access.'
 echo 'If LAN access is blocked, inspect the firewall; this installer does not disable it or add public rules.'
+if [[ $enable_restore_check == 1 ]]; then
+  bash "$task_tmp/install-restore-check.sh"
+fi

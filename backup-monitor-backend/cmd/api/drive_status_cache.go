@@ -16,10 +16,6 @@ var (
 	driveGoodStatus []byte
 )
 
-type driveUnavailableError struct{ message string }
-
-func (e driveUnavailableError) Error() string { return e.message }
-
 func driveStatusCachePath() string {
 	dir, err := os.UserCacheDir()
 	if err != nil {
@@ -65,39 +61,30 @@ func markDriveStatusStale(good []byte) []byte {
 
 // The Drive listing is separate from the local backup logs. A failed Drive
 // refresh must not replace the last confirmed Drive counts and history with 0.
-func mergeDriveStatus(raw, good []byte, fetchedAt time.Time) (response, newGood []byte, err error) {
+func mergeDriveStatus(raw, good []byte) ([]byte, error) {
 	var status map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &status); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	var driveError string
-	if field := status["driveError"]; len(field) > 0 && json.Unmarshal(field, &driveError) != nil {
-		return nil, nil, errors.New("invalid Drive error response")
+	if field := status["driveError"]; len(field) == 0 || json.Unmarshal(field, &driveError) != nil || driveError == "" {
+		return nil, errors.New("invalid Drive error response")
 	}
-	if driveError != "" {
-		if len(good) > 0 {
-			var previous map[string]json.RawMessage
-			if json.Unmarshal(good, &previous) == nil {
-				for _, field := range []string{"about", "size", "dirs", "totalFolders", "history", "todayBreakdown", "todayBreakdownBytes", "driveDataAt"} {
-					if value, ok := previous[field]; ok {
-						status[field] = value
-					}
-				}
-				status["driveStale"] = json.RawMessage("true")
-				response, err = json.Marshal(status)
-				return response, nil, err
+	fields := []string{"about", "size", "dirs", "totalFolders", "history", "todayBreakdown", "todayBreakdownBytes", "driveDataAt", "driveDay"}
+	var previous map[string]json.RawMessage
+	hasGood := json.Unmarshal(markDriveStatusStale(good), &previous) == nil
+	for _, field := range fields {
+		delete(status, field)
+		if hasGood {
+			if value, ok := previous[field]; ok {
+				status[field] = value
 			}
 		}
-		return nil, nil, driveUnavailableError{message: driveError}
 	}
-	if len(status["size"]) == 0 || string(status["size"]) == "null" || len(status["history"]) == 0 || string(status["history"]) == "null" {
-		return nil, nil, errors.New("Drive listing has no summary")
+	if hasGood {
+		status["driveStale"] = json.RawMessage("true")
 	}
-	stamp, _ := json.Marshal(fetchedAt.UTC().Format(time.RFC3339))
-	status["driveDataAt"] = stamp
-	status["driveStale"] = json.RawMessage("false")
-	response, err = json.Marshal(status)
-	return response, response, err
+	return json.Marshal(status)
 }
 
 func backupStatusTTL(data []byte) time.Duration {

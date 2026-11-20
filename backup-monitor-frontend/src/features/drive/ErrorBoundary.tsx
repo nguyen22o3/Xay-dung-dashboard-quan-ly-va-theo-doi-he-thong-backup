@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ReactNode } from 'react';
-import type { Lang } from '../shared/language';
+import type { Lang } from '../../shared/language';
 
 interface Props {
   children?: ReactNode;

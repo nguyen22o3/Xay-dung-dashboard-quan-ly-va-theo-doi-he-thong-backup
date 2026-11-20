@@ -26,7 +26,8 @@ type SessionData<T> = { token: string; data: T }
 let serverStatusCache: SessionData<ServerStatus> | null = null
 let backupStatusCache: SessionData<BackupStatus> | null = null
 let dashboardCacheEpoch = 0
-type HealthyBackup = SessionData<BackupStatus> & { fetchedAt: string }
+type DriveSummary = Pick<BackupStatus, 'about' | 'size' | 'dirs' | 'totalFolders' | 'history' | 'todayBreakdownBytes' | 'driveDay'>
+type HealthyBackup = SessionData<DriveSummary> & { fetchedAt: string }
 const HEALTHY_BACKUP_KEY = 'backup_status_last_healthy_v1'
 let healthyBackupCache: HealthyBackup | null = null
 
@@ -39,11 +40,16 @@ function lastHealthyBackup(): HealthyBackup | null {
     if (!saved) return null
     const parsed = JSON.parse(saved) as HealthyBackup
     if (parsed.token !== token || !parsed.fetchedAt || !parsed.data?.size || !Array.isArray(parsed.data.history)) return null
-    healthyBackupCache = parsed
-    return parsed
+    healthyBackupCache = { ...parsed, data: driveSummary(parsed.data) }
+    return healthyBackupCache
   } catch {
     return null
   }
+}
+
+function driveSummary(data: DriveSummary): DriveSummary {
+  const { about, size, dirs, totalFolders, history, todayBreakdownBytes, driveDay } = data
+  return { about, size, dirs, totalFolders, history, todayBreakdownBytes, driveDay }
 }
 
 function cachedBackupStatus(): BackupStatus | null {
@@ -106,15 +112,18 @@ export async function createAdministrator(username: string, password: string): P
 }
 
 async function fetchServerStatus(signal?: AbortSignal): Promise<ServerStatus> {
-	const epoch = dashboardCacheEpoch
+  const epoch = dashboardCacheEpoch
   const token = localStorage.getItem('auth_token')
   const { data } = await client.get<ServerStatus>('/api/server-status', { signal })
-  if (epoch === dashboardCacheEpoch && token && token === localStorage.getItem('auth_token')) serverStatusCache = { token, data }
-  return data
+  const result = data.local_backup_error
+    ? { ...data, local_backup: cachedSessionData(serverStatusCache)?.local_backup }
+    : data
+  if (epoch === dashboardCacheEpoch && token && token === localStorage.getItem('auth_token')) serverStatusCache = { token, data: result }
+  return result
 }
 
 async function fetchBackupStatus(signal?: AbortSignal): Promise<BackupStatus> {
-	const epoch = dashboardCacheEpoch
+  const epoch = dashboardCacheEpoch
   const token = localStorage.getItem('auth_token')
   const { data } = await client.get<BackupStatus>('/api/backup-status', { signal })
   const lastGood = lastHealthyBackup()
@@ -122,25 +131,24 @@ async function fetchBackupStatus(signal?: AbortSignal): Promise<BackupStatus> {
   const backendDataTime = Date.parse(data.driveDataAt || '')
   const useBrowserSnapshot = Boolean(data.driveError && lastGood &&
     (!data.driveStale || !Number.isFinite(backendDataTime) || Date.parse(lastGood.fetchedAt) > backendDataTime))
-  const result: BackupStatus = useBrowserSnapshot && lastGood
+  const drive: BackupStatus = useBrowserSnapshot && lastGood
     ? {
         ...data,
-        about: lastGood.data.about,
-        size: lastGood.data.size,
-        dirs: lastGood.data.dirs,
-        totalFolders: lastGood.data.totalFolders,
-        history: lastGood.data.history,
-        todayBreakdownBytes: lastGood.data.todayBreakdownBytes,
+        ...lastGood.data,
         driveStale: true,
         driveDataAt: lastGood.fetchedAt,
       }
     : data.driveStale
       ? { ...data, driveStale: true }
       : { ...data, driveStale: false, driveDataAt: data.driveError ? undefined : (data.driveDataAt || fetchedAt) }
+  const previous = cachedSessionData(backupStatusCache)
+  const result = data.activityError && previous
+    ? { ...drive, activity: previous.activity, localActivity: previous.localActivity }
+    : drive
   if (epoch === dashboardCacheEpoch && token && token === localStorage.getItem('auth_token')) {
     backupStatusCache = { token, data: result }
     if (!data.driveError && !data.driveStale && data.size && Array.isArray(data.history)) {
-      healthyBackupCache = { token, data: result, fetchedAt: result.driveDataAt || fetchedAt }
+      healthyBackupCache = { token, data: driveSummary(result), fetchedAt: result.driveDataAt || fetchedAt }
       try {
         sessionStorage.setItem(HEALTHY_BACKUP_KEY, JSON.stringify(healthyBackupCache))
       } catch {
@@ -159,11 +167,6 @@ async function fetchWebsitesStatus(signal?: AbortSignal): Promise<WebsiteStatus[
 export async function fetchCronJobs(signal?: AbortSignal): Promise<CronJob[]> {
   const { data } = await client.get<CronJob[]>('/api/cron-jobs', { signal })
   return data
-}
-
-export async function enableCronTracking(): Promise<void> {
-  await client.post('/api/cron-tracking')
-  invalidatePollResources('server', 'cron')
 }
 
 type CronJobRunResult = { status: 'started' | 'completed'; deletedCount?: number }
@@ -245,45 +248,6 @@ export async function fetchAlertSettings(): Promise<AlertSettings> {
 export async function saveAlertSettings(settings: AlertSettingsUpdate): Promise<AlertSettings> {
   const { data } = await client.post<AlertSettings>('/api/alert-settings', settings)
   return data
-}
-
-export async function downloadSnapshot(snapshot: SnapshotFile): Promise<void> {
-  const path = snapshot.path || (snapshot.category === 'root'
-    ? [snapshot.date, snapshot.name].join('/')
-    : [snapshot.date, snapshot.category, snapshot.name].join('/'))
-  const token = localStorage.getItem('auth_token')
-  const createDirectUrl = async (): Promise<URL> => {
-    const { data } = await client.post<{ ticket: string }>('/api/download-ticket', { path })
-    const url = new URL('/api/download-snapshot', API_BASE)
-    url.searchParams.set('ticket', data.ticket)
-    return url
-  }
-
-  // Ask for the destination before downloading, then stream directly to disk
-  // when the browser supports the File System Access API. This avoids buffering
-  // large backups in memory and makes the save dialog appear immediately.
-  const picker = (window as Window & {
-    showSaveFilePicker?: (options?: {
-      suggestedName?: string
-    }) => Promise<{ createWritable: () => Promise<WritableStream<Uint8Array>> }>
-  }).showSaveFilePicker
-  if (picker && typeof window.fetch === 'function') {
-    const handle = await picker({ suggestedName: snapshot.name })
-    const directUrl = await createDirectUrl()
-    const response = await fetch(directUrl, { headers: token ? { Authorization: `Bearer ${token}` } : undefined })
-    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
-    const writable = await handle.createWritable()
-    await response.body.pipeTo(writable)
-    return
-  }
-
-  const directUrl = await createDirectUrl()
-  const anchor = document.createElement('a')
-  anchor.href = directUrl.toString()
-  anchor.download = snapshot.name
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
 }
 
 interface PollState<T> {
@@ -472,12 +436,12 @@ export function useServerStatus(interval = 30000): PollState<ServerStatus> {
   return usePoll(pollResources.server, interval)
 }
 
-export function useBackupStatus(interval = 30000): PollState<BackupStatus> & { fetchError: string | null } {
+export function useBackupStatus(interval = 30000): PollState<BackupStatus> & { activityError: string | null } {
   const state = usePoll(pollResources.backup, interval)
   return {
     ...state,
-    fetchError: state.error,
-    data: state.error && state.data ? { ...state.data, driveStale: true } : state.data,
+    activityError: state.error ?? (state.data?.activityError ? localizeMessage(state.data.activityError, savedLanguage()) : null),
+    data: state.error && state.data?.size ? { ...state.data, driveStale: true } : state.data,
     error: state.error ?? (state.data?.driveError ? localizeMessage(state.data.driveError, savedLanguage()) : null),
   }
 }

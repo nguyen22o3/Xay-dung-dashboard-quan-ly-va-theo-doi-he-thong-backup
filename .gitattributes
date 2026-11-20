@@ -1,5 +1,7 @@
 *.sh text eol=lf
 Dockerfile text eol=lf
 *.service text eol=lf
+*.timer text eol=lf
 *.te text eol=lf
 *.yaml text eol=lf
+backup-monitor-backend/ops/backend.env.example text eol=lf

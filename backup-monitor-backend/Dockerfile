@@ -23,6 +23,7 @@ FROM alpine:3.24 AS host-tools
 COPY --from=build /out/backup-manager /backup-manager
 COPY --from=rclone /usr/local/bin/rclone /rclone
 COPY ops/install-local.sh ops/compose.local.yaml ops/backup-monitor-agent.service ops/backup_monitor_agent.te ops/rclone-COPYING.txt /bundle/
+COPY ops/install-restore-check.sh ops/backup-monitor-restore-check.service ops/backup-monitor-restore-check.timer /bundle/
 ENTRYPOINT ["/bin/cat", "/bundle/install-local.sh"]
 
 FROM alpine:3.24 AS runtime

@@ -1,7 +1,6 @@
-import React, { useMemo } from 'react'
+import { useMemo } from 'react'
 import { Responsive, useContainerWidth } from 'react-grid-layout'
-import { pageGridBreakpoints, pageGridColumns } from '../../shared/pageGrid'
-import { usePageGrid } from '../../shared/usePageGrid'
+import { pageGridBreakpoints, pageGridColumns, usePageGrid } from '../../shared/pageGrid'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts'
@@ -74,6 +73,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
   
   const s = server.data ?? {}
   const websitesStatus = websites.data ?? []
+  const recentSnapshots = (localSnapshots.data ?? []).filter(snapshot => last14Days.includes(snapshot.date.slice(0, 10)))
   const backupJobs = (cron.data ?? []).filter(job => job.id === 'backup-site' || job.id === 'backup-database')
   const scheduledBackupJobs = (cron.data ?? []).filter(job => ['backup-site', 'backup-database', 'backup-panel'].includes(job.id))
   const trackingEnabled = backupJobs.length > 0 && backupJobs.every(job => job.schedule_tracked)
@@ -107,28 +107,6 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
 
   const { layouts, onLayoutChange } = usePageGrid('server')
 
-    const cardStyle: React.CSSProperties = {
-    backgroundColor: theme.cardBg,
-    border: `1px solid ${theme.cardBorder}`,
-    boxShadow: isDark ? 'none' : '0 1px 3px rgba(0,0,0,0.1)',
-    display: 'flex',
-    flexDirection: 'column',
-    containerType: 'size' as unknown as 'size',
-  }
-
-    const dragHandleStyle: React.CSSProperties = {
-    padding: '8px 10px',
-    cursor: 'grab',
-    fontSize: '12px',
-    fontWeight: 'bold',
-    color: theme.titleColor,
-    textTransform: 'uppercase',
-    display: 'flex',
-    alignItems: 'center',
-    lineHeight: 1.4,
-    flexShrink: 0,
-  }
-
   return (
     <div className="legacy-page" style={{ width: '100%' }}>
       <h2 style={{ margin: '0 0 15px 0', fontSize: '22px', fontWeight: 'normal', color: theme.titleColor }}>
@@ -136,7 +114,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
       </h2>
       {server.loading && !server.data && <p role="status" style={{ color: theme.textSecondary }}>{lang === 'vi' ? 'Đang đọc thông số máy chủ…' : 'Loading server status…'}</p>}
       {server.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc máy chủ: ${server.error}` : `Could not load server: ${server.error}`}</p>}
-      {backup.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc lịch sử sao lưu từ Google Drive: ${backup.error}` : `Could not load Google Drive backup history: ${backup.error}`}</p>}
+      {backup.activityError && <p role="alert" style={{ color: theme.errorText }}>{backup.activityError}{backup.data?.localActivity && (lang === 'vi' ? ' · Đang hiển thị nhật ký đã lưu' : ' · Showing saved activity')}</p>}
       {localSnapshots.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc bản sao lưu trên máy chủ: ${localSnapshots.error}` : `Could not load server backups: ${localSnapshots.error}`}</p>}
       {websites.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? 'Không thể cập nhật trạng thái website: ' : 'Could not update website status: '}{websites.error}</p>}
       <div style={{ margin: '0 -15px' }}>
@@ -144,7 +122,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
           {mounted && containerWidth > 0 && (
             <Responsive
           width={containerWidth}
-          className="layout"
+          className="layout monitor-grid"
           layouts={layouts}
           breakpoints={pageGridBreakpoints}
           cols={pageGridColumns}
@@ -155,8 +133,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
           margin={[15, 15]}
         >
           {/* OVERVIEW STATUS */}
-          <div key="overview-status" style={{ ...cardStyle, display: 'flex', flexDirection: 'column' }}>
-            <div className="drag-handle" style={dragHandleStyle}>
+          <div key="overview-status">
+            <div className="drag-handle">
               {lang === 'vi' ? 'Trạng thái hoạt động tổng quan' : 'Overview Status'}
             </div>
             <div className="server-overview-status" style={{ flex: 1, display: 'flex', gap: '15px', padding: '10px 15px', overflowX: 'auto' }}>
@@ -191,7 +169,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                 <div>
                   <div style={{ fontSize: '12px', color: theme.textSecondary }}>{tr(lang, 'nextSchedule')}</div>
                   <div style={{ fontSize: '14px', fontWeight: 'bold', color: theme.titleColor }}>
-                    {nextCronRun(scheduledBackupJobs, s.server_time, lang) ?? '—'}
+                    {!cron.error && !server.error ? nextCronRun(scheduledBackupJobs, s.server_time, lang) ?? '—' : '—'}
                   </div>
                 </div>
               </div>
@@ -201,8 +179,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
 
           
           {/* CPU CAPACITY */}
-          <div key="cpu" style={cardStyle}>
-            <div className="drag-handle" style={dragHandleStyle}>
+          <div key="cpu">
+            <div className="drag-handle">
               {lang === 'vi' ? 'Sử dụng CPU' : 'CPU Usage'}
             </div>
             <div style={{ padding: '0 15px 15px 15px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
@@ -220,8 +198,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
           </div>
 
           {/* RAM CAPACITY */}
-          <div key="ram" style={cardStyle}>
-            <div className="drag-handle" style={dragHandleStyle}>
+          <div key="ram">
+            <div className="drag-handle">
               {lang === 'vi' ? 'Sử dụng RAM' : 'RAM Usage'}
             </div>
             <div style={{ padding: '0 15px 15px 15px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
@@ -244,8 +222,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
           </div>
 
           {/* STORAGE CAPACITY (DISK) */}
-          <div key="disk" style={cardStyle}>
-            <div className="drag-handle" style={dragHandleStyle}>
+          <div key="disk">
+            <div className="drag-handle">
               {lang === 'vi' ? 'Tổng dung lượng ổ đĩa' : 'Storage Capacity'}
             </div>
             <div style={{ padding: '0 15px 15px 15px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
@@ -268,8 +246,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
           </div>
 
           {/* DATA GROWTH TREND */}
-          <div key="growth-trend" style={cardStyle}>
-            <div className="drag-handle" style={dragHandleStyle}>
+          <div key="growth-trend">
+            <div className="drag-handle">
               {lang === 'vi' ? 'Dung lượng bản sao lưu trên máy chủ theo ngày' : 'Backup size on the server by date'} ({tr(lang, 'last14Days')})
             </div>
             <div style={{ padding: '10px', flex: 1, minHeight: 0 }}>
@@ -295,8 +273,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
           </div>
 
           {/* PIE CHART (STORAGE BY CATEGORY) */}
-          <div key="backup-chart" style={cardStyle}>
-            <div className="drag-handle" style={dragHandleStyle}>
+          <div key="backup-chart">
+            <div className="drag-handle">
               {lang === 'vi' ? 'Dung lượng bản sao lưu trên máy chủ theo loại' : 'Backup size on the server by type'} ({tr(lang, 'last14Days')})
             </div>
             <div className="server-storage-chart-body">
@@ -342,8 +320,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
           </div>
 
           {/* PROTECTED ENTITIES - WEBSITES */}
-          <div key="websites" style={cardStyle}>
-            <div className="drag-handle" style={dragHandleStyle}>
+          <div key="websites">
+            <div className="drag-handle">
               {lang === 'vi' ? 'Trạng thái Website' : 'Website Status'}
             </div>
             <div style={{ padding: '0 10px 10px 10px', flex: 1, overflow: 'hidden', minHeight: 0 }}>
@@ -388,12 +366,12 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
           </div>
 
           {/* PROTECTED ENTITIES - RECENT BACKUPS */}
-          <div key="local-snapshots" style={cardStyle}>
-            <div className="drag-handle" style={dragHandleStyle}>
+          <div key="local-snapshots">
+            <div className="drag-handle">
               {lang === 'vi' ? 'Tệp sao lưu trên máy chủ' : 'Backup files on the server'} ({tr(lang, 'last14Days')})
             </div>
             <div style={{ padding: '0 10px 10px 10px', flex: 1, overflow: 'hidden', minHeight: 0 }}>
-              {localSnapshots.data && localSnapshots.data.length > 0 ? (
+              {recentSnapshots.length > 0 ? (
                 <div style={{ overflowY: 'auto', height: '100%' }}>
                   <table className="backup-files-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' }}>
                     <colgroup><col /><col style={{ width: '85px' }} /></colgroup>
@@ -404,10 +382,11 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                       </tr>
                     </thead>
                     <tbody>
-                      {localSnapshots.data.filter(s => last14Days.includes(s.date.split(' ')[0])).map((snap, i) => (
-                        <tr key={i} style={{ borderBottom: `1px solid ${theme.gridLine}` }}>
+                      {recentSnapshots.map(snap => (
+                        <tr key={snap.localPath ?? `${snap.date}/${snap.category}/${snap.name}`} style={{ borderBottom: `1px solid ${theme.gridLine}` }}>
                           <td style={{ padding: '8px 8px 8px 0', color: theme.titleColor }} title={snap.localPath ?? snap.name}>
                             <span className="backup-file-name">{snap.name}</span>
+                            <small className="backup-file-meta">{snap.date} · {categoryLabel(snap.category, lang)}</small>
                           </td>
                           <td style={{ padding: '8px 0', textAlign: 'center', color: theme.titleColor, whiteSpace: 'nowrap' }}>{formatBytes(snap.size)}</td>
                         </tr>
@@ -417,15 +396,17 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                 </div>
               ) : (
                 <div style={{ textAlign: 'center', color: theme.textSecondary, padding: '20px', fontSize: '12px' }}>
-                  {lang === 'vi' ? 'Không có bản sao lưu nào.' : 'No backups found.'}
+                  {localSnapshots.loading ? (lang === 'vi' ? 'Đang tải…' : 'Loading…')
+                    : localSnapshots.error ? (lang === 'vi' ? 'Không tải được danh sách.' : 'File list unavailable.')
+                      : (lang === 'vi' ? 'Không có bản sao lưu trong 14 ngày.' : 'No backups in the last 14 days.')}
                 </div>
               )}
             </div>
           </div>
 
           {/* CRON JOBS */}
-          <div key="cron-jobs" style={cardStyle}>
-                          <div className="drag-handle" style={dragHandleStyle}>
+          <div key="cron-jobs">
+                          <div className="drag-handle">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                   <span>{tr(lang, 'scheduledJobsTitle')}</span>
                   <div style={{ padding: '2px 8px', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.gridLine}`, borderRadius: '12px', fontSize: '10px', display: 'flex', alignItems: 'center', gap: '6px', color: theme.successText, textTransform: 'none' }}>
@@ -466,8 +447,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
 
           
             {/* SUCCESS / FAILURE DONUT CHART */}
-            <div key="success-failure" style={cardStyle}>
-              <div className="drag-handle" style={dragHandleStyle}>
+            <div key="success-failure">
+              <div className="drag-handle">
                 {lang === 'vi' ? 'Kết quả sao lưu trên máy chủ' : 'Server backup run results'} ({tr(lang, 'last14Days')})
               </div>
               <div style={{ padding: '10px', flex: 1, minHeight: 0 }}>
@@ -496,6 +477,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                       <Legend verticalAlign="bottom" height={24} wrapperStyle={{ fontSize: '11px', color: theme.textSecondary }} />
                     </PieChart>
                   </ResponsiveContainer>
+                ) : backup.activityError ? (
+                  <div className="overview-empty overview-empty--compact">{lang === 'vi' ? 'Không tải được nhật ký' : 'Activity unavailable'}</div>
                 ) : (
                   <div style={{ textAlign: 'center', color: theme.textSecondary, padding: '20px', fontSize: '12px' }}>
                     {trackingEnabled
@@ -508,8 +491,8 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
             </div>
 
             {/* DURATION BAR CHART */}
-            <div key="duration-chart" style={cardStyle}>
-              <div className="drag-handle" style={dragHandleStyle}>
+            <div key="duration-chart">
+              <div className="drag-handle">
                 {lang === 'vi' ? 'Tổng thời lượng sao lưu website và database mỗi ngày (giây)' : 'Total website and database backup duration per day (seconds)'}
               </div>
               <div style={{ padding: '10px', flex: 1, minHeight: 0 }}>
@@ -528,7 +511,7 @@ export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: La
                   </ResponsiveContainer>
                 ) : (
                   <div style={{ textAlign: 'center', color: theme.textSecondary, padding: '20px', fontSize: '12px' }}>
-                    {tr(lang, 'noData')}
+                    {backup.activityError ? (lang === 'vi' ? 'Không tải được nhật ký' : 'Activity unavailable') : tr(lang, 'noData')}
                   </div>
                 )}
               </div>

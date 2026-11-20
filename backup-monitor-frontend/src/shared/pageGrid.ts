@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from 'react'
 import type { Layout, LayoutItem } from 'react-grid-layout'
 
 export const pageGridBreakpoints = { lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }
@@ -84,4 +85,25 @@ export function readPageGridLayouts(page: GridPage, raw: string | null): PageGri
     }
   } catch { /* Corrupt storage must not prevent login or rendering. */ }
   return defaults
+}
+
+// Apply the screenshot-based defaults once. Subsequent edits still persist;
+// the previous storage entries are retained rather than deleting browser data.
+const storageKeys = { server: 'serverGridV21', drive: 'driveGridV6' }
+
+export function usePageGrid(page: GridPage) {
+  const key = storageKeys[page]
+  const [layouts, setLayouts] = useState(() => {
+    try { return readPageGridLayouts(page, localStorage.getItem(key)) }
+    catch { return readPageGridLayouts(page, null) }
+  })
+  useEffect(() => {
+    try { localStorage.setItem(key, JSON.stringify(layouts)) }
+    catch { /* Layout editing also works when browser storage is blocked. */ }
+  }, [key, layouts])
+  const onLayoutChange = useCallback((_current: Layout, incoming: Partial<Record<string, Layout>>) => {
+    const next = readPageGridLayouts(page, JSON.stringify({ ...layouts, ...incoming }))
+    if (JSON.stringify(next) !== JSON.stringify(layouts)) setLayouts(next)
+  }, [layouts, page])
+  return { layouts, onLayoutChange }
 }

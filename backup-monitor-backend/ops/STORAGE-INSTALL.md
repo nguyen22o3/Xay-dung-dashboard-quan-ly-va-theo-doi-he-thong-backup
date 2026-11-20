@@ -60,6 +60,24 @@ Bộ cài này yêu cầu image chứa helper v26 (mặc định release dự ki
 Image đã phát hành 1.1.5 không hỗ trợ tính năng này. Chưa có thao tác publish
 Docker Hub trong thay đổi này; chỉ dùng khi cả ba image của release mới đã có.
 
+## Kiểm tra khôi phục định kỳ
+
+Với bộ cài Docker, thêm `--enable-restore-check` khi chạy `install-local.sh`.
+Với dashboard Windows kết nối qua SSH, chép `ops/install-restore-check.sh` và
+hai unit `ops/backup-monitor-restore-check.{service,timer}` vào cùng một thư mục
+do root quản lý trên AlmaLinux, sau đó chạy `sudo bash install-restore-check.sh`
+trong thư mục đó sau khi cài helper.
+
+Bộ cài chuẩn bị Podman, lưu digest của image chính thức vào
+`config/restore-check-images.json` và bật timer lúc **03:30 Chủ nhật, giờ Việt Nam**.
+Kiểm tra lịch bằng `systemctl list-timers backup-monitor-restore-check.timer`.
+Sau khi có bản sao lưu, có thể chạy kiểm tra một lần bằng
+`sudo systemctl start backup-monitor-restore-check.service` và xem nhật ký qua
+`journalctl -u backup-monitor-restore-check.service`. Kết quả từng lần được lưu
+trong `recovery/restore-checks/` của thư mục ứng dụng. Lần kiểm tra dùng các bản
+sao trên AlmaLinux. Website và aaPanel được kiểm tra cấu trúc tệp, còn bản SQL
+được nhập vào MariaDB cách ly.
+
 ## An toàn và cập nhật tiếp theo
 
 - Sao chép, kiểm tra checksum và cú pháp Bash trước khi đổi cron/locator.

@@ -15,8 +15,11 @@
 !ops/templates/
 !ops/templates/**
 !ops/install-local.sh
+!ops/install-restore-check.sh
 !ops/compose.local.yaml
 !ops/backup-monitor-agent.service
+!ops/backup-monitor-restore-check.service
+!ops/backup-monitor-restore-check.timer
 !ops/backup_monitor_agent.te
 !ops/rclone-COPYING.txt
 **/*_test.go

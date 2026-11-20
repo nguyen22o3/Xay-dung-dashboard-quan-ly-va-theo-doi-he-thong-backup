@@ -1,26 +1,24 @@
 import { localizeMessage } from '../../shared/messages'
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Eye, Pause, Pencil, Play, RefreshCw, Search, Trash2, X } from 'lucide-react'
-import { apiErrorMessage, fetchCronJobLog, runCronJob, updateCronJobState, useCronJobs } from '../../api/dashboard'
+import { apiErrorMessage, deleteCronJob, fetchCronJobLog, fetchCronJobs, runCronJob, updateCronJobState, useCronJobs } from '../../api/dashboard'
 import type { Lang } from '../../shared/language'
 import type { CronJob, CronJobLog } from '../../shared/types'
-import { formatCronSchedule } from '../../shared/utils'
+import { formatCronSchedule, statusLabel } from '../../shared/utils'
 import BackupSystemSettings from './BackupSystemSettings'
-import DriveConnection from './DriveConnection'
 import BackupTaskEditDialog from './BackupTaskEditDialog'
 import CronImportDialog from './CronImportDialog'
 import ScriptEditDialog from './ScriptEditDialog'
-import CronLogTools from '../monitoring/CronLogTools'
-import TaskProgress from '../../shared/TaskProgress'
+import CronLogTools from './CronLogTools'
+import TaskProgress from './TaskProgress'
 import { cancelTask, taskProcess } from '../../api/operations'
 import { applySavedCronSchedule, sortCronJobsByTime, cronImportMaxBytes, exportCronFile, parseCronFile, planCronImport } from './cronTransfer'
 import type { CronImportRow } from './cronTransfer'
 import { backupTaskLabels as jobLabels, backupTaskScripts, cronJobSelector } from './backupTasks'
 import type { BackupSystemState } from '../../api/backupSystem'
 import { fetchBackupSystem } from '../../api/backupSystem'
-import { cronLogForDisplay } from '../monitoring/cronLogDisplay'
-import { deleteCronSchedule } from './cronDeletion'
+import { cronLogForDisplay } from './cronLogDisplay'
 
 const backupIds = ['backup-site', 'backup-database', 'backup-panel']
 const categories = [
@@ -30,6 +28,31 @@ const categories = [
   { id: 'maintenance', vi: 'Dọn dẹp & kiểm tra', en: 'Cleanup & checks' },
 ]
 const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase()
+
+type CronDeletionResult = { backupPath?: string; jobs?: CronJob[] }
+
+// A request can remove the schedule before its response is lost or rejected.
+// Reconcile against a fresh server read instead of leaving a stale error dialog.
+async function deleteCronSchedule(job: CronJob): Promise<CronDeletionResult> {
+  if (typeof job.enabled !== 'boolean') throw new Error('Không xác minh được trạng thái lịch cron')
+  const selector = cronJobSelector(job)
+  try {
+    const result = await deleteCronJob(selector, job.schedule, job.enabled)
+    if (result?.status !== 'deleted') throw new Error('Không xác nhận được kết quả xóa; hãy làm mới danh sách trước khi thử lại')
+    return { backupPath: result.backupPath }
+  } catch (error: unknown) {
+    let jobs: CronJob[]
+    try {
+      jobs = await fetchCronJobs()
+    } catch {
+      throw error
+    }
+    // Fail closed on an invalid list. A remaining instance, even with a new
+    // schedule/state, may be an edit conflict rather than a completed deletion.
+    if (!Array.isArray(jobs) || jobs.some(current => !current || typeof current.id !== 'string' || typeof current.schedule !== 'string' || cronJobSelector(current) === selector)) throw error
+    return { jobs }
+  }
+}
 
 function useDialogFocus(active: boolean, ref: RefObject<HTMLElement | null>) {
   useEffect(() => {
@@ -80,7 +103,6 @@ export default function CronJobs({ lang }: { lang: Lang }) {
   const [taskExpanded, setTaskExpanded] = useState(true)
   const [storage, setStorage] = useState<BackupSystemState | null>(null)
   const [storageBusy, setStorageBusy] = useState(false)
-  const [driveBusy, setDriveBusy] = useState(false)
   const [storageRevision, setStorageRevision] = useState(0)
   useEffect(() => {
     const changed = (event: Event) => setStorage((event as CustomEvent<BackupSystemState>).detail)
@@ -104,27 +126,46 @@ export default function CronJobs({ lang }: { lang: Lang }) {
   const fileInput = useRef<HTMLInputElement>(null), readingFile = useRef(false)
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('all')
+  const cronTable = useRef<HTMLTableElement>(null)
   const logDialog = useRef<HTMLDivElement>(null)
   const deleteDialog = useRef<HTMLDivElement>(null)
   const stateDialog = useRef<HTMLDivElement>(null)
   useDialogFocus(!!logJob, logDialog)
   useDialogFocus(!!deleteJob, deleteDialog)
   useDialogFocus(!!stateJob, stateDialog)
-  const mutating = driveBusy || storageBusy || transferBusy || importFile !== null || editingJob !== null || scriptJob !== null || editingBusy || runningJob !== null || deleteJob !== null || stateJob !== null
+  const mutating = storageBusy || transferBusy || importFile !== null || editingJob !== null || scriptJob !== null || editingBusy || runningJob !== null || deleteJob !== null || stateJob !== null
   const editorJobs: CronJob[] = Object.entries(backupTaskScripts).map(([id, file]) => ({
     id, name: jobLabels[id][lang], script: `${storage?.config.scriptsDir ?? '/root/scripts'}/${file}`, schedule: '', enabled: false, last_run: '', status: 'never', isNew: true,
   }))
   const currentDeleteJob = deleteJob ? jobs.find(job => cronJobSelector(job) === cronJobSelector(deleteJob) && job.schedule === deleteJob.schedule) : null
-  const deleteStale = !!deleteJob && (!currentDeleteJob || currentDeleteJob.schedule !== deleteJob.schedule || currentDeleteJob.enabled !== deleteJob.enabled)
+  const deleteStale = !!deleteJob && (!currentDeleteJob || currentDeleteJob.enabled !== deleteJob.enabled)
   const deleteRunning = currentDeleteJob?.status === 'running'
   const currentStateJob = stateJob ? jobs.find(job => cronJobSelector(job) === cronJobSelector(stateJob) && job.schedule === stateJob.schedule) : null
-  const stateStale = !!stateJob && (!currentStateJob || currentStateJob.schedule !== stateJob.schedule || currentStateJob.enabled !== stateJob.enabled)
+  const stateStale = !!stateJob && (!currentStateJob || currentStateJob.enabled !== stateJob.enabled)
   const stateRunning = currentStateJob?.status === 'running'
   const filteredJobs = sortCronJobsByTime(jobs.filter(job => {
     const group = backupIds.includes(job.id) ? 'backup' : job.id === 'drive-sync' ? 'drive' : 'maintenance'
     return (category === 'all' || group === category)
       && normalize(`${jobLabels[job.id]?.vi ?? ''} ${jobLabels[job.id]?.en ?? ''} ${job.name} ${job.script}`).includes(normalize(search.trim()))
   }))
+  const firstJob = filteredJobs[0]
+  const firstJobKey = firstJob ? `${cronJobSelector(firstJob)}:${firstJob.schedule}` : ''
+  useLayoutEffect(() => {
+    const heading = cronTable.current?.querySelector<HTMLElement>('thead th:last-child')
+    const runButton = cronTable.current?.querySelector<HTMLElement>('tbody .cron-run')
+    if (!heading || !runButton) return
+
+    const alignHeading = () => {
+      const headingStart = heading.getBoundingClientRect().left + parseFloat(getComputedStyle(heading).paddingLeft)
+      const buttonStart = runButton.getBoundingClientRect().left
+      heading.style.textIndent = `${Math.max(0, buttonStart - headingStart)}px`
+    }
+    alignHeading()
+    const observer = new ResizeObserver(alignHeading)
+    observer.observe(heading)
+    observer.observe(runButton)
+    return () => observer.disconnect()
+  }, [firstJobKey, lang])
   const destination = (job: CronJob) => {
     if (['cleanup-panel', 'integrity-check'].includes(job.id)) return '—'
     if (!storage) return vi ? 'Chưa tải cấu hình' : 'Configuration unavailable'
@@ -328,8 +369,7 @@ export default function CronJobs({ lang }: { lang: Lang }) {
           <p>{vi ? 'Cấu hình nơi lưu trữ và quản lý lịch chạy.' : 'Storage configuration and scheduled tasks.'}</p>
         </div>
       </div>
-      <DriveConnection lang={lang} locked={mutating} onBusyChange={setDriveBusy} onConnected={() => { setStorageRevision(value => value + 1); cron.reload() }} />
-      <div className="backup-task-editor-anchor"><BackupSystemSettings key={storageRevision} lang={lang} expanded={taskExpanded} onToggle={() => setTaskExpanded(!taskExpanded)} onReload={cron.reload} locked={driveBusy || transferBusy || importFile !== null || editingJob !== null || scriptJob !== null || runningJob !== null || deleteJob !== null || stateJob !== null} onStateChange={setStorage} onBusyChange={setStorageBusy}
+      <div className="backup-task-editor-anchor"><BackupSystemSettings key={storageRevision} lang={lang} expanded={taskExpanded} onToggle={() => setTaskExpanded(!taskExpanded)} onReload={cron.reload} locked={transferBusy || importFile !== null || editingJob !== null || scriptJob !== null || runningJob !== null || deleteJob !== null || stateJob !== null} onStateChange={setStorage} onBusyChange={setStorageBusy}
         task={{ jobs: editorJobs, selectedId: selectedJobId, revision: editorRevision, loading: cron.loading, error: cron.error, onSelect: id => { setSelectedJobId(id); setEditorRevision(value => value + 1) }, onApplied: saved => { cron.updateData(current => applySavedCronSchedule(current, saved)); setEditorRevision(value => value + 1) } }} /></div>
       {feedback && <div className={`cron-feedback backup-management-feedback ${feedback.error ? 'cron-feedback--error' : ''}`} role={feedback.error ? 'alert' : 'status'}>{localizeMessage(feedback.message, lang)}</div>}
       <section className="cron-panel backup-task-panel" id="backup-tasks" aria-labelledby="backup-tasks-title">
@@ -354,14 +394,14 @@ export default function CronJobs({ lang }: { lang: Lang }) {
           <div className="cron-message">{vi ? 'Không tìm thấy lịch chạy script nào.' : 'No scheduled scripts found.'}</div>
         ) : filteredJobs.length === 0 ? <div className="cron-message">{vi ? 'Không có tác vụ phù hợp. Hãy đổi bộ lọc hoặc từ khóa.' : 'No matching tasks. Change the filter or search.'}</div> : (
           <div className="cron-table-wrap">
-            <table className="cron-table" role="table" aria-labelledby="backup-tasks-title">
+            <table ref={cronTable} className="cron-table" role="table" aria-labelledby="backup-tasks-title">
               <thead role="rowgroup">
                 <tr role="row">
                   <th scope="col" role="columnheader">{vi ? 'Tác vụ' : 'Job'}</th>
-                  <th scope="col" role="columnheader">{vi ? 'Trạng thái' : 'Status'}</th>
+                  <th scope="col" role="columnheader">{vi ? 'Lịch tự động' : 'Automatic schedule'}</th>
                   <th scope="col" role="columnheader">{vi ? 'Lịch chạy' : 'Schedule'}</th>
                   <th scope="col" role="columnheader">{vi ? 'Nơi lưu' : 'Destination'}</th>
-                  <th scope="col" role="columnheader">{vi ? 'Thời điểm thực hiện' : 'Execution time'}</th>
+                  <th scope="col" role="columnheader">{vi ? 'Lần chạy gần nhất' : 'Last run'}</th>
                   <th scope="col" role="columnheader">{vi ? 'Hành động' : 'Action'}</th>
                 </tr>
               </thead>
@@ -372,12 +412,15 @@ export default function CronJobs({ lang }: { lang: Lang }) {
                       <strong>{jobLabels[job.id]?.[vi ? 'vi' : 'en'] ?? job.name}</strong>
                       {job.status === 'running' && <TaskProgress id={cronJobSelector(job)} lang={lang} />}
                     </td>
-                    <td role="cell" data-label={vi ? 'Trạng thái' : 'Status'}><button className={`cron-schedule-state ${job.enabled === true ? 'is-enabled' : job.enabled === false ? 'is-paused' : ''}`} type="button" disabled={mutating || !!cron.error || job.status === 'running' || typeof job.enabled !== 'boolean'} onClick={() => { setStateJob({ ...job }); setStateError(null) }} aria-label={`${job.enabled ? (vi ? 'Tạm dừng cron' : 'Pause cron') : (vi ? 'Bật cron' : 'Enable cron')}: ${jobLabels[job.id]?.[lang] ?? job.name}`} title={vi ? 'Trạng thái lịch tự động; bấm để bật/tạm dừng, không phải kết quả backup' : 'Automatic schedule state; click to enable/pause, not the backup result'}>{job.enabled === true ? <>{vi ? 'Đã bật' : 'Enabled'} <Play size={12} fill="currentColor" /></> : job.enabled === false ? <>{vi ? 'Tạm dừng' : 'Paused'} <Pause size={12} fill="currentColor" /></> : (vi ? 'Chưa xác minh' : 'Unverified')}</button></td>
+                    <td role="cell" data-label={vi ? 'Lịch tự động' : 'Automatic schedule'}><button className={`cron-schedule-state ${job.enabled === true ? 'is-enabled' : job.enabled === false ? 'is-paused' : ''}`} type="button" disabled={mutating || !!cron.error || job.status === 'running' || typeof job.enabled !== 'boolean'} onClick={() => { setStateJob({ ...job }); setStateError(null) }} aria-label={`${job.enabled ? (vi ? 'Tạm dừng cron' : 'Pause cron') : (vi ? 'Bật cron' : 'Enable cron')}: ${jobLabels[job.id]?.[lang] ?? job.name}`}>{job.enabled === true ? <>{vi ? 'Đã bật' : 'Enabled'} <Play size={12} fill="currentColor" /></> : job.enabled === false ? <>{vi ? 'Tạm dừng' : 'Paused'} <Pause size={12} fill="currentColor" /></> : (vi ? 'Chưa xác minh' : 'Unverified')}</button></td>
                     <td role="cell" data-label={vi ? 'Lịch chạy' : 'Schedule'}>
                       <span>{formatCronSchedule(job.schedule, lang)}</span>
                     </td>
                     <td role="cell" data-label={vi ? 'Nơi lưu' : 'Destination'} className="backup-destination"><span title={destination(job)}>{destination(job)}</span></td>
-                    <td role="cell" data-label={vi ? 'Thời điểm thực hiện' : 'Execution time'}><span>{job.last_run || job.tracked_at || (vi ? 'Chưa có dữ liệu' : 'No data')}</span></td>
+                    <td role="cell" data-label={vi ? 'Lần chạy gần nhất' : 'Last run'}>
+                      <strong className="cron-run-result" data-status={job.status}>{job.status === 'never' ? (vi ? 'Chưa ghi nhận' : 'No run recorded') : statusLabel(job.status, lang)}</strong>
+                      {(job.last_run || job.tracked_at) && <small>{job.last_run || job.tracked_at}</small>}
+                    </td>
                     <td role="cell" data-label={vi ? 'Hành động' : 'Action'}>
                       <div className="cron-actions">
                         <button className="cron-run" type="button" onClick={() => handleRun(job)} disabled={mutating || !job.id || job.status === 'running'} aria-label={`${vi ? 'Chạy ngay' : 'Run now'}: ${jobLabels[job.id]?.[vi ? 'vi' : 'en'] ?? job.name}`}>

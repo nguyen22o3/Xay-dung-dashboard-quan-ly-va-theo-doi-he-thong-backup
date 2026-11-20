@@ -7,9 +7,11 @@ interface ResourceUsage {
 
 interface LocalBackupInfo {
   size: string
+  bytes?: number
   count: number
   latest_date: string
   latest_name: string
+  history?: { date: string; bytes: number; files: number }[]
 }
 
 export interface ServerStatus {
@@ -27,6 +29,7 @@ export interface ServerStatus {
   local_crons?: number
   local_cron_times?: string
   local_backup?: LocalBackupInfo
+  local_backup_error?: string
 }
 
 export interface BackupActivityEntry {
@@ -46,6 +49,8 @@ export interface BackupStatus {
   driveError?: string
   driveStale?: boolean
   driveDataAt?: string
+  driveDay?: string
+  activityError?: string
   about?: { total?: number; used?: number; free?: number }
   size?: { count?: number; bytes?: number }
   dirs?: string

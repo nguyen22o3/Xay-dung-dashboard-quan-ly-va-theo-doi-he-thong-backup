@@ -1,8 +1,4 @@
 import { client, clearSnapshotsCache } from './dashboard'
-export type DriveConnectionStatus = { remotes: string[]; rcloneInstalled: boolean }
-export type DriveConnectionInput = { remote: string; clientId: string; clientSecret: string; token: string }
-export async function fetchDriveConnection(): Promise<DriveConnectionStatus> { return (await client.get<DriveConnectionStatus>('/api/backup-system/drive/status')).data }
-export async function connectDrive(drive: DriveConnectionInput): Promise<DriveConnectionStatus> { return (await client.post<DriveConnectionStatus>('/api/backup-system/drive/connect', { drive })).data }
 export type BackupSource = { path: string; scope: 'folder' | 'children' }
 export type CronOptions = { backupRoot: string; driveRemote: string; driveFolder: string; source?: BackupSource }
 export type CronDirectories = { scriptsDir: string; logsDir: string; options?: CronOptions }
@@ -55,7 +51,6 @@ export async function fetchBackupSystem(): Promise<BackupSystemState> {
   return data
 }
 export async function listBackupFolders(request: FolderRequest): Promise<FolderList> { return (await client.post<FolderList>('/api/backup-system/directories/list', request)).data }
-export async function createBackupFolder(request: FolderRequest): Promise<void> { await client.post('/api/backup-system/directories/create', request) }
 export async function previewBackupSystem(config: BackupSystemConfig, expectedVersion: string, schedule?: CronScheduleChange | null): Promise<ConfigurationPreview> { return (await client.post<ConfigurationPreview>('/api/backup-system/preview', { config, expectedVersion, ...(schedule ? { schedule } : {}) }, { timeout: 660000 })).data }
 export async function applyBackupSystem(config: BackupSystemConfig, expectedVersion: string, previewToken: string, schedule?: CronScheduleChange | null): Promise<BackupSystemState> {
   const { data } = await client.post<BackupSystemState>('/api/backup-system/apply', { config, expectedVersion, previewToken, ...(schedule ? { schedule } : {}) }, { timeout: 660000 })

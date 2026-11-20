@@ -147,10 +147,8 @@
   flex-wrap: wrap;
   gap: 8px;
 }
-.ui-table-actions { justify-content: flex-end; min-width: 230px; }
+.ui-table-actions { justify-content: flex-start; }
 .ui-data-table-wrap { max-width: 100%; overflow-x: auto; border-radius: var(--ui-panel-radius); }
-.available-page .ui-data-table-wrap table { min-width: 720px; }
-.ui-data-table-wrap > table { min-width: 650px; }
 .activity-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
 .ui-page-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
 
@@ -249,6 +247,26 @@
 .task-progress span, .task-progress small { overflow-wrap: anywhere; white-space: normal; }
 .task-progress progress { width: 100%; height: .5rem; accent-color: var(--app-accent, #1d63ed); }
 .cron-table td > small { display: block; white-space: normal; overflow-wrap: anywhere; }
+.cron-run-result { color: var(--app-muted); }
+.cron-run-result[data-status="success"] { color: var(--app-success); }
+.cron-run-result[data-status="failed"] { color: var(--app-danger); }
+.cron-run-result[data-status="running"] { color: var(--app-accent); }
+.backup-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; color: var(--app-muted); font-size: 13px; }
+.available-page .responsive-data-table th { padding: 14px 16px; text-align: left; }
+.backup-filters .activity-select-all { display: inline-flex; min-height: 36px; align-items: center; gap: 8px; }
+.backup-filters .activity-select-all input { width: 16px; min-height: 0; height: 16px; }
+
+@media (max-width: 760px) {
+  .legacy-page .responsive-data-table { display: block; width: 100%; min-width: 0; }
+  .responsive-data-table > thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .responsive-data-table > tbody { display: block; }
+  .responsive-data-table > tbody > tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; padding: 14px; }
+  .responsive-data-table > tbody > tr > td { display: block; min-width: 0; padding: 0 !important; text-align: left !important; white-space: normal !important; overflow-wrap: anywhere; }
+  .responsive-data-table > tbody > tr > td[data-label]::before { content: attr(data-label); display: block; color: var(--app-muted); font-size: 11px; margin-bottom: 3px; font-weight: 400; }
+  .responsive-data-table > tbody > tr > :is(td[colspan], .data-table-name, .data-table-action) { grid-column: 1 / -1; }
+  .responsive-data-table > tbody > tr > .data-table-name { order: -1; font-weight: 650; }
+  .responsive-data-table > tbody > tr > .data-table-action button { white-space: normal; }
+}
 
 .backup-task-cycle { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
 .app-shell .backup-management .backup-task-cycle > select {
@@ -368,4 +386,75 @@
   .backup-management .cron-table tbody tr { grid-template-columns: minmax(0, 1fr); padding: 14px; }
   .backup-management .cron-actions > button { flex: 1 1 auto; white-space: normal; overflow-wrap: anywhere; }
   .backup-task-toolbar > select, .backup-task-toolbar .backup-task-search { width: 100%; }
+}
+
+/* Shared native scrollbars for the page, widgets, tables and shell portals. */
+.app-shell {
+  --ui-scrollbar-size: 10px;
+  --ui-scrollbar-thumb: #52657c;
+  color-scheme: dark;
+}
+
+.app-shell[data-theme="light"] {
+  --ui-scrollbar-thumb: #8c9caf;
+  color-scheme: light;
+}
+
+/* Keep the OS high-contrast scrollbar when forced colors are enabled. */
+@media (forced-colors: none) {
+  /* Non-auto standard properties override WebKit pseudo-element styling in
+     Chromium, so use only one styling path in each browser. */
+  @supports selector(::-webkit-scrollbar) {
+    :where(.app-shell, .app-shell *) {
+      scrollbar-width: auto;
+      scrollbar-color: auto;
+    }
+
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar {
+      width: var(--ui-scrollbar-size);
+      height: var(--ui-scrollbar-size);
+      background: transparent;
+    }
+
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar-track {
+      background: transparent;
+      border-radius: 999px;
+    }
+
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar-thumb {
+      min-height: 32px;
+      min-width: 32px;
+      border: 2px solid transparent;
+      border-radius: 999px;
+      background: var(--ui-scrollbar-thumb);
+      background-clip: padding-box;
+    }
+
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar-thumb:hover,
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar-thumb:active {
+      background-color: var(--app-accent);
+    }
+
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar-button {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+
+    :where(.app-shell, .app-shell *)::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+  }
+
+  @supports not selector(::-webkit-scrollbar) {
+    :where(.app-shell, .app-shell *) {
+      scrollbar-width: thin;
+      scrollbar-color: var(--ui-scrollbar-thumb) transparent;
+    }
+  }
+
+  @media (pointer: coarse) {
+    .app-shell { --ui-scrollbar-size: 14px; }
+    :where(.app-shell, .app-shell *) { scrollbar-width: auto; }
+  }
 }

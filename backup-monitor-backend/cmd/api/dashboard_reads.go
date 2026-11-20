@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"regexp"
 	"sort"
 	"strconv"
@@ -61,7 +62,7 @@ if [ -z "$ABOUT" ]; then ABOUT="{}"; fi
 printf '%s\n%s\n__DRIVE_ABOUT__\n%s\n__DRIVE_LISTING__\n%s' "$TODAY" "$LSF_STATUS" "$ABOUT" "$LSF_OUT"
 `
 
-type driveHistoryDay struct {
+type backupHistoryDay struct {
 	Date  string `json:"date"`
 	Bytes int64  `json:"bytes"`
 	Files int64  `json:"files"`
@@ -93,7 +94,7 @@ func parseDriveInventory(output string, fetchedAt time.Time) (driveInventory, er
 		}
 		listing = ""
 	}
-	days := map[string]*driveHistoryDay{}
+	days := map[string]*backupHistoryDay{}
 	todayDirs := map[string]bool{}
 	todayCounts := map[string]int64{"site": 0, "database": 0, "panel": 0}
 	todayBytes := map[string]int64{"site": 0, "database": 0, "panel": 0}
@@ -115,7 +116,7 @@ func parseDriveInventory(output string, fetchedAt time.Time) (driveInventory, er
 			continue
 		}
 		if days[day] == nil {
-			days[day] = &driveHistoryDay{Date: day}
+			days[day] = &backupHistoryDay{Date: day}
 		}
 		days[day].Bytes += size
 		days[day].Files++
@@ -127,7 +128,7 @@ func parseDriveInventory(output string, fetchedAt time.Time) (driveInventory, er
 			}
 		}
 	}
-	history := make([]driveHistoryDay, 0, len(days))
+	history := make([]backupHistoryDay, 0, len(days))
 	for _, day := range days {
 		history = append(history, *day)
 	}
@@ -145,6 +146,7 @@ func parseDriveInventory(output string, fetchedAt time.Time) (driveInventory, er
 		"about": json.RawMessage(about), "size": map[string]int64{"bytes": totalBytes, "count": totalFiles},
 		"dirs": dirsValue, "totalFolders": len(days), "history": history,
 		"driveError": driveError, "todayBreakdown": todayCounts, "todayBreakdownBytes": todayBytes,
+		"driveDay": fields[0],
 	}
 	if driveError != "" {
 		status["size"] = nil
@@ -248,15 +250,63 @@ LOCAL_ACTIVITY="$LOCAL_ACTIVITY]"
 echo "{\"activity\": $ACTIVITY, \"localActivity\": $LOCAL_ACTIVITY}"
 `
 
+type backupActivity struct {
+	Drive json.RawMessage `json:"activity"`
+	Local json.RawMessage `json:"localActivity"`
+}
+
+func parseBackupActivity(data []byte) (backupActivity, error) {
+	var activity backupActivity
+	if err := json.Unmarshal(data, &activity); err != nil {
+		return backupActivity{}, err
+	}
+	for _, entries := range []json.RawMessage{activity.Drive, activity.Local} {
+		if len(entries) == 0 || entries[0] != '[' {
+			return backupActivity{}, fmt.Errorf("Nhật ký sao lưu không hợp lệ")
+		}
+	}
+	return activity, nil
+}
+
 func readBackupActivity() ([]byte, error) {
 	command := resolvedBackupStatusCommand(localActivityReadCommand)
-	return cachedGetFresh("backup-activity", localInventoryTTL, func() ([]byte, error) {
+	return cachedGetFreshOrError("backup-activity", localInventoryTTL, func() ([]byte, error) {
 		output, err := executeSSHCommandRaw(command)
-		if err == nil && !json.Valid([]byte(output)) {
-			err = fmt.Errorf("Nhật ký sao lưu không hợp lệ")
+		if err == nil {
+			_, err = parseBackupActivity([]byte(output))
 		}
 		return []byte(output), err
 	})
+}
+
+func readDriveSummary() ([]byte, error) {
+	cacheMu.Lock()
+	_, hasInventory := cache["drive-inventory"]
+	cacheMu.Unlock()
+	good := currentGoodDriveStatus()
+	if !hasInventory && len(good) > 0 {
+		// Keep the persistent last-good summary immediately available at startup.
+		go func() { _, _ = readDriveInventory() }()
+		return markDriveStatusStale(good), nil
+	}
+	inventory, err := readDriveInventory()
+	if err != nil {
+		log.Printf("drive inventory: %v", err)
+		return mergeDriveStatus([]byte(`{"driveError":"Không thể đọc Google Drive"}`), good)
+	}
+	summary := inventory.Summary
+	if inventory.driveError() != "" {
+		return mergeDriveStatus(summary, good)
+	}
+	if !bytes.Equal(summary, good) {
+		var status struct {
+			Stale bool `json:"driveStale"`
+		}
+		if json.Unmarshal(summary, &status) == nil && !status.Stale {
+			rememberGoodDriveStatus(summary)
+		}
+	}
+	return summary, nil
 }
 
 func readBackupStatus() ([]byte, error) {
@@ -269,54 +319,35 @@ func readBackupStatus() ([]byte, error) {
 		data, err := readBackupActivity()
 		activityResult <- result{data, err}
 	}()
-	var summary []byte
-	cacheMu.Lock()
-	_, hasInventory := cache["drive-inventory"]
-	cacheMu.Unlock()
-	good := currentGoodDriveStatus()
-	if !hasInventory && len(good) > 0 {
-		// Keep the persistent last-good summary immediately available at startup.
-		go func() { _, _ = readDriveInventory() }()
-		summary = markDriveStatusStale(good)
-	} else {
-		inventory, err := readDriveInventory()
-		if err != nil {
-			return nil, err
-		}
-		summary = inventory.Summary
-		if inventory.driveError() != "" {
-			var err error
-			summary, _, err = mergeDriveStatus(summary, good, time.Now())
-			if err != nil {
-				return nil, err
-			}
-		} else if !bytes.Equal(summary, good) {
-			var status struct {
-				Stale bool `json:"driveStale"`
-			}
-			if json.Unmarshal(summary, &status) == nil && !status.Stale {
-				rememberGoodDriveStatus(summary)
-			}
-		}
+	summary, err := readDriveSummary()
+	if err != nil {
+		log.Printf("drive summary: %v", err)
+		summary = []byte(`{"driveError":"Không thể đọc Google Drive"}`)
 	}
 	activity := <-activityResult
 	if activity.err != nil {
-		return nil, activity.err
+		log.Printf("backup activity: %v", activity.err)
 	}
-	var status, logs map[string]json.RawMessage
-	if err := json.Unmarshal(summary, &status); err != nil {
-		return nil, err
+	return combineBackupStatus(summary, activity.data, activity.err)
+}
+
+func combineBackupStatus(summary, activityData []byte, activityErr error) ([]byte, error) {
+	var status map[string]json.RawMessage
+	if err := json.Unmarshal(summary, &status); err != nil || status == nil {
+		status = map[string]json.RawMessage{"driveError": json.RawMessage(`"Không thể đọc Google Drive"`)}
 	}
-	if err := json.Unmarshal(activity.data, &logs); err != nil {
-		return nil, err
+	activity, err := parseBackupActivity(activityData)
+	if activityErr != nil || err != nil {
+		status["activityError"] = json.RawMessage(`"Không thể đọc nhật ký sao lưu"`)
+	} else {
+		status["activity"], status["localActivity"] = activity.Drive, activity.Local
 	}
-	status["activity"], status["localActivity"] = logs["activity"], logs["localActivity"]
 	return json.Marshal(status)
 }
 
 func readLocalInventory() ([]byte, error) {
 	command := configuredLocalInventoryCommand()
-	return cachedGetFresh("local-snapshots", localInventoryTTL, func() ([]byte, error) {
+	return cachedGetFreshOrError("local-snapshots", localInventoryTTL, func() ([]byte, error) {
 		output, err := executeSSHCommandRaw(command)
 		return []byte(output), err
 	})
@@ -324,7 +355,7 @@ func readLocalInventory() ([]byte, error) {
 
 func readServerStatus() ([]byte, error) {
 	command := serverStatusReadCommand()
-	return cachedGetFresh("server-status", localInventoryTTL, func() ([]byte, error) {
+	return cachedGetFreshOrError("server-status", localInventoryTTL, func() ([]byte, error) {
 		type result struct {
 			output string
 			err    error
@@ -335,26 +366,14 @@ func readServerStatus() ([]byte, error) {
 			metrics <- result{output, err}
 		}()
 		inventory, err := readLocalInventory()
-		if err != nil {
-			return nil, err
-		}
 		status := <-metrics
 		if status.err != nil {
 			return nil, status.err
 		}
+		if err != nil {
+			log.Printf("local backup inventory: %v", err)
+			return parseServerStatus(status.output)
+		}
 		return parseServerStatus(status.output + "\n__LOCAL_INVENTORY__\n" + string(inventory))
 	})
-}
-
-func refreshReadCaches() {
-	flightMu.Lock()
-	cacheMu.Lock()
-	for key, entry := range cache {
-		entry.expiresAt = time.Time{}
-		cache[key] = entry
-	}
-	// Detach prior producers so they cannot make pre-refresh values fresh again.
-	inFlight = map[string]*flightCall{}
-	cacheMu.Unlock()
-	flightMu.Unlock()
 }

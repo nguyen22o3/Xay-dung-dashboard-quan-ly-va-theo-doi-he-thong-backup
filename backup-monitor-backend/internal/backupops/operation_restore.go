@@ -66,6 +66,51 @@ func validRestorePath(value string) bool {
 	}
 	return false
 }
+
+func validRestoreSourcePath(value string) bool {
+	return len(value) <= 2048 && validRestorePath(strings.TrimSuffix(value, ".bin"))
+}
+
+func (c *Controller) restoreSource(cfg Settings, relative string) (string, error) {
+	if !validRestoreSourcePath(relative) {
+		return "", errors.New("Chỉ khôi phục tệp backup trong thư mục ngày/site, database hoặc panel")
+	}
+	drive := cfg.DriveRemote + ":" + cfg.DriveFolder
+	archive := strings.TrimSuffix(relative, ".bin")
+	if archive == relative {
+		return drive + "/" + relative, nil
+	}
+
+	data, err := readRegular(c.RcloneConfig)
+	if err != nil {
+		return "", errors.New("Không đọc được cấu hình rclone để giải mã bản sao lưu")
+	}
+	options := map[string]string{}
+	inCrypt := false
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			if inCrypt {
+				break
+			}
+			inCrypt = line == "[crypt]"
+			continue
+		}
+		if key, value, ok := strings.Cut(line, "="); inCrypt && ok {
+			key = strings.TrimSpace(key)
+			switch key {
+			case "type", "remote", "filename_encryption", "suffix", "no_data_encryption":
+				options[key] = strings.TrimSpace(value)
+			}
+		}
+	}
+	if options["type"] != "crypt" || strings.TrimSuffix(options["remote"], "/") != drive || options["filename_encryption"] != "off" ||
+		(options["suffix"] != "" && options["suffix"] != ".bin") || (options["no_data_encryption"] != "" && options["no_data_encryption"] != "false") {
+		return "", errors.New("Cần cấu hình remote crypt trỏ tới cùng thư mục backup trên Drive và dùng hậu tố .bin")
+	}
+	return "crypt:" + archive, nil
+}
+
 func (c *Controller) restoreStatePath(token string) (string, error) {
 	if !restoreTokenRe.MatchString(token) {
 		return "", errors.New("Mã khôi phục không hợp lệ")
@@ -77,10 +122,11 @@ func (c *Controller) restoreStatePath(token string) (string, error) {
 	return filepath.Join(root, token, "state.json"), nil
 }
 func (c *Controller) restoreMetadata(cfg Settings, relative string) (int64, string, error) {
-	if !validRestorePath(relative) {
-		return 0, "", errors.New("Chỉ khôi phục tệp backup trong thư mục ngày/site, database hoặc panel")
+	source, err := c.restoreSource(cfg, relative)
+	if err != nil {
+		return 0, "", err
 	}
-	raw, err := c.Run(c.rcloneArgs("lsjson", cfg.DriveRemote+":"+cfg.DriveFolder+"/"+relative, "--stat"), nil)
+	raw, err := c.Run(c.rcloneArgs("lsjson", source, "--stat"), nil)
 	if err != nil {
 		return 0, "", errors.New("Không xác minh được tệp backup trên Drive")
 	}
@@ -163,7 +209,7 @@ func (c *Controller) RestoreStatus(r Request) (RestorePlan, error) {
 			return result, errors.New("Thư mục đích trong trạng thái không hợp lệ")
 		}
 	}
-	if err != nil || !privateRootOwned(info) || result.Token != r.Restore.Token || result.Directory != expectedDir || !validRestorePath(result.Path) {
+	if err != nil || !privateRootOwned(info) || result.Token != r.Restore.Token || result.Directory != expectedDir || !validRestoreSourcePath(result.Path) {
 		return result, errors.New("Trạng thái khôi phục không an toàn")
 	}
 	return result, nil
@@ -255,12 +301,12 @@ func (c *Controller) RestoreRun(token string) (runErr error) {
 	defer func() {
 		if runErr != nil {
 			result.Status = "failed"
-			result.Error = "Không hoàn tất khôi phục; thư mục riêng được giữ để kiểm tra, dữ liệu đang chạy không bị thay đổi"
+			result.Error = "Không hoàn tất tải tệp sao lưu; dữ liệu đang chạy không bị thay đổi"
 		} else {
 			result.Status = "ready"
 		}
 		if err := save(); err != nil {
-			runErr = errors.New("Không lưu được kết quả khôi phục; kiểm tra thư mục riêng")
+			runErr = errors.New("Không lưu được kết quả tải tệp sao lưu")
 		}
 	}()
 	// Bound server resource use: do not download/extract multiple archives at once.
@@ -284,22 +330,25 @@ func (c *Controller) RestoreRun(token string) (runErr error) {
 	if err != nil || free <= uint64(size)+512*1024*1024 {
 		return errors.New("Không đủ dung lượng trống")
 	}
-	archive := filepath.Join(filepath.Dir(statePath), "archive"+restoreExtension(result.Path))
+	archive := filepath.Join(filepath.Dir(statePath), "archive"+restoreExtension(strings.TrimSuffix(result.Path, ".bin")))
 	if exists(archive) || exists(result.Directory) {
-		return errors.New("Thư mục khôi phục không trống")
+		return errors.New("Tệp đích hoặc phiên tải trước đã tồn tại; chọn tên khác, không ghi đè")
 	}
-	// Atomic reservation: two tokens with the same name must never share an
-	// output directory. Do not use MkdirAll, which accepts an existing target.
-	if err = os.Mkdir(result.Directory, 0700); err != nil {
-		return errors.New("Không tạo được thư mục đích mới; không ghi đè")
-	}
-	outputFree, err := restoreFreeBytes(result.Directory)
-	if err != nil || outputFree <= 512*1024*1024 {
+	targetDir := filepath.Dir(result.Directory)
+	outputFree, err := restoreFreeBytes(targetDir)
+	if err != nil || outputFree <= uint64(size)+512*1024*1024 {
 		return errors.New("Không đủ dung lượng ở nơi lưu đã chọn")
+	}
+	if err = SafeParents(result.Directory); err != nil {
+		return err
+	}
+	source, err := c.restoreSource(cfg, result.Path)
+	if err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	args := c.rcloneArgs("copyto", cfg.DriveRemote+":"+cfg.DriveFolder+"/"+result.Path, archive, "--immutable", "--stats", "5s", "--use-json-log", "--stats-log-level", "NOTICE")
+	args := c.rcloneArgs("copyto", source, archive, "--immutable", "--stats", "5s", "--use-json-log", "--stats-log-level", "NOTICE")
 	command := exec.CommandContext(ctx, args[0], args[1:]...)
 	result.Progress = &TaskProgress{Phase: "download", TotalBytes: size, ObservedAt: time.Now().UTC()}
 	if err = save(); err != nil {
@@ -317,30 +366,40 @@ func (c *Controller) RestoreRun(token string) (runErr error) {
 	if err != nil || size != result.Size || modified != result.Modified {
 		return errors.New("Backup thay đổi trong khi tải")
 	}
-	free, err = restoreFreeBytes(result.Directory)
-	if err != nil || free <= 512*1024*1024 {
-		return errors.New("Không đủ chỗ giải nén")
+	if err = moveFile(archive, result.Directory); err != nil {
+		return errors.New("Không thể lưu tệp vào vị trí đích")
 	}
-	limit := min(int64(free-512*1024*1024), int64(10*1024*1024*1024))
-	if err = SafeParents(result.Directory); err != nil {
+	_ = os.Chmod(result.Directory, 0600)
+	result.Files = 1
+	result.ExpandedBytes = size
+	result.Progress = &TaskProgress{Phase: "download", TotalBytes: size, Bytes: size, ObservedAt: time.Now().UTC()}
+	return nil
+}
+func moveFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
 		return err
 	}
-	result.Progress = &TaskProgress{Phase: "extract", ObservedAt: time.Now().UTC()}
-	if err = save(); err != nil {
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
 		return err
 	}
-	lastUpdate := time.Now()
-	result.Files, result.ExpandedBytes, err = extractRestore(archive, result.Directory, limit, func(files int, bytes int64) error {
-		if time.Since(lastUpdate) < time.Second {
-			return nil
-		}
-		lastUpdate = time.Now()
-		result.Files = files
-		result.ExpandedBytes = bytes
-		result.Progress = &TaskProgress{Phase: "extract", Files: int64(files), Bytes: bytes, ObservedAt: lastUpdate.UTC()}
-		return save()
-	})
-	return err
+	defer out.Close()
+	if _, err = io.Copy(out, in); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	if err = out.Sync(); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	_ = in.Close()
+	_ = os.Remove(src)
+	return nil
 }
 func restoreExtension(value string) string {
 	for _, extension := range []string{".tar.gz", ".sql.gz", ".zip"} {

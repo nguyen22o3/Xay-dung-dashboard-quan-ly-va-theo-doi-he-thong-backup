@@ -1,6 +1,5 @@
 import { Responsive, useContainerWidth } from 'react-grid-layout'
-import { pageGridBreakpoints, pageGridColumns } from '../../shared/pageGrid'
-import { usePageGrid } from '../../shared/usePageGrid'
+import { pageGridBreakpoints, pageGridColumns, usePageGrid } from '../../shared/pageGrid'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 import {
@@ -17,14 +16,13 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { ErrorBoundary } from '../../app/ErrorBoundary'
+import { ErrorBoundary } from './ErrorBoundary'
 import type { Lang } from '../../shared/language'
 import { tr } from '../../shared/language'
 import { makeTheme } from '../../shared/theme'
 import { useServerStatus, useBackupStatus, useCronJobs } from '../../api/dashboard'
 import { activityStamp, activityStatus, calendarDays, categoryLabel, formatBytes, formatDuration, nextCronRun } from '../../shared/utils'
 
-import type { CSSProperties } from 'react'
 
 interface ChartDatum {
   date: string
@@ -81,14 +79,8 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
 
   const serverStatus = server.data ?? {}
   const backupStatus = backup.data ?? {}
-  const driveUnavailable = Boolean(backupStatus.driveError && !backupStatus.driveStale)
-  const driveDataTime = backupStatus.driveDataAt
-    ? new Date(backupStatus.driveDataAt).toLocaleString(lang === 'vi' ? 'vi-VN' : 'en-US')
-    : null
+  const driveUnavailable = Boolean(backup.error && !backupStatus.driveStale)
 
-  // Disk Storage Math
-        
-  // Drive Storage Math
   const { about } = backupStatus
 
   const backupFolderSize = backupStatus.size?.bytes ?? 0
@@ -113,63 +105,23 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
         ]
   const PIE_COLORS = ['#3b82f6', '#38bdf8', '#ff9800']
 
-  // Parse History to get charts data
   let chartData: ChartDatum[] = []
   const history = backupStatus.history
-  if (!driveUnavailable && history && Array.isArray(history)) {
-    const historyMap = new Map()
-    history.forEach((h) => historyMap.set(h.date, { bytes: h.bytes, files: h.files || 0 }))
-
-    const last14Days = calendarDays(serverStatus.server_time)
-
-    chartData = last14Days.map((dateStr, i) => {
-      const histData = historyMap.get(dateStr) || { bytes: 0, files: 0 }
-        const bytes = histData.bytes
-        
-      let diff = 0
-        if (i > 0) {
-          const prevBytes = (historyMap.get(last14Days[i - 1]) || { bytes: 0 }).bytes
-          diff = bytes - prevBytes
-        }
-
-      let success = 0
-      const failed = 0
-
-      const files = histData.files || 0
-        if (files > 0) {
-          success = files
-        }
-
+  if (!driveUnavailable && Array.isArray(history)) {
+    const byDate = new Map(history.map(item => [item.date, item]))
+    const dates = calendarDays(serverStatus.server_time)
+    chartData = dates.map((date, index) => {
+      const current = byDate.get(date)
+      const bytes = current?.bytes ?? 0
+      const files = current?.files ?? 0
       return {
-        date: dateStr,
+        date,
         totalSize: bytes,
-        diffSize: diff,
-        success,
-        failed,
+        diffSize: index > 0 ? bytes - (byDate.get(dates[index - 1])?.bytes ?? 0) : 0,
+        success: files > 0 ? files : 0,
+        failed: 0,
       }
     })
-
-      }
-
-  const cardStyle: CSSProperties = {
-    backgroundColor: theme.cardBg,
-    border: `1px solid ${theme.cardBorder}`,
-    boxShadow: isDark ? 'none' : '0 1px 3px rgba(0,0,0,0.1)',
-    display: 'flex',
-    flexDirection: 'column',
-    containerType: 'size' as unknown as 'size',
-  }
-  const dragHandleStyle: CSSProperties = {
-    padding: '8px 10px',
-    cursor: 'grab',
-    fontSize: '12px',
-    fontWeight: 'bold',
-    color: theme.titleColor,
-    textTransform: 'uppercase',
-    display: 'flex',
-    alignItems: 'center',
-    lineHeight: 1.4,
-    flexShrink: 0,
   }
 
   const tickFormatter = (tick: string) => {
@@ -184,7 +136,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
       </h2>
       {backup.loading && !backup.data && <p role="status" style={{ color: theme.textSecondary }}>{lang === 'vi' ? 'Đang đọc dữ liệu Google Drive…' : 'Loading Google Drive data…'}</p>}
       {backup.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc Google Drive: ${backup.error}` : `Could not load Google Drive: ${backup.error}`}</p>}
-      {backupStatus.driveStale && <p role="status" style={{ color: theme.textSecondary }}>{lang === 'vi' ? 'Đang hiển thị dữ liệu Drive đã lưu' : 'Showing saved Drive data'}{driveDataTime ? ` (${driveDataTime})` : ''}.</p>}
+      {backup.activityError && <p role="alert" style={{ color: theme.errorText }}>{backup.activityError}{activities.length > 0 && (lang === 'vi' ? ' · Đang hiển thị nhật ký đã lưu' : ' · Showing saved activity')}</p>}
       {server.error && <p role="alert" style={{ color: theme.errorText }}>{lang === 'vi' ? `Không thể đọc máy chủ: ${server.error}` : `Could not load server: ${server.error}`}</p>}
 
       <div style={{ margin: '0 -15px' }}>
@@ -193,7 +145,7 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
             <ErrorBoundary lang={lang}>
               <Responsive
                 width={containerWidth}
-                className="layout"
+                className="layout monitor-grid"
                 layouts={layouts}
                 breakpoints={pageGridBreakpoints}
                 cols={pageGridColumns}
@@ -204,8 +156,8 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                 margin={[15, 15]}
               >
                 {/* DAILY PIE */}
-                <div key="daily" style={cardStyle}>
-                  <div className="drag-handle" style={dragHandleStyle}>
+                <div key="daily">
+                  <div className="drag-handle">
                     {tr(lang, 'dailyBackups')}
                   </div>
                   <div
@@ -274,8 +226,8 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                 </div>
 
                 {/* LAST BACKUP */}
-                <div key="last-backup" style={cardStyle}>
-                  <div className="drag-handle" style={dragHandleStyle}>
+                <div key="last-backup">
+                  <div className="drag-handle">
                     {tr(lang, 'lastBackup')}
                   </div>
                   <div style={{ padding: '0 10px 10px 10px', flex: 1, overflow: 'hidden', minHeight: 0 }}>
@@ -287,12 +239,14 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                             return db.localeCompare(da)
                           })[0]
                         : null
-                      const nextScheduleDisplay = nextCronRun((cron.data ?? []).filter(job => job.id === 'drive-sync'), serverStatus.server_time, lang) ?? '—'
+                      const nextScheduleDisplay = !cron.error && !server.error
+                        ? nextCronRun((cron.data ?? []).filter(job => job.id === 'drive-sync'), serverStatus.server_time, lang) ?? '—'
+                        : '—'
 
                       if (!lastBackup) {
                         return (
                           <div style={{ textAlign: 'center', color: theme.textSecondary, padding: '20px', fontSize: '12px' }}>
-                            {driveUnavailable ? (lang === 'vi' ? 'Không thể tải lịch sử Google Drive' : 'Google Drive history is unavailable') : tr(lang, 'noBackupYet')}
+                            {backup.activityError ? (lang === 'vi' ? 'Không tải được nhật ký' : 'Activity unavailable') : backup.loading ? (lang === 'vi' ? 'Đang tải…' : 'Loading…') : tr(lang, 'noBackupYet')}
                           </div>
                         )
                       }
@@ -341,8 +295,8 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                 </div>
 
                 {/* GROWTH CHART */}
-                <div key="growth" style={cardStyle}>
-                  <div className="drag-handle" style={dragHandleStyle}>
+                <div key="growth">
+                  <div className="drag-handle">
                     {tr(lang, 'dataGrowth')} ({tr(lang, 'last14Days')})
                   </div>
                   <div style={{ padding: '0 10px 10px 10px', flex: 1, minHeight: 0 }}>
@@ -384,8 +338,8 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                 </div>
 
                 {/* HISTORY CHART */}
-                <div key="history" style={cardStyle}>
-                  <div className="drag-handle" style={dragHandleStyle}>
+                <div key="history">
+                  <div className="drag-handle">
                     {tr(lang, 'backupsHistory')} ({tr(lang, 'last14Days')})
                   </div>
                   <div style={{ padding: '0 10px 10px 10px', flex: 1, minHeight: 0 }}>
@@ -431,8 +385,8 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
                 </div>
 
                 {/* SUCCESS CHART */}
-                <div key="success" style={cardStyle}>
-                  <div className="drag-handle" style={dragHandleStyle}>
+                <div key="success">
+                  <div className="drag-handle">
                     {tr(lang, 'successTrend')} ({tr(lang, 'last14Days')})
                   </div>
                   <div style={{ padding: '0 10px 10px 10px', flex: 1, minHeight: 0 }}>
@@ -472,8 +426,8 @@ export default function Home({ isDark, lang }: { isDark: boolean; lang: Lang }) 
 
 
                 {/* CLOUD STORAGE */}
-                <div key="cloud" style={cardStyle}>
-                  <div className="drag-handle" style={dragHandleStyle}>
+                <div key="cloud">
+                  <div className="drag-handle">
                     {tr(lang, 'storageDrive')}
                   </div>
                   <div style={{ padding: '0 10px 10px 10px', flex: 1, overflow: 'hidden', minHeight: 0 }}>

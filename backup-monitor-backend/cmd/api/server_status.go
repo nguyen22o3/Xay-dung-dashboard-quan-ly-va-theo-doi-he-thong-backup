@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Metrics are read alongside the shared local inventory in readServerStatus.
@@ -27,10 +28,15 @@ crontab -l 2>/dev/null || true
 func parseServerStatus(output string) ([]byte, error) {
 	metrics := map[string]interface{}{}
 	var inventory, cron strings.Builder
+	hasInventory := false
 	section := ""
 	for _, line := range strings.Split(output, "\n") {
 		switch line {
-		case "__METRICS__", "__LOCAL_INVENTORY__", "__CRONTAB__":
+		case "__LOCAL_INVENTORY__":
+			hasInventory = true
+			section = line
+			continue
+		case "__METRICS__", "__CRONTAB__":
 			section = line
 			continue
 		}
@@ -50,16 +56,12 @@ func parseServerStatus(output string) ([]byte, error) {
 	if len(metrics) == 0 {
 		return nil, fmt.Errorf("Thiếu thông số máy chủ")
 	}
-	files := parseLocalInventory(inventory.String())
-	var total int64
-	for _, file := range files {
-		total += file.Size
+	serverTime, _ := metrics["server_time"].(string)
+	if hasInventory {
+		metrics["local_backup"] = localBackupSummary(inventory.String(), serverTime)
+	} else {
+		metrics["local_backup_error"] = "Không thể đọc bản sao lưu trên máy chủ"
 	}
-	latestName, latestDate := "", ""
-	if len(files) > 0 {
-		latestName, latestDate = files[0].Name, strings.SplitN(files[0].Date, " ", 2)[0]
-	}
-	metrics["local_backup"] = map[string]interface{}{"count": len(files), "bytes": total, "size": backupSizeLabel(total), "latest_name": latestName, "latest_date": latestDate}
 	counts := map[string]int{"all": 0, "local": 0, "drive": 0}
 	times := map[string][]string{}
 	for _, job := range parseManagedCronJobs("__CRONTAB__\n" + cron.String()) {
@@ -96,6 +98,40 @@ func parseServerStatus(output string) ([]byte, error) {
 		metrics[prefix+"cron_times"] = strings.Join(times[kind], ", ")
 	}
 	return json.Marshal(metrics)
+}
+
+func localBackupSummary(inventory, serverTime string) map[string]interface{} {
+	files := parseLocalInventory(inventory)
+	now, timeErr := time.Parse(time.RFC3339, serverTime)
+	firstDay, lastDay := now.AddDate(0, 0, -13).Format(time.DateOnly), now.Format(time.DateOnly)
+	days := map[string]*backupHistoryDay{}
+	var total int64
+	for _, file := range files {
+		total += file.Size
+		day, _, _ := strings.Cut(file.Date, " ")
+		if timeErr != nil || day < firstDay || day > lastDay {
+			continue
+		}
+		if days[day] == nil {
+			days[day] = &backupHistoryDay{Date: day}
+		}
+		days[day].Bytes += file.Size
+		days[day].Files++
+	}
+	latestName, latestDate := "", ""
+	if len(files) > 0 {
+		latestName, latestDate = files[0].Name, strings.SplitN(files[0].Date, " ", 2)[0]
+	}
+	localBackup := map[string]interface{}{"count": len(files), "bytes": total, "size": backupSizeLabel(total), "latest_name": latestName, "latest_date": latestDate}
+	if timeErr == nil {
+		history := make([]backupHistoryDay, 0, len(days))
+		for _, day := range days {
+			history = append(history, *day)
+		}
+		sort.Slice(history, func(i, j int) bool { return history[i].Date < history[j].Date })
+		localBackup["history"] = history
+	}
+	return localBackup
 }
 
 func backupSizeLabel(bytes int64) string {

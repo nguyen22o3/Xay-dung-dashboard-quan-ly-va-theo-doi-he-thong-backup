@@ -59,42 +59,67 @@ export function calendarDays(serverTime?: string, count = 14, now = new Date()):
   })
 }
 
-function cronFieldMatches(field: string, value: number, min: number, max: number, weekday = false): boolean {
-  return field.split(',').some((part) => {
-    const [range, stepText] = part.split('/')
-    const step = stepText === undefined ? 1 : Number(stepText)
-    if (!Number.isInteger(step) || step < 1) return false
-    const bounds = range === '*' ? [min, max] : range.split('-').map(Number)
-    const start = bounds[0]
-    const end = bounds[1] ?? (stepText === undefined ? start : max)
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < min || end > max || start > end) return false
-    for (let n = start; n <= end; n += step) if ((weekday && n === 7 ? 0 : n) === value) return true
-    return false
-  })
+function cronFieldValues(field: string, min: number, max: number, names: string[] = []): number[] {
+  const values = new Set<number>()
+  const parseValue = (value: string) => {
+    if (/^\d+$/.test(value)) return Number(value)
+    const index = names.indexOf(value.toLowerCase())
+    return index === -1 ? NaN : min + index
+  }
+  for (const part of field.split(',')) {
+    const match = part.match(/^(\*|[\da-z]+)(?:-([\da-z]+))?(?:\/(\d+))?$/i)
+    if (!match || (match[1] === '*' && match[2])) return []
+    const [, first, last, stepText] = match
+    const start = first === '*' ? min : parseValue(first)
+    const end = last ? parseValue(last) : first === '*' || stepText ? max : start
+    const step = stepText ? Number(stepText) : 1
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < min || end > max || end < start ||
+      !Number.isSafeInteger(step) || step < 1) return []
+    for (let value = start; value <= end; value += step) values.add(value)
+  }
+  return [...values].sort((a, b) => a - b)
 }
 
-export function nextCronRun(jobs: Pick<CronJob, 'schedule'>[], serverTime?: string, lang: 'vi' | 'en' = 'vi', now = new Date()): string | null {
-  if (!serverTime) return null
-  const clock = serverClock(serverTime, now)
+function cronRunAfter(jobs: Pick<CronJob, 'schedule' | 'enabled'>[], clock: Date): Date | null {
   let next: Date | null = null
+  const minuteOfDay = clock.getUTCHours() * 60 + clock.getUTCMinutes()
   for (const job of jobs) {
+    if (job.enabled === false) continue
     const fields = job.schedule.trim().split(/\s+/)
-    if (fields.length !== 5 || !/^\d+$/.test(fields[0]) || !/^\d+$/.test(fields[1])) continue
-    const minute = Number(fields[0]), hour = Number(fields[1])
-    if (minute > 59 || hour > 23) continue
-    for (let day = 0; day <= 366; day++) {
+    if (fields.length !== 5) continue
+    const minutes = cronFieldValues(fields[0], 0, 59)
+    const hours = cronFieldValues(fields[1], 0, 23)
+    const dates = cronFieldValues(fields[2], 1, 31)
+    const months = cronFieldValues(fields[3], 1, 12, ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'])
+    const weekdays = cronFieldValues(fields[4], 0, 7, ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'])
+    if ([minutes, hours, dates, months, weekdays].some(values => values.length === 0)) continue
+    const times = hours.flatMap(hour => minutes.map(minute => hour * 60 + minute))
+    // A February 29 schedule may need to skip a non-leap century.
+    for (let day = 0; day <= 8 * 366; day++) {
       const date = new Date(clock)
       date.setUTCDate(clock.getUTCDate() + day)
-      date.setUTCHours(hour, minute, 0, 0)
-      if (date <= clock || !cronFieldMatches(fields[3], date.getUTCMonth() + 1, 1, 12)) continue
-      const dom = cronFieldMatches(fields[2], date.getUTCDate(), 1, 31)
-      const dow = cronFieldMatches(fields[4], date.getUTCDay(), 0, 7, true)
-      const matchesDay = fields[2] === '*' || fields[4] === '*' ? dom && dow : dom || dow
+      date.setUTCHours(0, 0, 0, 0)
+      if (next && date >= next) break
+      if (!months.includes(date.getUTCMonth() + 1)) continue
+      const weekday = date.getUTCDay()
+      const dom = dates.includes(date.getUTCDate())
+      const dow = weekdays.includes(weekday) || (weekday === 0 && weekdays.includes(7))
+      const matchesDay = fields[2].startsWith('*') || fields[4].startsWith('*') ? dom && dow : dom || dow
       if (!matchesDay) continue
+      const time = day === 0 ? times.find(time => time > minuteOfDay) : times[0]
+      if (time === undefined) continue
+      date.setUTCMinutes(time)
       if (!next || date < next) next = date
       break
     }
   }
+  return next
+}
+
+export function nextCronRun(jobs: Pick<CronJob, 'schedule' | 'enabled'>[], serverTime?: string, lang: 'vi' | 'en' = 'vi', now = new Date()): string | null {
+  if (!serverTime) return null
+  const clock = serverClock(serverTime, now)
+  const next = cronRunAfter(jobs, clock)
   if (!next) return null
   const time = next.toISOString().slice(11, 16)
   const today = clock.toISOString().slice(0, 10)
@@ -102,6 +127,17 @@ export function nextCronRun(jobs: Pick<CronJob, 'schedule'>[], serverTime?: stri
   tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
   const day = next.toISOString().slice(0, 10)
   return `${time}${day === today ? '' : day === tomorrow.toISOString().slice(0, 10) ? (lang === 'vi' ? ' (ngày mai)' : ' (tomorrow)') : ` (${day})`}`
+}
+
+export function cronIsOverdue(job: Pick<CronJob, 'enabled' | 'schedule' | 'last_run' | 'status'>, serverTime?: string): boolean {
+  if (job.enabled !== true || (job.status !== 'success' && job.status !== 'failed') || !serverTime ||
+    !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(job.last_run)) return false
+  // Log timestamps and cron expressions both use the server's wall clock.
+  const lastRun = new Date(job.last_run.replace(' ', 'T') + 'Z')
+  const now = new Date(serverTime)
+  if (!Number.isFinite(lastRun.getTime()) || !Number.isFinite(now.getTime())) return false
+  const next = cronRunAfter([job], lastRun)
+  return next !== null && next < serverClock(serverTime, now)
 }
 
 export function activityStatus(status: string): 'success' | 'failed' | 'running' | 'unknown' {

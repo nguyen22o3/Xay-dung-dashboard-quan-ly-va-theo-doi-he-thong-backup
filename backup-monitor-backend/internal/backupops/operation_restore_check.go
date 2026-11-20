@@ -61,6 +61,10 @@ func (c *Controller) RestoreCheckStatus() ([]RestoreCheck, error) {
 		}
 		p := filepath.Join(root, e.Name(), "state.json")
 		raw, err := readRegular(p)
+		if errors.Is(err, os.ErrNotExist) {
+			// A worker creates the directory before publishing its first state.
+			continue
+		}
 		if err != nil || len(raw) > 1024*1024 {
 			return nil, errors.New("invalid restore check state")
 		}

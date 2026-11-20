@@ -15,7 +15,7 @@ var restoreNameChars = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*$`)
 // always on the AlmaLinux host, never on the machine running the browser/API.
 func RestoreDestination(parent, name string) (string, error) {
 	if len(parent) > 1024 || parent == "/" || !restoreParentChars.MatchString(parent) || path.Clean(parent) != parent || len(name) > 128 || !restoreNameChars.MatchString(name) {
-		return "", errors.New("Chọn đường dẫn tuyệt đối trên AlmaLinux và tên thư mục mới (chữ không dấu, số, -, _, .; tối đa 128 ký tự)")
+		return "", errors.New("Chọn đường dẫn tuyệt đối trên AlmaLinux và tên tệp mới (chữ không dấu, số, -, _, .; tối đa 128 ký tự)")
 	}
 	return path.Join(parent, name), nil
 }
@@ -64,7 +64,7 @@ func (c *Controller) validateRestoreDestination(cfg Settings, parent, name strin
 		}
 	}
 	if _, err = os.Lstat(dir); !os.IsNotExist(err) {
-		return "", errors.New("Tên thư mục đích đã tồn tại hoặc không kiểm tra được; chọn tên khác, không ghi đè")
+		return "", errors.New("Tên tệp đích đã tồn tại hoặc không kiểm tra được; chọn tên khác, không ghi đè")
 	}
 	return dir, nil
 }
@@ -73,7 +73,7 @@ func (c *Controller) checkRestoreDestination(cfg Settings, plan RestorePlan) err
 	if plan.Parent == "" && plan.Name == "" {
 		// Backward-compatible legacy plans use their token's private data dir.
 		if _, err := os.Lstat(plan.Directory); !os.IsNotExist(err) {
-			return errors.New("Thư mục đích đã tồn tại; hãy kiểm tra lại")
+			return errors.New("Tệp đích đã tồn tại; hãy kiểm tra lại")
 		}
 		return SafeParents(plan.Directory)
 	}
@@ -82,7 +82,7 @@ func (c *Controller) checkRestoreDestination(cfg Settings, plan RestorePlan) err
 		return err
 	}
 	if dir != plan.Directory {
-		return errors.New("Thư mục đích không khớp kế hoạch đã xác nhận")
+		return errors.New("Tệp đích không khớp kế hoạch đã xác nhận")
 	}
 	return nil
 }

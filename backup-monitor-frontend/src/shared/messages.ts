@@ -6,6 +6,10 @@ import type { Lang } from './language'
 // %s/%q/%d/%v mark values that must be preserved verbatim in both directions.
 const messages: readonly (readonly [string, string])[] = [
   ['Lỗi kết nối', 'Connection error'],
+  ['Không thể đọc Google Drive', 'Could not read Google Drive'],
+  ['Không thể đọc trạng thái sao lưu', 'Could not read backup status'],
+  ['Không thể đọc nhật ký sao lưu', 'Could not read backup activity'],
+  ['Không thể đọc bản sao lưu trên máy chủ', 'Could not read server backups'],
   ['Lỗi mạng', 'Network Error'],
   ['Yêu cầu thất bại với mã trạng thái %s', 'Request failed with status code %s'],
   ['Yêu cầu hết thời gian chờ sau %s ms', 'timeout of %sms exceeded'],

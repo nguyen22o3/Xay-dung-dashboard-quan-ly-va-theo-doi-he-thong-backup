@@ -1,11 +1,11 @@
 import { localizeMessage } from '../../shared/messages'
 import { useEffect, useState } from 'react'
-import { CheckCircle2, ChevronDown, CircleAlert, Cloud, Hash, Languages, Mail, MessageCircle, Moon, Plus, Sun, Trash2 } from 'lucide-react'
+import { CheckCircle2, ChevronDown, CircleAlert, Hash, Languages, Mail, MessageCircle, Moon, Plus, Sun, Trash2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { apiErrorMessage, fetchAlertSettings, saveAlertSettings } from '../../api/dashboard'
 import type { FolderRequest } from '../../api/backupSystem'
 import type { Lang } from '../../shared/language'
-import { FolderPicker } from '../cron/BackupSystemSettings'
+import { FolderPicker } from '../../shared/FolderPicker'
 
 type Section = 'alerts' | 'monitoring' | 'appearance'
 type ChannelId = 'telegram' | 'discord' | 'email'
@@ -158,16 +158,23 @@ export default function Settings({ isDark, onToggleDark, lang, onToggleLang }: P
       </section>
     </section>}
 
-    {section === 'monitoring' && <section className="apex-settings-panel" role="tabpanel" id="settings-panel-monitoring" aria-labelledby="settings-tab-monitoring">
-      <div className="apex-settings-monitor-folders">
-        <div className="apex-settings-monitor-heading"><span><strong>{vi ? 'Thư mục backup cần giám sát trên máy chủ' : 'Server backup folders to monitor'}</strong><small>{vi ? 'Chỉ cảnh báo khi file backup bị xóa bất thường. Lưu thay đổi sẽ tự cập nhật và khởi động lại script giám sát.' : 'Alerts only for unexpected backup deletion. Saving automatically updates and restarts the monitoring script.'}</small></span></div>
+    {section === 'monitoring' && <section className="apex-settings-panel apex-settings-panel--monitoring" role="tabpanel" id="settings-panel-monitoring" aria-labelledby="settings-tab-monitoring">
+      <div className="apex-settings-monitor-group apex-settings-monitor-folders">
+        <div className="apex-settings-monitor-heading">
+          <strong>{vi ? 'Thư mục backup cần giám sát trên máy chủ' : 'Server backup folders to monitor'}</strong>
+          <small>{vi ? 'Gửi thông báo khi có file bị xóa.' : 'Send a notification when a file is deleted.'}</small>
+        </div>
         <div className="apex-settings-monitor-list">{monitorPaths.map((folder) => <div className="apex-settings-monitor-path" key={folder}><code>{folder}</code><button type="button" aria-label={`${vi ? 'Bỏ theo dõi' : 'Stop monitoring'} ${folder}`} title={vi ? 'Bỏ theo dõi' : 'Stop monitoring'} disabled={loading || saving || toggling || monitorPaths.length === 1} onClick={() => setMonitorPaths((current) => current.filter((item) => item !== folder))}><Trash2 size={16} /></button></div>)}</div>
         <button type="button" className="backup-system-secondary" disabled={loading || saving || toggling || monitorPaths.length >= 8} onClick={() => setFolderPickerRequest({ location: 'local', purpose: 'backup', path: monitorPaths[0] || '/' })}><Plus size={16} />{vi ? 'Chọn thêm thư mục' : 'Choose another folder'}</button>
       </div>
-      <div className="apex-settings-list">
-        <div className="apex-settings-row"><span className="apex-settings-row-icon"><Cloud size={19} /></span><span className="apex-settings-row-copy"><strong>{vi ? 'Giám sát bản sao lưu Google Drive — đặt số thư mục backup tối thiểu' : 'Google Drive backup monitoring — minimum backup folder count'}</strong><small>{vi ? 'Nếu Drive có ít hơn số này, hệ thống sẽ cảnh báo.' : 'The system warns you when Drive has fewer than this number.'}</small></span><input className="apex-settings-number" type="text" inputMode="numeric" pattern="[0-9]*" value={threshold} aria-label={vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folder count'} onChange={(event) => setThreshold(event.target.value === '' ? '' : Number(event.target.value.replace(/\D/g, '')))} /></div>
+      <div className="apex-settings-monitor-group">
+        <div className="apex-settings-monitor-heading">
+          <strong>{vi ? 'Giám sát bản sao lưu Google Drive — đặt số thư mục backup tối thiểu' : 'Google Drive backup monitoring — minimum backup folder count'}</strong>
+          <small id="settings-drive-threshold-hint">{vi ? 'Nếu số thư mục backup trên Google Drive ít hơn số đã thiết lập, hệ thống sẽ gửi thông báo khi kiểm tra.' : 'If the number of backup folders on Google Drive is below the configured minimum, the system sends a notification when checked.'}</small>
+        </div>
+        <input className="apex-settings-number" type="text" inputMode="numeric" pattern="[0-9]*" value={threshold} aria-label={vi ? 'Số thư mục backup tối thiểu' : 'Minimum backup folder count'} aria-describedby="settings-drive-threshold-hint" onChange={(event) => setThreshold(event.target.value === '' ? '' : Number(event.target.value.replace(/\D/g, '')))} />
       </div>
-      <div className="apex-settings-channel-actions"><span /> <button type="button" className="apex-settings-save" onClick={() => void save(enabled, 'form', undefined, 'monitor')} disabled={loading || saving || toggling}>{saving ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu' : 'Save')}</button></div>
+      <button type="button" className="apex-settings-save" onClick={() => void save(enabled, 'form', undefined, 'monitor')} disabled={loading || saving || toggling}>{saving ? (vi ? 'Đang lưu...' : 'Saving...') : (vi ? 'Lưu' : 'Save')}</button>
       {message && saveFooter}
     </section>}
 
