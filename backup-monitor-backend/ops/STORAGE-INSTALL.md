@@ -46,7 +46,7 @@ backup/khôi phục đang chạy, dừng trước khi chuyển dữ liệu thay 
 Bộ cài không chạy backup, đồng bộ hoặc dọn dữ liệu. Nếu API Linux native đang
 chạy, phải dừng và cập nhật đường dẫn service/env riêng trước khi dùng lại.
 
-Khởi động lại backend Windows (`go run ./cmd/api`) rồi làm mới dashboard. Backend
+Khởi động lại backend Windows (`go run .`) rồi làm mới dashboard. Backend
 nhận vị trí cài đặt từ helper; không cần sửa đường dẫn Linux trong Windows `.env`.
 
 ## Cài mới trên AlmaLinux bằng Docker
