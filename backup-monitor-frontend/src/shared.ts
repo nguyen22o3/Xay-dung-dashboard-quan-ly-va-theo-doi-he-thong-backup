@@ -1,4 +1,178 @@
-import type { BackupActivityEntry, CronJob } from './types'
+import type { Lang } from "./i18n"
+
+interface ResourceUsage {
+  total: string
+  used: string
+  free: string
+  usage: string
+}
+
+interface LocalBackupInfo {
+  size: string
+  bytes?: number
+  count: number
+  latest_date: string
+  latest_name: string
+  history?: { date: string; bytes: number; files: number }[]
+}
+
+export interface ServerStatus {
+  server_time?: string
+  disk?: ResourceUsage
+  ram?: ResourceUsage
+  cpu?: string
+  uptime?: string
+  websites?: number
+  databases?: number
+  crons?: number
+  cron_times?: string
+  drive_crons?: number
+  drive_cron_times?: string
+  local_crons?: number
+  local_cron_times?: string
+  local_backup?: LocalBackupInfo
+  local_backup_error?: string
+}
+
+export interface BackupActivityEntry {
+  id?: string
+  runId?: string
+  path?: string
+  evidence?: 'log' | 'archive'
+  kind?: 'file' | 'run' | 'archive'
+  name?: string
+  date: string
+  time: string
+  duration: number | string | null
+  status: string
+}
+
+export interface BackupStatus {
+  driveError?: string
+  driveStale?: boolean
+  driveDataAt?: string
+  driveDay?: string
+  activityError?: string
+  about?: { total?: number; used?: number; free?: number }
+  size?: { count?: number; bytes?: number }
+  dirs?: string
+  totalFolders?: number
+  history?: { date: string; bytes: number; files?: number }[]
+  activity?: BackupActivityEntry[]
+  localActivity?: BackupActivityEntry[]
+  todayBreakdownBytes?: {
+    site: number
+    database: number
+    panel: number
+  }
+}
+
+export interface WebsiteStatus {
+  name: string
+  status: string
+  code: string
+  time: string
+  reason?: string
+}
+
+type CronJobStatus = 'running' | 'success' | 'failed' | 'never' | 'unknown'
+
+export interface CronJob {
+  instanceKey?: string
+  isNew?: boolean
+  id: string
+  name: string
+  script: string
+  schedule: string
+  enabled?: boolean
+  last_run: string
+  log_updated_at?: string
+  tracked_at?: string
+  schedule_tracked?: boolean
+  task_controlled?: boolean
+  status: CronJobStatus
+}
+
+export interface CronJobLog {
+  content: string
+  exists: boolean
+}
+
+export interface SnapshotFile {
+	localPath?: string
+  path?: string
+  date: string
+  category: string
+  name: string
+  size: number
+  modified: string
+}
+
+export interface LoginResponse {
+  token: string
+}
+
+export interface AlertSettings {
+  telegramChat: string
+  targetEmail: string
+  threshold: number
+  monitorPaths: string[]
+  telegramConfigured: boolean
+  discordConfigured: boolean
+  smtpConfigured: boolean
+  smtpSenderConfigured?: boolean
+  telegramEnabled?: boolean
+  discordEnabled?: boolean
+  smtpEnabled?: boolean
+}
+
+export interface AlertSettingsUpdate {
+  telegramToken: string
+  telegramChat: string
+  discordWebhook: string
+  targetEmail: string
+  threshold: number
+  monitorPaths: string[]
+  telegramEnabled: boolean
+  discordEnabled: boolean
+  smtpEnabled: boolean
+}
+
+export type TabKey = 'dashboard' | 'home' | 'server' | 'settings' | 'jobs' | 'activity' | 'available' | 'options' | 'logs' | 'registration' | 'crypto'
+
+export interface Theme {
+  readonly isDark: boolean
+  readonly bg: string
+  readonly cardBg: string
+  readonly cardBorder: string
+  readonly textPrimary: string
+  readonly textSecondary: string
+  readonly gridLine: string
+  readonly accentText: string
+  readonly primary: string
+  readonly onPrimary: string
+  readonly successText: string
+  readonly errorText: string
+  readonly titleColor: string
+}
+
+export function makeTheme(isDark: boolean): Theme {
+  return {
+    isDark,
+    bg: isDark ? '#0f141a' : '#f4f7fb',
+    cardBg: isDark ? '#151c24' : '#ffffff',
+    cardBorder: isDark ? '#2b3643' : '#dce4ee',
+    textPrimary: isDark ? '#f1f5fb' : '#182433',
+    textSecondary: isDark ? '#9baabd' : '#61738b',
+    gridLine: isDark ? '#273341' : '#e5edf6',
+    accentText: isDark ? '#60a5fa' : '#1d63ed',
+    primary: '#1d63ed',
+    onPrimary: '#ffffff',
+    successText: isDark ? '#08c889' : '#008d62',
+    errorText: isDark ? '#fb7185' : '#d5344e',
+    titleColor: isDark ? '#f7faff' : '#14243b',
+  }
+}
 
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes)) return '—'
@@ -329,4 +503,36 @@ export function formatCronSchedule(schedule: string, lang: 'vi' | 'en' = 'vi'): 
   return lang === 'vi'
     ? `${hour.padStart(2, '0')}:${min.padStart(2, '0')} ngày ${dayOfMonth}/${month}`
     : `${hour.padStart(2, '0')}:${min.padStart(2, '0')} on ${dayOfMonth}/${month}`
+}
+
+export const DISK_USAGE_WARNING_THRESHOLD = 80
+// Preserve the existing red low-space alert at 85% and above.
+export const DISK_USAGE_DANGER_THRESHOLD = 85
+
+export function diskStatusPresentation(usage: number | null, lang: Lang) {
+  if (usage === null || !Number.isFinite(usage) || usage < 0 || usage > 100) {
+    return { label: lang === 'vi' ? 'Chưa xác nhận' : 'Unconfirmed', tone: 'neutral' as const }
+  }
+  if (usage >= DISK_USAGE_DANGER_THRESHOLD) {
+    return { label: lang === 'vi' ? 'Sắp hết dung lượng' : 'Low disk space', tone: 'error' as const }
+  }
+  if (usage > DISK_USAGE_WARNING_THRESHOLD) {
+    return { label: lang === 'vi' ? 'Sắp hết dung lượng' : 'Low disk space', tone: 'warning' as const }
+  }
+  return { label: lang === 'vi' ? 'Bình thường' : 'Normal', tone: 'healthy' as const }
+}
+
+export function websiteStatusPresentation(site: WebsiteStatus, lang: Lang) {
+  const vi = lang === 'vi'
+  const definitions: Record<string, { label: string; tone: 'healthy' | 'warning' | 'error' | 'neutral'; description: string }> = {
+    ONLINE: { label: 'ONLINE', tone: 'healthy', description: vi ? 'Website đang phản hồi.' : 'The website is responding.' },
+    TIMEOUT: { label: vi ? 'HẾT GIỜ CHỜ' : 'TIMEOUT', tone: 'warning', description: vi ? 'Hết thời gian chờ kiểm tra (tối đa 15 giây); chưa kết luận website đã tắt.' : 'The probe timed out (up to 15 seconds); this does not prove an outage.' },
+    OFFLINE: { label: 'OFFLINE', tone: 'error', description: vi ? 'Không thể kết nối đến website.' : 'Could not connect to the website.' },
+    ERROR: { label: vi ? 'LỖI HTTP' : 'HTTP ERROR', tone: 'error', description: vi ? 'Máy chủ trả mã lỗi HTTP.' : 'The server returned an HTTP error.' },
+    UNKNOWN: { label: vi ? 'CHƯA XÁC NHẬN' : 'UNKNOWN', tone: 'neutral', description: vi ? 'Chưa kiểm tra được trạng thái website.' : 'The website status could not be checked.' },
+  }
+  // Older backends may still return SLOW for a reachable website.
+  const presentation = definitions[site.status === 'SLOW' ? 'ONLINE' : site.status] ?? definitions.UNKNOWN
+  const details = [site.code && site.code !== '000' ? `HTTP ${site.code}` : '', site.time].filter(Boolean).join(' · ')
+  return { ...presentation, details, title: [presentation.description, details].filter(Boolean).join(' ') }
 }

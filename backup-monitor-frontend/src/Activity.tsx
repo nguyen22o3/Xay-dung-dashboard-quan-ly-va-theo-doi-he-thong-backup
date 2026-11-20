@@ -1,10 +1,9 @@
-import { localizeMessage } from './messages'
-import { Fragment, useState, useMemo, useRef } from 'react'
-import { Check, ChevronDown, X, Trash2 } from 'lucide-react'
-import type { Lang } from './language'
-import { makeTheme } from './theme'
-import { apiErrorMessage, clearLog, useBackupStatus } from './dashboardApi'
-import { activityStamp, activityStatus, formatTime24, localActivityDeletionKeys, statusLabel, summarizeLocalBackupActivity } from './utils'
+import { localizeMessage } from "./i18n"
+import { Fragment, useState, useMemo, useRef } from "react"
+import { Check, ChevronDown, X, Trash2 } from "lucide-react"
+import type { Lang } from "./i18n"
+import { makeTheme, activityStamp, activityStatus, formatTime24, localActivityDeletionKeys, statusLabel, summarizeLocalBackupActivity } from "./shared"
+import { apiErrorMessage, clearLog, useBackupStatus } from "./api"
 
 const filterStatuses = ['success', 'failed', 'running', 'unknown']
 const driveLogKey = (entry: { date: string; time: string }) => `${entry.date}|${entry.time}`
@@ -283,4 +282,3 @@ export default function Activity({ isDark, lang }: { isDark: boolean, lang: Lang
     </div>
   )
 }
-

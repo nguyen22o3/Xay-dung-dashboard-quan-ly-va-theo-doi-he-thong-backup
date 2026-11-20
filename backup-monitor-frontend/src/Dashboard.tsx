@@ -1,16 +1,16 @@
-import { useEffect, useState } from 'react'
-import { Responsive, useContainerWidth } from 'react-grid-layout'
-import type { Layout } from 'react-grid-layout'
-import 'react-grid-layout/css/styles.css'
-import 'react-resizable/css/styles.css'
-import { Activity, ArrowUpRight, CalendarClock, Cloud, DatabaseBackup, HardDrive, Server, ShieldCheck } from 'lucide-react'
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { useBackupStatus, useCronJobs, useServerStatus } from './dashboardApi'
-import { tr, type Lang } from './language'
-import { localizeMessage } from './messages'
-import type { TabKey } from './types'
-import { activityStamp, activityStatus, calendarDays, cronIsOverdue, formatBytes, formatUptime, nextCronRun, readPercentage, statusLabel } from './utils'
-import { dashboardBreakpointForViewport, dashboardBreakpoints, dashboardColumns, dashboardGridStorageKey, readDashboardLayouts } from './dashboardGrid'
+import "react-grid-layout/css/styles.css"
+import "react-resizable/css/styles.css"
+import { useEffect, useState } from "react"
+import { Responsive, useContainerWidth } from "react-grid-layout"
+import type { Layout } from "react-grid-layout"
+import { Activity, ArrowUpRight, CalendarClock, Cloud, DatabaseBackup, HardDrive, Server, ShieldCheck } from "lucide-react"
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { useBackupStatus, useCronJobs, useServerStatus } from "./api"
+import { tr, localizeMessage } from "./i18n"
+import type { Lang } from "./i18n"
+import type { TabKey } from "./shared"
+import { activityStamp, activityStatus, calendarDays, cronIsOverdue, formatBytes, formatUptime, nextCronRun, readPercentage, statusLabel } from "./shared"
+import { dashboardBreakpointForViewport, dashboardBreakpoints, dashboardColumns, dashboardGridStorageKey, readDashboardLayouts } from "./grid"
 
 type DashboardProps = {
   isDark: boolean

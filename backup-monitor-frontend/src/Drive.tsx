@@ -1,28 +1,13 @@
-import { Responsive, useContainerWidth } from 'react-grid-layout'
-import { pageGridBreakpoints, pageGridColumns, usePageGrid } from './pageGrid'
-import 'react-grid-layout/css/styles.css'
-import 'react-resizable/css/styles.css'
-import {
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from 'recharts'
-import { ErrorBoundary } from './ErrorBoundary'
-import type { Lang } from './language'
-import { tr } from './language'
-import { makeTheme } from './theme'
-import { useServerStatus, useBackupStatus, useCronJobs } from './dashboardApi'
-import { activityStamp, activityStatus, calendarDays, categoryLabel, formatBytes, formatDuration, nextCronRun } from './utils'
-
+import "react-grid-layout/css/styles.css"
+import "react-resizable/css/styles.css"
+import { Responsive, useContainerWidth } from "react-grid-layout"
+import { pageGridBreakpoints, pageGridColumns, usePageGrid } from "./grid"
+import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
+import { ErrorBoundary } from "./ui"
+import type { Lang } from "./i18n"
+import { tr } from "./i18n"
+import { makeTheme, activityStamp, activityStatus, calendarDays, categoryLabel, formatBytes, formatDuration, nextCronRun } from "./shared"
+import { useServerStatus, useBackupStatus, useCronJobs } from "./api"
 
 interface ChartDatum {
   date: string

@@ -1,11 +1,11 @@
-import { localizeMessage } from './messages'
-import { useEffect, useState } from 'react'
-import { CheckCircle2, ChevronDown, CircleAlert, Hash, Languages, Mail, MessageCircle, Moon, Plus, Sun, Trash2 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
-import { apiErrorMessage, fetchAlertSettings, saveAlertSettings } from './dashboardApi'
-import type { FolderRequest } from './backupSystem'
-import type { Lang } from './language'
-import { FolderPicker } from './FolderPicker'
+import { localizeMessage } from "./i18n"
+import { useEffect, useState } from "react"
+import { CheckCircle2, ChevronDown, CircleAlert, Hash, Languages, Mail, MessageCircle, Moon, Plus, Sun, Trash2 } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
+import { apiErrorMessage, fetchAlertSettings, saveAlertSettings } from "./api"
+import type { FolderRequest } from "./api"
+import type { Lang } from "./i18n"
+import { FolderPicker } from "./ui"
 
 type Section = 'alerts' | 'monitoring' | 'appearance'
 type ChannelId = 'telegram' | 'discord' | 'email'

@@ -1,17 +1,14 @@
-import { useMemo } from 'react'
-import { Responsive, useContainerWidth } from 'react-grid-layout'
-import { pageGridBreakpoints, pageGridColumns, usePageGrid } from './pageGrid'
-import 'react-grid-layout/css/styles.css'
-import 'react-resizable/css/styles.css'
-import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts'
-
-import { useServerStatus, useBackupStatus, useWebsitesStatus, useCronJobs, useLocalSnapshots } from './dashboardApi'
-import { activityStatus, calendarDays, categoryLabel, formatBytes, formatCronSchedule, formatStorageShare, localBackupDurationByDay, nextCronRun, readPercentage } from './utils'
-import { makeTheme } from './theme'
-import { websiteStatusPresentation } from './websiteStatus'
-import { diskStatusPresentation } from './diskStatus'
-import { CheckCircle, AlertTriangle, Clock, Calendar } from 'lucide-react'
-import { tr, type Lang } from './language'
+import "react-grid-layout/css/styles.css"
+import "react-resizable/css/styles.css"
+import { useMemo } from "react"
+import { Responsive, useContainerWidth } from "react-grid-layout"
+import { pageGridBreakpoints, pageGridColumns, usePageGrid } from "./grid"
+import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from "recharts"
+import { useServerStatus, useBackupStatus, useWebsitesStatus, useCronJobs, useLocalSnapshots } from "./api"
+import { activityStatus, calendarDays, categoryLabel, formatBytes, formatCronSchedule, formatStorageShare, localBackupDurationByDay, nextCronRun, readPercentage, makeTheme, websiteStatusPresentation, diskStatusPresentation } from "./shared"
+import { CheckCircle, AlertTriangle, Clock, Calendar } from "lucide-react"
+import { tr } from "./i18n"
+import type { Lang } from "./i18n"
 
 export default function ServerPage({ isDark, lang }: { isDark: boolean; lang: Lang }) {
   const theme = { ...makeTheme(isDark), isDark }
